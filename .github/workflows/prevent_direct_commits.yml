@@ -1,0 +1,17 @@
+name: Prevent Direct Commits
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  no-direct-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for direct commits to main
+        run: |
+          if [ ${{ github.event.head_commit.committer.name }} != "GitHub" ]; then
+            echo "Direct commits to the main branch are not allowed."
+            exit 1
+          fi
