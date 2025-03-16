@@ -9,7 +9,7 @@ import torch.nn as nn
 
 from src.archs.encoding import FiLM
 from src.flow import Flow
-from torch.utils.data import TensorDataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 from omegaconf import OmegaConf
 
 parser = argparse.ArgumentParser(
@@ -83,24 +83,35 @@ class Poisson:
         )
 
 
-class sourceFlow(L.LightningModule, Flow):
-    def __init__(self, config: dict, nx: int, nc: int, nd: int, domain: torch.Tensor):
-        L.LightningModule.__init__(self)
-        Flow.__init__(self, config.train.learning_rate, config.train.weight_decay)
+class CustomDataset(Dataset):
+    def __init__(self, data, condition, domain):
+        self.data = data
+        self.condition = condition
+        self.domain = domain
 
-        self.save_hyperparameters(ignore=["domain"])
-        self.register_buffer("domain", domain)
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.condition[idx], self.domain
+
+
+class sourceFlow(Flow, L.LightningModule):
+    def __init__(self, config: dict, nx: int, nc: int, nd: int):
+        super(sourceFlow, self).__init__()
+        self.save_hyperparameters()
+
         self.config = config  # config
         self.nx = nx  # dimension of the field
         self.nc = nc  # dimension of the conditional information
         self.nd = nd  # dimension of the domain
-        self.domain = domain  # domain
         self.flow_config = self.config.flow
         self.sig_min = self.flow_config.sig_min
         self.latent_dim = self.flow_config.latent_dim
+        self.n_freq = self.flow_config.time_emb_freq
 
         self.state_encoder = nn.Sequential(
-            nn.Linear(self.nx, 64),
+            nn.Linear(self.nx + 2 * self.n_freq, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
@@ -110,7 +121,7 @@ class sourceFlow(L.LightningModule, Flow):
         )
 
         self.condition_encoder = nn.Sequential(
-            nn.Linear(self.nc, 64),
+            nn.Linear(self.nc + 2 * self.n_freq, 64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU(),
@@ -128,17 +139,35 @@ class sourceFlow(L.LightningModule, Flow):
 
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
-        pass
+        x0 = torch.randn_like(x1, device=self.device)
+        return x0
 
     def evaluate_vector_field(
-        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor = None
+        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
     ):
         """evaluate the vector field"""
-        pass
+        # encod time
+        enc_time = self.time_embedding(t, self.n_freq)
+        # encode the state
+        enc_state = self.state_encoder(torch.cat([x, enc_time], dim=-1))
+        # encode the condition
+        enc_cond = self.condition_encoder(torch.cat([c, enc_time], dim=-1))
+        # skip connection
+        skip = self.skip(enc_state + enc_cond)
+        # encode the domain
+        skip = self.film(skip, d)
+
+        return x + c + skip
+
+    def sample_initial_condition(self, c: torch.Tensor):
+        """sample the initial condition"""
+        x0 = torch.randn_like(c, device=self.device)
+        return x0
 
 
 class dataModule(L.LightningDataModule):
     def __init__(self, config, model="low_fidelity"):
+        super(dataModule, self).__init__()
         self.config = config
         self.model = model
         self.data_config = (
@@ -152,12 +181,12 @@ class dataModule(L.LightningDataModule):
         self.loader_config = self.config.dataloader
 
         self.poisson = Poisson(self.data_config)  # Solve the equations
-        self.domain = self.poisson.domain
 
     def setup(self, stage):
         """setup the data"""
         u = self.poisson.u
         rhs = self.poisson.rhs
+        domain = self.poisson.domain
 
         # split
         n_train = int(len(u) * self.loader_config.train_ratio)
@@ -175,19 +204,33 @@ class dataModule(L.LightningDataModule):
         rhs_val[:, 1:-1] = (rhs_val[:, 1:-1] - mean_rhs) / std_rhs
 
         # Create the datasets
-        self.train_set = TensorDataset(rhs_train, u_train)
-        self.val_set = TensorDataset(rhs_val, u_val)
+        self.train_set = CustomDataset(u_train, rhs_train, domain)
+        self.val_set = CustomDataset(u_train, rhs_train, domain)
+
+    def collate_fn(self, batch):
+        """Function for pre processing the batch"""
+        data, condition, domain = zip(*batch)
+        data = torch.stack(data)
+        condition = torch.stack(condition)
+        domain = domain[0]
+        return data, condition, domain
 
     def train_dataloader(self):
         """train dataloader"""
         return DataLoader(
-            self.train_set, batch_size=self.loader_config.batch_size, shuffle=True
+            self.train_set,
+            batch_size=self.loader_config.batch_size,
+            shuffle=True,
+            collate_fn=self.collate_fn,
         )
 
     def val_dataloader(self):
         """val dataloader"""
         return DataLoader(
-            self.val_set, batch_size=self.loader_config.batch_size, shuffle=False
+            self.val_set,
+            batch_size=self.loader_config.batch_size,
+            shuffle=False,
+            collate_fn=self.collate_fn,
         )
 
 
@@ -199,7 +242,6 @@ if __name__ == "__main__":
         nx=data_module.nx,
         nc=data_module.nc,
         nd=data_module.nd,
-        domain=data_module.domain,
     )
     checkpointer = utils.get_checkpointer(config.data.low_fidelity.checkpoint_path)
     trainer = utils.get_trainer(
@@ -207,3 +249,9 @@ if __name__ == "__main__":
         logger_name=config.data.low_fidelity.logger_name,
         train_config=config.train,
     )
+    # train the model
+    trainer.fit(model, data_module)
+    # load the best model
+    model = sourceFlow.load_from_checkpoint(checkpointer.best_model_path)
+    x, c, d = data_module.val_set[0]  # get the first sample
+    model.query(c.view(1, -1), d, x1_true=x)  # get the prediction

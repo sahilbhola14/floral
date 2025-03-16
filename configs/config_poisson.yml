@@ -14,7 +14,7 @@ data:
     logger_name: "poisson_high_fidelity"
 
 dataloader:
-  batch_size: 2048
+  batch_size: 128
   train_ratio: 0.7
 
 train:
@@ -22,14 +22,14 @@ train:
   devices: 1
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 1000
+  max_epochs: 1
   learning_rate: 1.0e-2
   weight_decay: 1.0e-4
 
 flow:
   time_emb_freq: 4 # time embedding
   sig_min: 1.0e-3 # gaussian std for the data
-  latent_dim: 10 # latent for the embedding (state and condition)
+  latent_dim: 15 # latent for the embedding (state and condition)
 
 generate:
   n_samples: 1000 # number of input conditions simulated
