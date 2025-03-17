@@ -32,7 +32,7 @@ class Flow(ABC):
         """compute the derivative (time) of the conditional flow"""
         return x1 - x0
 
-    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor, d: torch.Tensor):
+    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor):
         """compute the vector field regression loss"""
         # Sample time
         t = torch.rand(len(x1), 1, device=self.device)
@@ -43,22 +43,22 @@ class Flow(ABC):
         # Compute the conditional flow derivative
         psi_prime = self.compute_conditional_flow_derivative(x0, x1)
         # Compute the vector field
-        vt = self.evaluate_vector_field(psi, c, d, t)
+        vt = self.evaluate_vector_field(psi, c, t)
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
         return loss
 
     def training_step(self, batch, batch_idx):
         """training step"""
-        x1, c, d = batch
-        loss = self.compute_loss(x1, c, d)
+        x1, c = batch
+        loss = self.compute_loss(x1, c)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
-        x1, c, d = batch
-        loss = self.compute_loss(x1, c, d)
+        x1, c = batch
+        loss = self.compute_loss(x1, c)
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
@@ -68,36 +68,35 @@ class Flow(ABC):
         return torch.cat([torch.sin(f * t), torch.cos(f * t)], dim=-1)
 
     def __wrapper(
-        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
+        self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor
     ):
         """wrapper function"""
         t_batch = t.repeat(x.shape[0], 1)
-        return self.evaluate_vector_field(x, c, d, t_batch)
+        return self.evaluate_vector_field(x, c, t_batch)
 
     @torch.no_grad()
     def query(
         self,
         c: torch.Tensor,
-        d: torch.Tensor,
         n_gen: int = 100,
         n_Tsteps: int = 100,
         method="dopri5",
-        atol=1e-6,
-        rtol=1e-6,
+        atol=1e-4,
+        rtol=1e-4,
         x1_true: torch.Tensor = None,
     ):
         """generate the condition (c) and domain (d), sample"""
         assert c.shape[0] == 1, "Only one condition is allowed"
-        assert d.shape[-1] == self.nd, "Domain shape is incorrect"
-        c, d = c.to(self.device), d.to(self.device)
+
+        c = c.to(self.device)
         # Create the batches
         c_batch = c.repeat(n_gen, 1)  # repeat the condition
-        x0 = self.sample_initial_condition(c_batch)  # sample the initial condition
+        x0 = self.sample_initial_condition(num_ics=n_gen)  # sample the initial condition
         t = torch.linspace(0, 1, n_Tsteps, device=self.device)  # time steps
         # rhs function
 
         def rhs(t, x):
-            return self.__wrapper(x, c_batch, d, t)
+            return self.__wrapper(x, c_batch, t)
 
         x1_hat = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
@@ -106,14 +105,14 @@ class Flow(ABC):
 
         fig, axs = plt.subplots(1, 1, figsize=(10, 10))
         axs.plot(
-            utils.t2n(d).ravel(),
+            range(len(mean_prediction)),
             mean_prediction,
             label="Prediction",
             color="red",
             marker="o",
         )
         axs.fill_between(
-            utils.t2n(d).ravel(),
+            range(len(mean_prediction)),
             mean_prediction - 2 * std_prediction,
             mean_prediction + 2 * std_prediction,
             alpha=0.3,
@@ -121,7 +120,7 @@ class Flow(ABC):
         )
         if x1_true is not None:
             axs.plot(
-                utils.t2n(d).ravel(),
+                range(len(mean_prediction)),
                 utils.t2n(x1_true).ravel(),
                 label="True",
                 color="k",
@@ -148,6 +147,6 @@ class Flow(ABC):
         pass
 
     @abstractmethod
-    def sample_initial_condition(self, c: torch.Tensor):
+    def sample_initial_condition(self, num_ics:int):
         """get the initial condition for the flow"""
         pass
