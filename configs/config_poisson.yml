@@ -18,11 +18,11 @@ dataloader:
   train_ratio: 0.7
 
 train:
-  accelerator: 'cpu'
-  devices: 1
+  accelerator: 'gpu'
+  devices: 3
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 1
+  max_epochs: 2000
   learning_rate: 1.0e-2
   weight_decay: 1.0e-4
 

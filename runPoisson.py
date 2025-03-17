@@ -327,4 +327,4 @@ if __name__ == "__main__":
     trainer.fit(model, data_module)
     # load the best model
     model = sourceFlow.load_from_checkpoint(checkpointer.best_model_path)
-    model.evaluate_dataset(data_module.val_set)  # get the prediction
+    model.evaluate_dataset(data_module.val_set, plot=True)  # get the prediction

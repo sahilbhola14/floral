@@ -69,8 +69,12 @@ class Flow(ABC):
 
     def __wrapper(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
         """wrapper function"""
-        t_batch = t.repeat(x.shape[0], 1)
-        return self.evaluate_vector_field(x, c, t_batch)
+        batch_size = x.shape[0] * x.shape[1]
+        x_eval = x.view(batch_size, -1)
+        c_eval = c.view(batch_size, -1)
+        t_eval = t.repeat(batch_size, 1)
+        vt = self.evaluate_vector_field(x_eval, c_eval, t_eval)
+        return vt.view(x.shape)
 
     @torch.no_grad()
     def evaluate_dataset(
@@ -106,10 +110,8 @@ class Flow(ABC):
             fig, axs = plt.subplots(3, 4, figsize=(12, 9))
             axs = axs.flatten()
             for ii in range(len(idx_plot)):
-                x1_pred_plot = utils.t2n(self.denormalize_field(x1_pred[idx_plot[ii]]))
-                x1_true_plot = utils.t2n(
-                    self.denormalize_field(x1_true[idx_plot[ii]])
-                ).ravel()
+                x1_pred_plot = utils.t2n(x1_pred[idx_plot[ii]])
+                x1_true_plot = utils.t2n(x1_true[idx_plot[ii]]).ravel()
                 mean_pred = x1_pred_plot.mean(axis=0)
                 std_pred = x1_pred_plot.std(axis=0)
                 axs[ii].plot(mean_pred, label="Pred", color="red")
@@ -129,7 +131,7 @@ class Flow(ABC):
                 if ii // 4 == 2:
                     axs[ii].set_xlabel("x")
             plt.tight_layout()
-            plt.savefig("validation.png")
+            plt.savefig("prediction.png")
             plt.close()
 
     @abstractmethod
