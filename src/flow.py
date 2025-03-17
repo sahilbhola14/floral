@@ -114,7 +114,7 @@ class Flow(ABC):
                 x1_true_plot = utils.t2n(x1_true[idx_plot[ii]]).ravel()
                 mean_pred = x1_pred_plot.mean(axis=0)
                 std_pred = x1_pred_plot.std(axis=0)
-                axs[ii].plot(mean_pred, label="Pred", color="red")
+                axs[ii].plot(mean_pred, label="Prediction", color="red")
                 axs[ii].plot(x1_true_plot, label="True", color="k")
                 axs[ii].fill_between(
                     range(len(mean_pred)),
@@ -122,12 +122,13 @@ class Flow(ABC):
                     mean_pred + std_pred,
                     alpha=0.3,
                     color="red",
+                    linestyle="--",
                 )
                 axs[ii].grid()
                 if ii == 0:
                     axs[ii].legend()
                 if ii % 4 == 0:
-                    axs[ii].set_ylabel("u(x)", labelpad=10)
+                    axs[ii].set_ylabel("u(x)", labelpad=20)
                 if ii // 4 == 2:
                     axs[ii].set_xlabel("x")
             plt.tight_layout()
