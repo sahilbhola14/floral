@@ -7,7 +7,6 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import torch.nn as nn
 
-from src.archs.encoding import FiLM
 from scipy.sparse import diags
 from scipy.sparse.linalg import spsolve
 from src.flow import Flow
@@ -27,40 +26,46 @@ args = parser.parse_args()
 config = OmegaConf.load(args.config)
 utils.printer(f"Running with config: {args.config}")
 
-torch.set_float32_matmul_precision('medium') # for tensor cores
+torch.set_float32_matmul_precision("medium")  # for tensor cores
+
 
 class Poisson_scalar:
-    """ poisson equation scalar solver """
+    """poisson equation scalar solver"""
+
     def __init__(self, config, rhs=None):
         self.n_pts = config.get("n_pts")
         self.n_samples = config.get("n_samples")
-        self.condition = self.sample_theta() # condition for the field
-        self.field = torch.zeros(self.n_samples, self.n_pts) # field
+        self.condition = self.sample_theta()  # condition for the field
+        self.field = torch.zeros(self.n_samples, self.n_pts)  # field
 
         for ii in range(self.n_samples):
-            x, u = self.solve(self.condition[ii, 0], self.condition[ii, 1], N=self.n_pts-2)
+            x, u = self.solve(
+                self.condition[ii, 0], self.condition[ii, 1], N=self.n_pts - 2
+            )
             self.field[ii] = utils.n2t(u)
-        self.domain = utils.n2t(x).view(-1, 1) # domain for the field
+        self.domain = utils.n2t(x).view(-1, 1)  # domain for the field
 
-    def sample_theta(self):                                                        
-        """Sample the model parameters"""                                               
-        return utils.n2t(np.array([np.random.uniform(0, 5, self.n_samples) for _ in range(2)])).T
+    def sample_theta(self):
+        """Sample the model parameters"""
+        return utils.n2t(
+            np.array([np.random.uniform(0, 5, self.n_samples) for _ in range(2)])
+        ).T
 
     def solve(self, theta1, theta2, N):
-        """                                                                             
-        Solve the differential equation:                                                
-        d²u/dx² + θ₁sin(θ₂x)u = 0                                                       
-        with boundary conditions u(0) = 0, u(1) = 1                                     
+        """
+        Solve the differential equation:
+        d²u/dx² + θ₁sin(θ₂x)u = 0
+        with boundary conditions u(0) = 0, u(1) = 1
 
-        Parameters:                                                                     
-        theta1 : float                                                                  
-        Coefficient θ₁                                                              
-        theta2 : float                                                                  
-        Coefficient θ₂                                                              
-        N : int                                                                         
-        Number of interior points for discretization                                
-        Returns:                                                                        
-        tuple: (x, u) where x is the grid points and u is the solution       
+        Parameters:
+        theta1 : float
+        Coefficient θ₁
+        theta2 : float
+        Coefficient θ₂
+        N : int
+        Number of interior points for discretization
+        Returns:
+        tuple: (x, u) where x is the grid points and u is the solution
         """
 
         # Create grid points (including boundaries)
@@ -93,6 +98,7 @@ class Poisson_scalar:
         u[-1] = 1.0  # u(1) = 1
 
         return x, u
+
 
 class Poisson:
     """poisson equaiton solver"""
@@ -178,7 +184,7 @@ class sourceFlow(Flow, L.LightningModule):
         self.latent_dim = self.flow_config.latent_dim
         self.n_freq = self.flow_config.time_emb_freq
 
-        self.state_encoder = nn.Sequential(
+        self.opening = nn.Sequential(
             nn.Linear(self.nx + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
@@ -187,8 +193,8 @@ class sourceFlow(Flow, L.LightningModule):
             nn.ReLU(),
             nn.Linear(64, self.nx),
         )
-
-        self.condition_encoder = nn.Sequential(
+        # Conditional embedding
+        self.conditions = nn.Sequential(
             nn.Linear(self.nc + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
@@ -198,16 +204,7 @@ class sourceFlow(Flow, L.LightningModule):
             nn.Linear(64, self.nx),
         )
 
-        # self.domain_encoder = nn.Sequential(
-        #         nn.Linear(self.nd, 64),
-        #         nn.BatchNorm1d(64),
-        #         nn.ReLU(),
-        #         nn.Linear(64, 64),
-        #         nn.BatchNorm1d(64),
-        #         nn.ReLU(),
-        #         nn.Linear(64, self.latent_dim),
-        #         )
-
+        # Skip
         self.skip = nn.Sequential(
             nn.Linear(self.nx, 64),
             nn.BatchNorm1d(64),
@@ -223,28 +220,22 @@ class sourceFlow(Flow, L.LightningModule):
         x0 = torch.randn_like(x1, device=self.device)
         return x0
 
-    def evaluate_vector_field(
-        self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor
-    ):
+    def evaluate_vector_field(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
         """evaluate the vector field"""
         # encod time
         enc_time = self.time_embedding(t, self.n_freq)
         # encode the state
-        enc_state = self.state_encoder(torch.cat([x, enc_time], dim=-1))
-        # encode the domain
-        # enc_domain = self.domain_encoder(d)
-        # Modified state
-        # mod_state = enc_state @ enc_domain.T
+        enc_state = self.opening(torch.cat([x, enc_time], dim=-1))
         # encode the condition
-        enc_cond = self.condition_encoder(torch.cat([c, enc_time], dim=-1))
+        enc_cond = self.conditions(torch.cat([c, enc_time], dim=-1))
         # skip connection
         skip = self.skip(enc_state + enc_cond)
 
         return enc_state + enc_cond + skip
 
-    def sample_initial_condition(self, num_ics):
+    def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """sample the initial condition"""
-        x0 = torch.randn(num_ics, self.nx, device=self.device)
+        x0 = torch.randn(batch_size, n_gen, self.nx, device=self.device)
         return x0
 
 
@@ -258,40 +249,28 @@ class dataModule(L.LightningDataModule):
             if model == "low_fidelity"
             else self.config.data.high_fidelity
         )
-        self.n_samples = self.data_config.n_samples # number of samples (train + val)
-        self.nx = self.data_config.n_pts  # field is defined on the domain
-        self.nc = 2 # dimension of the conditional information
-        self.nd = 1  # 1D data
+        self.n_samples = self.data_config.n_samples  # number of samples (train + val)
         self.loader_config = self.config.dataloader
-
         self.poisson = Poisson_scalar(self.data_config)  # Solve the equations
 
-    def setup(self, stage):
+        self.setup()
+
+    def setup(self, stage=None):
         """setup the data"""
         field = self.poisson.field
         condition = self.poisson.condition
         domain = self.poisson.domain
 
+        self.nx = field.shape[1]
+        self.nc = condition.shape[1]
+        self.nd = domain.shape[1]
+
         # split
         n_train = int(self.n_samples * self.loader_config.train_ratio)
+
         condition_train, field_train = condition[:n_train], field[:n_train]
+
         condition_val, field_val = condition[n_train:], field[n_train:]
-
-        # compute the stats
-        mean_condition, std_condition = condition_train.mean(0), condition_train.std(0)
-        mean_field, std_field = field_train[:, 1:-1].mean(0), field_train[:, 1:-1].std(0)
-
-        assert len(mean_condition) == len(std_condition) == self.nc
-        assert len(mean_field) == len(std_field) == self.nx - 2 # boundary conditions not included
-
-        # normalize field
-        field_train[:, 1:-1] = (field_train[:, 1:-1] - mean_field) / std_field
-        field_val[:, 1:-1] = (field_val[:, 1:-1] - mean_field) / std_field
-
-        # normalize condition
-        condition_train = (condition_train - mean_condition)  / std_condition
-        condition_val = (condition_val - mean_condition)  / std_condition
-
 
         # Create the datasets
         self.train_set = TensorDataset(field_train, condition_train)
@@ -301,8 +280,8 @@ class dataModule(L.LightningDataModule):
         # torch.save(self.train_set, 'train_set.pt')
         # torch.save(self.val_set, 'val_set.pt')
 
-        self.train_set = torch.load('train_set.pt')
-        self.val_set = torch.load('val_set.pt')
+        # self.train_set = torch.load('train_set.pt')
+        # self.val_set = torch.load('val_set.pt')
 
     def collate_fn(self, batch):
         """Function for pre processing the batch"""
@@ -348,5 +327,4 @@ if __name__ == "__main__":
     trainer.fit(model, data_module)
     # load the best model
     model = sourceFlow.load_from_checkpoint(checkpointer.best_model_path)
-    x, c = data_module.val_set.tensors
-    model.query(c[0].view(1, -1), x1_true=x[0])  # get the prediction
+    model.evaluate_dataset(data_module.val_set)  # get the prediction

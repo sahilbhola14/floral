@@ -67,72 +67,70 @@ class Flow(ABC):
         f = 2 * torch.arange(n_freq, device=self.device) * torch.pi
         return torch.cat([torch.sin(f * t), torch.cos(f * t)], dim=-1)
 
-    def __wrapper(
-        self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor
-    ):
+    def __wrapper(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
         """wrapper function"""
         t_batch = t.repeat(x.shape[0], 1)
         return self.evaluate_vector_field(x, c, t_batch)
 
     @torch.no_grad()
-    def query(
+    def evaluate_dataset(
         self,
-        c: torch.Tensor,
-        n_gen: int = 100,
-        n_Tsteps: int = 100,
+        dataset: torch.utils.data.Dataset,
+        n_gen: int = 100,  # number of generated samples (per initial condition)
+        nT: int = 100,  # number of time steps
         method="dopri5",
         atol=1e-4,
         rtol=1e-4,
-        x1_true: torch.Tensor = None,
+        plot: bool = False,
     ):
-        """generate the condition (c) and domain (d), sample"""
-        assert c.shape[0] == 1, "Only one condition is allowed"
+        self.eval()  # set to eval mode
 
-        c = c.to(self.device)
-        # Create the batches
-        c_batch = c.repeat(n_gen, 1)  # repeat the condition
-        x0 = self.sample_initial_condition(num_ics=n_gen)  # sample the initial condition
-        t = torch.linspace(0, 1, n_Tsteps, device=self.device)  # time steps
+        x1_true, c_true = dataset.tensors
+        x1_true, c_true = x1_true.to(self.device), c_true.to(self.device)
+        # create the batches
+        batch_size = len(x1_true)
+        c_batch = c_true.unsqueeze(1).repeat(1, n_gen, 1)
+        x0 = self.sample_initial_condition(c_true, batch_size=batch_size, n_gen=n_gen)
+
+        # time grid
+        t = torch.linspace(0, 1, nT, device=self.device)
         # rhs function
 
         def rhs(t, x):
             return self.__wrapper(x, c_batch, t)
 
-        x1_hat = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
+        x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
-        mean_prediction = utils.t2n(x1_hat.mean(dim=0))
-        std_prediction = utils.t2n(x1_hat.std(dim=0))
-
-        fig, axs = plt.subplots(1, 1, figsize=(10, 10))
-        axs.plot(
-            range(len(mean_prediction)),
-            mean_prediction,
-            label="Prediction",
-            color="red",
-            marker="o",
-        )
-        axs.fill_between(
-            range(len(mean_prediction)),
-            mean_prediction - 2 * std_prediction,
-            mean_prediction + 2 * std_prediction,
-            alpha=0.3,
-            color="red",
-        )
-        if x1_true is not None:
-            axs.plot(
-                range(len(mean_prediction)),
-                utils.t2n(x1_true).ravel(),
-                label="True",
-                color="k",
-                marker="o",
-            )
-        axs.set_xlabel("x")
-        axs.set_ylabel("u(x; f(x))")
-        axs.legend()
-        axs.grid(True)
-        plt.tight_layout()
-        plt.savefig("prediction.png")
-        plt.close()
+        if plot:
+            idx_plot = torch.randperm(len(x1_true))[:12]
+            fig, axs = plt.subplots(3, 4, figsize=(12, 9))
+            axs = axs.flatten()
+            for ii in range(len(idx_plot)):
+                x1_pred_plot = utils.t2n(self.denormalize_field(x1_pred[idx_plot[ii]]))
+                x1_true_plot = utils.t2n(
+                    self.denormalize_field(x1_true[idx_plot[ii]])
+                ).ravel()
+                mean_pred = x1_pred_plot.mean(axis=0)
+                std_pred = x1_pred_plot.std(axis=0)
+                axs[ii].plot(mean_pred, label="Pred", color="red")
+                axs[ii].plot(x1_true_plot, label="True", color="k")
+                axs[ii].fill_between(
+                    range(len(mean_pred)),
+                    mean_pred - std_pred,
+                    mean_pred + std_pred,
+                    alpha=0.3,
+                    color="red",
+                )
+                axs[ii].grid()
+                if ii == 0:
+                    axs[ii].legend()
+                if ii % 4 == 0:
+                    axs[ii].set_ylabel("u(x)", labelpad=10)
+                if ii // 4 == 2:
+                    axs[ii].set_xlabel("x")
+            plt.tight_layout()
+            plt.savefig("validation.png")
+            plt.close()
 
     @abstractmethod
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
@@ -147,6 +145,6 @@ class Flow(ABC):
         pass
 
     @abstractmethod
-    def sample_initial_condition(self, num_ics:int):
+    def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """get the initial condition for the flow"""
         pass
