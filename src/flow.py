@@ -32,7 +32,7 @@ class Flow(ABC):
         """compute the derivative (time) of the conditional flow"""
         return x1 - x0
 
-    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor):
+    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor, d: torch.Tensor):
         """compute the vector field regression loss"""
         # Sample time
         t = torch.rand(len(x1), 1, device=self.device)
@@ -43,22 +43,22 @@ class Flow(ABC):
         # Compute the conditional flow derivative
         psi_prime = self.compute_conditional_flow_derivative(x0, x1)
         # Compute the vector field
-        vt = self.evaluate_vector_field(psi, c, t)
+        vt = self.evaluate_vector_field(psi, c, d, t)
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
         return loss
 
     def training_step(self, batch, batch_idx):
         """training step"""
-        x1, c = batch
-        loss = self.compute_loss(x1, c)
+        x1, c, d = batch
+        loss = self.compute_loss(x1, c, d)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
-        x1, c = batch
-        loss = self.compute_loss(x1, c)
+        x1, c, d = batch
+        loss = self.compute_loss(x1, c, d)
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
@@ -67,13 +67,20 @@ class Flow(ABC):
         f = 2 * torch.arange(n_freq, device=self.device) * torch.pi
         return torch.cat([torch.sin(f * t), torch.cos(f * t)], dim=-1)
 
-    def __wrapper(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
+    def position_embedding(self, d: torch.Tensor):
+        """position embedding function"""
+        f = torch.arange(len(d), device=self.device).view(-1, 1) / 10000
+        return (f * d).sin()
+
+    def __wrapper(
+        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
+    ):
         """wrapper function"""
         batch_size = x.shape[0] * x.shape[1]
         x_eval = x.view(batch_size, -1)
         c_eval = c.view(batch_size, -1)
         t_eval = t.repeat(batch_size, 1)
-        vt = self.evaluate_vector_field(x_eval, c_eval, t_eval)
+        vt = self.evaluate_vector_field(x_eval, c_eval, d, t_eval)
         return vt.view(x.shape)
 
     @torch.no_grad()
@@ -89,8 +96,12 @@ class Flow(ABC):
     ):
         self.eval()  # set to eval mode
 
-        x1_true, c_true = dataset.tensors
-        x1_true, c_true = x1_true.to(self.device), c_true.to(self.device)
+        x1_true, c_true, d_true = dataset.tensors
+        x1_true, c_true, d_true = (
+            x1_true.to(self.device),
+            c_true.to(self.device),
+            d_true.to(self.device),
+        )
         # create the batches
         batch_size = len(x1_true)
         c_batch = c_true.unsqueeze(1).repeat(1, n_gen, 1)
@@ -101,7 +112,7 @@ class Flow(ABC):
         # rhs function
 
         def rhs(t, x):
-            return self.__wrapper(x, c_batch, t)
+            return self.__wrapper(x, c_batch, d_true, t)
 
         x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
@@ -114,15 +125,28 @@ class Flow(ABC):
                 x1_true_plot = utils.t2n(x1_true[idx_plot[ii]]).ravel()
                 mean_pred = x1_pred_plot.mean(axis=0)
                 std_pred = x1_pred_plot.std(axis=0)
-                axs[ii].plot(mean_pred, label="Prediction", color="red")
-                axs[ii].plot(x1_true_plot, label="True", color="k")
+                axs[ii].plot(
+                    utils.t2n(d_true.ravel()),
+                    mean_pred,
+                    label="Prediction",
+                    color="red",
+                    marker="o",
+                )
+                axs[ii].plot(
+                    utils.t2n(d_true.ravel()),
+                    x1_true_plot,
+                    label="True",
+                    color="k",
+                    marker="o",
+                )
                 axs[ii].fill_between(
-                    range(len(mean_pred)),
+                    utils.t2n(d_true.ravel()),
                     mean_pred - std_pred,
                     mean_pred + std_pred,
                     alpha=0.3,
                     color="red",
                     linestyle="--",
+                    label=r"$\pm\sigma$",
                 )
                 axs[ii].grid()
                 if ii == 0:

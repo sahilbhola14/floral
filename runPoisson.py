@@ -10,8 +10,9 @@ import torch.nn as nn
 from scipy.sparse import diags
 from scipy.sparse.linalg import spsolve
 from src.flow import Flow
-from torch.utils.data import DataLoader, Dataset, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 from omegaconf import OmegaConf
+from src.archs.encoding import RBFFiLM
 
 parser = argparse.ArgumentParser(
     description="Multi-Fidelity Flow Matching for Poisson Equation"
@@ -160,16 +161,17 @@ class Poisson:
 
 
 class CustomDataset(Dataset):
-    def __init__(self, data, condition, domain):
-        self.data = data
+    def __init__(self, field, condition, domain):
+        self.field = field
         self.condition = condition
         self.domain = domain
+        self.tensors = (self.field, self.condition, self.domain)
 
     def __len__(self):
-        return len(self.data)
+        return len(self.field)
 
     def __getitem__(self, idx):
-        return self.data[idx], self.condition[idx], self.domain
+        return self.field[idx], self.condition[idx], self.domain
 
 
 class sourceFlow(Flow, L.LightningModule):
@@ -186,54 +188,74 @@ class sourceFlow(Flow, L.LightningModule):
         self.latent_dim = self.flow_config.latent_dim
         self.n_freq = self.flow_config.time_emb_freq
 
-        self.opening = nn.Sequential(
+        self.state_encoder = nn.Sequential(
             nn.Linear(self.nx + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Linear(64, self.nx),
+            nn.Linear(64, self.latent_dim),
         )
+
         # Conditional embedding
-        self.conditions = nn.Sequential(
+        self.condition_encoder = nn.Sequential(
             nn.Linear(self.nc + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Linear(64, self.nx),
+            nn.Linear(64, self.latent_dim),
         )
 
         # Skip
         self.skip = nn.Sequential(
-            nn.Linear(self.nx, 64),
+            nn.Linear(self.latent_dim, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Linear(64, self.nx),
+            nn.Linear(64, self.latent_dim),
         )
+
+        # Domain encoder
+        self.domain_encoder = RBFFiLM(in_dim=self.nd, out_dim=self.latent_dim)
+
+        # Output
+        # self.out = nn.Sequential(
+        #         nn.Linear(self.nx, 64),
+        #         nn.ReLU(),
+        #         nn.Linear(64, 64),
+        #         nn.ReLU(),
+        #         nn.Linear(64, self.nx),
+        #         )
 
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
         x0 = torch.randn_like(x1, device=self.device)
         return x0
 
-    def evaluate_vector_field(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
+    def evaluate_vector_field(
+        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
+    ):
         """evaluate the vector field"""
         # encod time
         enc_time = self.time_embedding(t, self.n_freq)
+        # encode the domain
+        # enc_domain = self.position_embedding(d)
         # encode the state
-        enc_state = self.opening(torch.cat([x, enc_time], dim=-1))
+        enc_state = self.state_encoder(torch.cat([x, enc_time], dim=-1))
         # encode the condition
-        enc_cond = self.conditions(torch.cat([c, enc_time], dim=-1))
+        enc_cond = self.condition_encoder(torch.cat([c, enc_time], dim=-1))
         # skip connection
         skip = self.skip(enc_state + enc_cond)
+        out = enc_state + enc_cond + skip
+        # Encode the domain
+        out = self.domain_encoder(out, d)
 
-        return enc_state + enc_cond + skip
+        return out
 
     def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """sample the initial condition"""
@@ -302,23 +324,23 @@ class dataModule(L.LightningDataModule):
             field_val[:, 1:-1] = (field_val[:, 1:-1] - field_mean) / field_std
 
         # Create the datasets
-        self.train_set = TensorDataset(field_train, condition_train)
-        self.val_set = TensorDataset(field_val, condition_val)
+        self.train_set = CustomDataset(field_train, condition_train, domain)
+        self.val_set = CustomDataset(field_val, condition_val, domain)
 
         # Save
-        torch.save(self.train_set, "train_set.pt")
-        torch.save(self.val_set, "val_set.pt")
+        # torch.save(self.train_set, "train_set.pt")
+        # torch.save(self.val_set, "val_set.pt")
 
         self.train_set = torch.load("train_set.pt")
         self.val_set = torch.load("val_set.pt")
 
     def collate_fn(self, batch):
         """Function for pre processing the batch"""
-        data, condition, domain = zip(*batch)
-        data = torch.stack(data)
+        field, condition, domain = zip(*batch)
+        field = torch.stack(field)
         condition = torch.stack(condition)
         domain = domain[0]
-        return data, condition, domain
+        return field, condition, domain
 
     def train_dataloader(self):
         """train dataloader"""
@@ -326,6 +348,7 @@ class dataModule(L.LightningDataModule):
             self.train_set,
             batch_size=self.loader_config.batch_size,
             shuffle=True,
+            collate_fn=self.collate_fn,
         )
 
     def val_dataloader(self):
@@ -334,6 +357,7 @@ class dataModule(L.LightningDataModule):
             self.val_set,
             batch_size=self.loader_config.batch_size,
             shuffle=False,
+            collate_fn=self.collate_fn,
         )
 
 
