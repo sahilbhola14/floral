@@ -3,11 +3,14 @@ import torch
 import pytorch_lightning as L
 import argparse
 import utils.utils as utils
-import scipy.sparse as sp
-import scipy.sparse.linalg as spla
+
+# import scipy.sparse as sp
+
+# import scipy.sparse.linalg as spla
 import torch.nn as nn
 
 from scipy.sparse import diags
+
 from scipy.sparse.linalg import spsolve
 from src.flow import Flow
 from torch.utils.data import DataLoader, Dataset
@@ -30,8 +33,12 @@ utils.printer(f"Running with config: {args.config}")
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
 
-class Poisson_scalar:
-    """poisson equation scalar solver"""
+class Poisson_case_1:
+    """poisson equation scalar solver
+    Solve the differential equation:
+    d²u/dx² + θ₁sin(θ₂x)u = 0
+    with boundary conditions u(0) = 0, u(1) = 1
+    """
 
     def __init__(self, config, rhs=None):
         self.n_pts = config.get("n_pts")
@@ -100,64 +107,6 @@ class Poisson_scalar:
         u[-1] = 1.0  # u(1) = 1
 
         return x, u
-
-
-class Poisson:
-    """poisson equaiton solver"""
-
-    def __init__(self, config, rhs=None):
-        self.n_pts = config.get("n_pts")
-        self.n_samples = config.get("n_samples")
-        self.domain = torch.linspace(0, 1, self.n_pts).view(-1, 1)
-        self.kernel_width = 0.05  # kernel width
-        self.boundary_normalization = {"condition": False, "field": False}
-        if rhs is None:
-            rhs = self.generate_rhs()
-        u = torch.zeros_like(rhs)
-        for ii in range(self.n_samples):
-            u[:, ii] = self.solve(rhs[:, ii])
-
-        self.field = u.T
-        self.condition = rhs.T
-
-    def solve(self, rhs):
-        """solve the system"""
-        dx = 1.0 / (len(rhs) - 1)  # grid spacing
-        main_diag = (-2.0 / dx**2) * torch.ones(len(rhs))
-        sub_diag = (1.0 / dx**2) * torch.ones(len(rhs))
-        sup_diag = (1.0 / dx**2) * torch.ones(len(rhs))
-        # enforce boundary conditions
-        main_diag[0] = main_diag[-1] = 1.0
-        sub_diag[-1] = sup_diag[0] = 0.0
-        rhs[0] = rhs[-1] = 0.0
-        A = sp.diags(
-            [
-                sub_diag[1:],
-                main_diag,
-                sup_diag[:-1],
-            ],
-            [-1, 0, 1],
-            format="csc",
-        )
-        u = spla.spsolve(A, rhs)
-        return utils.n2t(u)
-
-    def evaluate_kernel(self, grid):
-        """kernel function"""
-        return torch.exp(
-            -(torch.abs(grid[:, 0] - grid[:, 1]) ** 2) / (2 * self.kernel_width**2)
-        )
-
-    def generate_rhs(self):
-        """rhs function"""
-        x = utils.t2n(self.domain).ravel()
-        XX, YY = np.meshgrid(x, x)
-        grid = utils.n2t(np.stack([XX.ravel(), YY.ravel()]).T)
-        cov = self.evaluate_kernel(grid).reshape(XX.shape)
-        cov_sqrt = torch.linalg.cholesky(cov + 1e-6 * torch.eye(cov.shape[0]))
-        return torch.zeros(self.n_pts, 1) + cov_sqrt @ torch.randn(
-            self.n_pts, self.n_samples
-        )
 
 
 class CustomDataset(Dataset):
@@ -275,7 +224,7 @@ class dataModule(L.LightningDataModule):
         )
         self.n_samples = self.data_config.n_samples  # number of samples (train + val)
         self.loader_config = self.config.dataloader
-        self.poisson = Poisson(self.data_config)  # Solve the equations
+        self.poisson = Poisson_case_1(self.data_config)  # Solve the equations
 
         self.setup()
 
