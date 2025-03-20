@@ -109,6 +109,58 @@ class Poisson_case_1:
         return x, u
 
 
+class Poisson_case_2:
+    """
+    Solve the differential equation: d²u/dx² + f(x;θ) = 0
+    with boundary conditions u(0) = 0, u(1) = 0,
+    where f(x;θ) = sum_{i=1}^n θ_i sin(2πi x)
+    """
+
+    def __init__(self, config):
+        self.n_pts = config.get("n_pts")
+        self.n_samples = config.get("n_samples")
+        self.n_modes = 5  # Number of modes for the forcing term
+        self.boundary_normalization = {"condition": True, "field": False}
+
+        self.nx = self.n_pts  # Number of points in the domain
+        self.nc = 2  # Number of modes for the forcing term
+        self.nd = 1  # Dimension of the domain
+
+    def compute_dataset(self):
+        """Function computes the dataset"""
+        self.condition = self.sample_theta()  # condition for the field
+        self.field = torch.zeros(self.n_samples, self.n_pts)  # field
+
+        for ii in range(self.n_samples):
+            x, u = self.solve(self.condition[ii])
+            self.field[ii] = utils.n2t(u)
+        self.domain = utils.n2t(x).view(-1, 1)  # domain for the field
+
+    def sample_theta(self):
+        """Sample the model parameters"""
+        return torch.randn(self.n_samples, self.n_modes)
+
+    def get_rhs(self, x, theta):
+        """function computes the rhs terms"""
+        f_x = torch.zeros_like(x)
+        for n in range(1, self.n_modes + 1):
+            f_x += theta[n - 1] * torch.sin(2.0 * torch.pi * n * x)
+        return f_x
+
+    def solve(self, theta):
+        L = 1.0  # domain length
+        N = self.n_pts - 2  # Number of interior points
+        domain = torch.linspace(0, L, self.n_pts)  # full domain
+        x = domain[1:-1]  # interior points
+        dx = L / (N + 1)
+        A = (
+            diags([1, -2, 1], [-1, 0, 1], shape=(N, N)) / dx**2
+        )  # Discretized Laplacian
+        f = self.get_rhs(x, theta)  # Forcing term
+        u = spsolve(A, -f)  # Solve linear system
+        return domain, np.concatenate(([0], u, [0]))  # Apply boundary conditions
+
+
 class CustomDataset(Dataset):
     def __init__(self, field, condition, domain):
         self.field = field
@@ -224,64 +276,90 @@ class dataModule(L.LightningDataModule):
         )
         self.n_samples = self.data_config.n_samples  # number of samples (train + val)
         self.loader_config = self.config.dataloader
-        self.poisson = Poisson_case_1(self.data_config)  # Solve the equations
+        self.poisson = Poisson_case_2(self.data_config)  # Solve the equations
+
+        self.nx = self.poission.nx
+        self.nc = self.poission.nc
+        self.nd = self.poission.nd
+        self.domain = self.poission.domain
 
         self.setup()
 
+    def normalize_dataset(self, field_denormal, condition_denormal):
+        """Normalize the dataset"""
+        pass
+
+    def denormalize_dataset(self, field_normal, condition_normal):
+        """Denormalize the dataset"""
+        pass
+
+    def get_dataset_stats(self, field_train, condition_train):
+        """Get the dataset statistics"""
+        pass
+
+    def update_dataset_stats(self, field_stats, condition_stats):
+        """Update the dataset statistics"""
+        pass
+
     def setup(self, stage=None):
         """setup the data"""
-        field = self.poisson.field
-        condition = self.poisson.condition
-        domain = self.poisson.domain
+        if self.data_config.load_dataset is False:
+            # Solve the poisson equation
+            self.poisson.compute_dataset()
 
-        self.nx = field.shape[1]
-        self.nc = condition.shape[1]
-        self.nd = domain.shape[1]
+            # Extract the data
+            field = self.poisson.field
+            condition = self.poisson.condition
+            domain = self.poisson.domain
 
-        # split
-        n_train = int(self.n_samples * self.loader_config.train_ratio)
+            self.nx = field.shape[1]
+            self.nc = condition.shape[1]
+            self.nd = domain.shape[1]
 
-        condition_train, field_train = condition[:n_train], field[:n_train]
+            # split
+            n_train = int(self.n_samples * self.loader_config.train_ratio)
 
-        condition_val, field_val = condition[n_train:], field[n_train:]
+            condition_train, field_train = condition[:n_train], field[:n_train]
 
-        # Normalize data
-        if self.poisson.boundary_normalization.get("condition"):
-            condition_mean = condition_train.mean(0)
-            condition_std = condition_train.std(0)
-            condition_train = (condition_train - condition_mean) / condition_std
-            condition_val = (condition_val - condition_mean) / condition_std
-        else:
-            condition_mean = condition_train[:, 1:-1].mean(0)
-            condition_std = condition_train[:, 1:-1].std(0)
-            condition_train[:, 1:-1] = (
-                condition_train[:, 1:-1] - condition_mean
-            ) / condition_std
-            condition_val[:, 1:-1] = (
-                condition_val[:, 1:-1] - condition_mean
-            ) / condition_std
+            condition_val, field_val = condition[n_train:], field[n_train:]
 
-        if self.poisson.boundary_normalization.get("field"):
-            field_mean = field_train.mean(0)
-            field_std = field_train.std(0)
-            field_train = (field_train - field_mean) / field_std
-            field_val = (field_val - field_mean) / field_std
-        else:
-            field_mean = field_train[:, 1:-1].mean(0)
-            field_std = field_train[:, 1:-1].std(0)
-            field_train[:, 1:-1] = (field_train[:, 1:-1] - field_mean) / field_std
-            field_val[:, 1:-1] = (field_val[:, 1:-1] - field_mean) / field_std
+            # Normalize data
+            if self.poisson.boundary_normalization.get("condition"):
+                condition_mean = condition_train.mean(0)
+                condition_std = condition_train.std(0)
+                condition_train = (condition_train - condition_mean) / condition_std
+                condition_val = (condition_val - condition_mean) / condition_std
+            else:
+                condition_mean = condition_train[:, 1:-1].mean(0)
+                condition_std = condition_train[:, 1:-1].std(0)
+                condition_train[:, 1:-1] = (
+                    condition_train[:, 1:-1] - condition_mean
+                ) / condition_std
+                condition_val[:, 1:-1] = (
+                    condition_val[:, 1:-1] - condition_mean
+                ) / condition_std
 
-        # Create the datasets
-        self.train_set = CustomDataset(field_train, condition_train, domain)
-        self.val_set = CustomDataset(field_val, condition_val, domain)
+            if self.poisson.boundary_normalization.get("field"):
+                field_mean = field_train.mean(0)
+                field_std = field_train.std(0)
+                field_train = (field_train - field_mean) / field_std
+                field_val = (field_val - field_mean) / field_std
+            else:
+                field_mean = field_train[:, 1:-1].mean(0)
+                field_std = field_train[:, 1:-1].std(0)
+                field_train[:, 1:-1] = (field_train[:, 1:-1] - field_mean) / field_std
+                field_val[:, 1:-1] = (field_val[:, 1:-1] - field_mean) / field_std
 
-        # Save
-        # torch.save(self.train_set, "train_set.pt")
-        # torch.save(self.val_set, "val_set.pt")
+            # Create the datasets
+            self.train_set = CustomDataset(field_train, condition_train, domain)
+            self.val_set = CustomDataset(field_val, condition_val, domain)
 
-        self.train_set = torch.load("train_set.pt")
-        self.val_set = torch.load("val_set.pt")
+            # Save
+            # torch.save(self.train_set, "train_set.pt")
+            # torch.save(self.val_set, "val_set.pt")
+
+            self.train_set = torch.load("train_set.pt")
+            self.val_set = torch.load("val_set.pt")
 
     def collate_fn(self, batch):
         """Function for pre processing the batch"""
