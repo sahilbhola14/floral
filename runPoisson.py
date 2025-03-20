@@ -335,15 +335,6 @@ class dataModule(L.LightningDataModule):
         self.normalization_config["field"] = field_stats
         self.normalization_config["condition"] = condition_stats
 
-    def update_dataset_stats(self, field_stats, condition_stats):
-        """Update the dataset statistics"""
-        raise NotImplementedError
-        self.field_stats["mean"] = field_stats.get("mean")
-        self.field_stats["std"] = field_stats.get("std")
-
-        self.condition_stats["mean"] = condition_stats("mean")
-        self.condition_stats["std"] = condition_stats("std")
-
     def setup(self, stage=None):
         """setup the data"""
         if self.data_config.load_dataset is False:

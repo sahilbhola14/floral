@@ -4,7 +4,7 @@ data:
   path: null
   low_fidelity:
     n_pts: 10 # number of spatial points
-    n_samples: 500 # number of data samples
+    n_samples: 10000 # number of data samples
     checkpoint_path: "./experiments/mfFlow/Poisson/lowFidelity/checkpoints"
     logger_name: "poisson_low_fidelity"
     load_dataset: False
@@ -15,15 +15,15 @@ data:
     logger_name: "poisson_high_fidelity"
 
 dataloader:
-  batch_size: 512
+  batch_size: 1024
   train_ratio: 0.7
 
 train:
-  accelerator: 'cpu'
-  devices: 1
+  accelerator: 'gpu'
+  devices: 3
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 1
+  max_epochs: 3000
   learning_rate: 1.0e-2
   weight_decay: 1.0e-4
 
