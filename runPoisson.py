@@ -121,9 +121,10 @@ class Poisson_case_2:
         self.n_samples = config.get("n_samples")
         self.n_modes = 5  # Number of modes for the forcing term
         self.boundary_normalization = {"condition": True, "field": False}
-
+        self.L = 1.0  # domain length
+        self.domain = torch.linspace(0, self.L, self.n_pts)  # full domain
         self.nx = self.n_pts  # Number of points in the domain
-        self.nc = 2  # Number of modes for the forcing term
+        self.nc = self.n_modes  # Number of modes for the forcing term
         self.nd = 1  # Dimension of the domain
 
     def compute_dataset(self):
@@ -132,9 +133,8 @@ class Poisson_case_2:
         self.field = torch.zeros(self.n_samples, self.n_pts)  # field
 
         for ii in range(self.n_samples):
-            x, u = self.solve(self.condition[ii])
+            u = self.solve(self.condition[ii])
             self.field[ii] = utils.n2t(u)
-        self.domain = utils.n2t(x).view(-1, 1)  # domain for the field
 
     def sample_theta(self):
         """Sample the model parameters"""
@@ -148,17 +148,15 @@ class Poisson_case_2:
         return f_x
 
     def solve(self, theta):
-        L = 1.0  # domain length
         N = self.n_pts - 2  # Number of interior points
-        domain = torch.linspace(0, L, self.n_pts)  # full domain
-        x = domain[1:-1]  # interior points
-        dx = L / (N + 1)
+        x = self.domain[1:-1]  # interior points
+        dx = self.L / (N + 1)
         A = (
             diags([1, -2, 1], [-1, 0, 1], shape=(N, N)) / dx**2
         )  # Discretized Laplacian
         f = self.get_rhs(x, theta)  # Forcing term
         u = spsolve(A, -f)  # Solve linear system
-        return domain, np.concatenate(([0], u, [0]))  # Apply boundary conditions
+        return np.concatenate(([0], u, [0]))  # Apply boundary conditions
 
 
 class CustomDataset(Dataset):
@@ -278,28 +276,73 @@ class dataModule(L.LightningDataModule):
         self.loader_config = self.config.dataloader
         self.poisson = Poisson_case_2(self.data_config)  # Solve the equations
 
-        self.nx = self.poission.nx
-        self.nc = self.poission.nc
-        self.nd = self.poission.nd
-        self.domain = self.poission.domain
+        self.nx = self.poisson.nx
+        self.nc = self.poisson.nc
+        self.nd = self.poisson.nd
+        self.domain = self.poisson.domain
+
+        self.normalization_config = {}
+        self.normalization_config["boundary"] = self.poisson.boundary_normalization
+
+        self.dataset_file = "dataset_" + self.model + ".pt"
+        self.normalization_file = "normalization_config_" + self.model + ".pt"
 
         self.setup()
 
-    def normalize_dataset(self, field_denormal, condition_denormal):
+    def normalize_dataset(self, field, condition):
         """Normalize the dataset"""
-        pass
+        condition_stats = self.normalization_config["condition"]
+        field_stats = self.normalization_config["field"]
 
-    def denormalize_dataset(self, field_normal, condition_normal):
-        """Denormalize the dataset"""
-        pass
+        # Normalize the condition
+        if self.normalization_config["boundary"]["condition"]:
+            condition = (condition - condition_stats["mean"]) / condition_stats["std"]
+        else:
+            condition[:, 1:-1] = (
+                condition[:, 1:-1] - condition_stats["mean"]
+            ) / condition_stats.get["std"]
 
-    def get_dataset_stats(self, field_train, condition_train):
-        """Get the dataset statistics"""
-        pass
+        # Normalize the field
+        if self.normalization_config["boundary"]["field"]:
+            field = (field - field_stats["mean"]) / field_stats.get["std"]
+        else:
+            field[:, 1:-1] = (field[:, 1:-1] - field_stats["mean"]) / field_stats["std"]
+        return field, condition
+
+    def comp_dataset_stats(self, field_train, condition_train):
+        """function computes the dataset statistics"""
+        if self.normalization_config["boundary"]["condition"]:
+            condition_mean = condition_train.mean(0)
+            condition_std = condition_train.std(0)
+        else:
+            condition_mean = condition_train[:, 1:-1].mean(0)
+            condition_std = condition_train[:, 1:-1].std(0)
+        if self.normalization_config["boundary"]["field"]:
+            field_mean = field_train.mean(0)
+            field_std = field_train.std(0)
+        else:
+            field_mean = field_train[:, 1:-1].mean(0)
+            field_std = field_train[:, 1:-1].std(0)
+
+        field_stats = {}
+        field_stats["mean"] = field_mean
+        field_stats["std"] = field_std
+
+        condition_stats = {}
+        condition_stats["mean"] = condition_mean
+        condition_stats["std"] = condition_std
+
+        self.normalization_config["field"] = field_stats
+        self.normalization_config["condition"] = condition_stats
 
     def update_dataset_stats(self, field_stats, condition_stats):
         """Update the dataset statistics"""
-        pass
+        raise NotImplementedError
+        self.field_stats["mean"] = field_stats.get("mean")
+        self.field_stats["std"] = field_stats.get("std")
+
+        self.condition_stats["mean"] = condition_stats("mean")
+        self.condition_stats["std"] = condition_stats("std")
 
     def setup(self, stage=None):
         """setup the data"""
@@ -310,56 +353,38 @@ class dataModule(L.LightningDataModule):
             # Extract the data
             field = self.poisson.field
             condition = self.poisson.condition
-            domain = self.poisson.domain
-
-            self.nx = field.shape[1]
-            self.nc = condition.shape[1]
-            self.nd = domain.shape[1]
+            domain = self.poisson.domain.view(-1, 1)
 
             # split
             n_train = int(self.n_samples * self.loader_config.train_ratio)
-
             condition_train, field_train = condition[:n_train], field[:n_train]
-
             condition_val, field_val = condition[n_train:], field[n_train:]
 
-            # Normalize data
-            if self.poisson.boundary_normalization.get("condition"):
-                condition_mean = condition_train.mean(0)
-                condition_std = condition_train.std(0)
-                condition_train = (condition_train - condition_mean) / condition_std
-                condition_val = (condition_val - condition_mean) / condition_std
-            else:
-                condition_mean = condition_train[:, 1:-1].mean(0)
-                condition_std = condition_train[:, 1:-1].std(0)
-                condition_train[:, 1:-1] = (
-                    condition_train[:, 1:-1] - condition_mean
-                ) / condition_std
-                condition_val[:, 1:-1] = (
-                    condition_val[:, 1:-1] - condition_mean
-                ) / condition_std
+            # Compute the statstistics
+            self.comp_dataset_stats(field_train, condition_train)
 
-            if self.poisson.boundary_normalization.get("field"):
-                field_mean = field_train.mean(0)
-                field_std = field_train.std(0)
-                field_train = (field_train - field_mean) / field_std
-                field_val = (field_val - field_mean) / field_std
-            else:
-                field_mean = field_train[:, 1:-1].mean(0)
-                field_std = field_train[:, 1:-1].std(0)
-                field_train[:, 1:-1] = (field_train[:, 1:-1] - field_mean) / field_std
-                field_val[:, 1:-1] = (field_val[:, 1:-1] - field_mean) / field_std
+            # Normalize the data
+            field_train, condition_train = self.normalize_dataset(
+                field_train, condition_train
+            )
+            field_val, condition_val = self.normalize_dataset(field_val, condition_val)
 
             # Create the datasets
             self.train_set = CustomDataset(field_train, condition_train, domain)
             self.val_set = CustomDataset(field_val, condition_val, domain)
 
             # Save
-            # torch.save(self.train_set, "train_set.pt")
-            # torch.save(self.val_set, "val_set.pt")
+            save_data_dict = {"train": self.train_set, "val": self.val_set}
 
-            self.train_set = torch.load("train_set.pt")
-            self.val_set = torch.load("val_set.pt")
+            torch.save(save_data_dict, self.dataset_file)
+            torch.save(self.normalization_config, self.normalization_file)
+
+        else:
+            data_dict = torch.load(self.dataset_file)
+            self.train_set = data_dict.get("train")
+            self.val_set = data_dict.get("val")
+
+            self.normalization_config = torch.load(self.normalization_file)
 
     def collate_fn(self, batch):
         """Function for pre processing the batch"""
@@ -405,6 +430,6 @@ if __name__ == "__main__":
     )
     # train the model
     trainer.fit(model, data_module)
-    # load the best model
+    # # load the best model
     model = sourceFlow.load_from_checkpoint(checkpointer.best_model_path)
     model.evaluate_dataset(data_module.val_set, plot=True)  # get the prediction
