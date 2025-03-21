@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import pytorch_lightning as L
@@ -126,8 +127,8 @@ class Poisson_case_2:
             "domain": [0.0, 1.0],
             "value": [0.0, 0.0],
         }  # Values of boundary conditions
-        self.full_domain = torch.linspace(0, self.L, self.n_pts)  # full domain
-        self.interior_domain = self.full_domain[1:-1]  # interior domain
+        self.domain_full = torch.linspace(0, self.L, self.n_pts)  # full domain
+        self.domain_interior = self.domain_full[1:-1]  # interior domain
         self.nx = self.n_pts - 2  # Number of points in the interior domain
         self.nc = self.n_modes  # Number of modes for the forcing term
         self.nd = 1  # Dimension of the domain
@@ -154,7 +155,7 @@ class Poisson_case_2:
 
     def solve(self, theta):
         N = self.n_pts - 2  # Number of interior points
-        x = self.interior_domain  # interior points
+        x = self.domain_interior  # interior points
         dx = self.L / (N + 1)
         A = (
             diags([1, -2, 1], [-1, 0, 1], shape=(N, N)) / dx**2
@@ -162,6 +163,23 @@ class Poisson_case_2:
         f = self.get_rhs(x, theta)  # Forcing term
         u = spsolve(A, -f)  # Solve linear system
         return np.concatenate(([0], u, [0]))  # Apply boundary conditions
+
+    def get_true_solution(self, theta, n_pts):
+        """function computes the interpolation config"""
+        N = n_pts - 2  # Number of interior points
+
+        domain_full = torch.linspace(0, self.L, n_pts)  # full domain
+        domain_interior = domain_full[1:-1]  # interior domain
+
+        x = domain_interior  # interior points
+        dx = self.L / (N + 1)
+        A = (
+            diags([1, -2, 1], [-1, 0, 1], shape=(N, N)) / dx**2
+        )  # Discretized Laplacian
+        f = self.get_rhs(x, theta)  # Forcing term
+        u = spsolve(A, -f)  # Solve linear system
+
+        return np.concatenate(([0], u, [0])), domain_full, domain_interior
 
 
 class CustomDataset(Dataset):
@@ -398,8 +416,8 @@ class dataModule(L.LightningDataModule):
         self.nc = self.poisson.nc
         self.nd = self.poisson.nd
         self.domain = {
-            "full": self.poisson.full_domain.tolist(),
-            "interior": self.poisson.interior_domain.tolist(),
+            "full": self.poisson.domain_full.tolist(),
+            "interior": self.poisson.domain_interior.tolist(),
         }
 
         self.boundary_conditions = self.poisson.boundary_conditions
@@ -453,6 +471,26 @@ class dataModule(L.LightningDataModule):
         self.normalization_config["field"] = field_stats
         self.normalization_config["condition"] = condition_stats
 
+    def get_interpolation_config(self, condition_val):
+        """get interpolation config"""
+        n_pts_true = 200
+        field_true = torch.zeros(len(condition_val), n_pts_true - 2)
+        for ii in range(len(condition_val)):
+            (
+                u_true,
+                domain_full_true,
+                domain_interior_true,
+            ) = self.poisson.get_true_solution(condition_val[ii], n_pts=n_pts_true)
+            field_true[ii] = utils.n2t(u_true)[1:-1]  # removed the boundary
+
+        interpolation_config = {}
+        interpolation_config["field_true"] = field_true
+        interpolation_config["domain_full_true"] = domain_full_true
+        interpolation_config["domain_interior_true"] = domain_interior_true
+        interpolation_config["condition"] = condition_val
+
+        return interpolation_config
+
     def setup(self, stage=None):
         """setup the data"""
         if self.data_config.load_dataset is False:
@@ -468,6 +506,9 @@ class dataModule(L.LightningDataModule):
             condition_train, field_train = condition[:n_train], field[:n_train]
             condition_val, field_val = condition[n_train:], field[n_train:]
 
+            # get the interpolation config (must use unnormalized condition)
+            self.interpolation_config = self.get_interpolation_config(condition_val[:4])
+
             # Compute the statstistics
             self.comp_dataset_stats(field_train, condition_train)
 
@@ -482,7 +523,11 @@ class dataModule(L.LightningDataModule):
             self.val_set = TensorDataset(field_val, condition_val)
 
             # Save
-            save_data_dict = {"train": self.train_set, "val": self.val_set}
+            save_data_dict = {
+                "train": self.train_set,
+                "val": self.val_set,
+                "interpolation_config": self.interpolation_config,
+            }
 
             torch.save(save_data_dict, self.dataset_file)
             torch.save(self.normalization_config, self.normalization_file)
@@ -491,6 +536,7 @@ class dataModule(L.LightningDataModule):
             data_dict = torch.load(self.dataset_file)
             self.train_set = data_dict.get("train")
             self.val_set = data_dict.get("val")
+            self.interpolation_config = data_dict.get("interpolation_config")
 
             self.normalization_config = torch.load(self.normalization_file)
 
@@ -564,10 +610,25 @@ def train_source_model():
 
     # Load the best model
     model = sourceFlow.load_from_checkpoint(best_model_path)
-    # Plotting
+    # Evaluate the validation dataset
     model.evaluate_dataset(
         data_module.val_set, plot=True, n_gen=2
     )  # get the prediction
+
+    # Query the model
+    interpolation_config = data_module.interpolation_config
+    c = interpolation_config.get("condition")  # unormalized condition to evaluate
+    x1_true = interpolation_config.get("field_true")  # true field
+    domain_interior_true = interpolation_config.get(
+        "domain_interior_true"
+    )  # true field
+    x1_pred = model.query(c)
+
+    plt.figure()
+    plt.plot(data_module.domain.get("interior"), utils.t2n(x1_pred[0].mean(0)))
+    plt.plot(domain_interior_true, x1_true[0])
+    plt.savefig("test_query.png")
+    plt.close()
 
     return checkpointer.best_model_path
 

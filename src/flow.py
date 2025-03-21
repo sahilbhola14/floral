@@ -204,6 +204,45 @@ class Flow(ABC):
             plt.savefig("prediction.png")
             plt.close()
 
+    @torch.no_grad()
+    def query(
+        self,
+        c_denorm,
+        n_gen: int = 100,  # number of generated samples (per initial condition)
+        nT: int = 100,  # number of time steps
+        method="dopri5",
+        atol=1e-4,
+        rtol=1e-4,
+        plot: bool = False,
+    ):
+        """Function evaluates the model for a given c_denorm (denormalized condition)"""
+        self.eval()  # set to eval mode
+
+        c_denorm = c_denorm.to(self.device)
+
+        # Normalize the condition
+        _, c_norm = self.normalize_data(c=c_denorm)
+
+        # create the batches
+        batch_size = len(c_norm)
+        c_batch = c_norm.unsqueeze(1).repeat(1, n_gen, 1)
+        x0 = self.sample_initial_condition(c_denorm, batch_size=batch_size, n_gen=n_gen)
+
+        # time grid
+        t = torch.linspace(0, 1, nT, device=self.device)
+        # rhs function
+
+        def rhs(t, x):
+            return self.__wrapper(x, c_batch, t)
+
+        x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
+
+        # Denormalize the data
+        x1_pred_denormal, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
+        x1_pred_denormal = x1_pred_denormal.view(x1_pred.shape)
+
+        return x1_pred_denormal
+
     @abstractmethod
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
