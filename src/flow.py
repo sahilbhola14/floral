@@ -175,26 +175,27 @@ class Flow(ABC):
 
                 axs[ii].plot(
                     utils.t2n(d_full.ravel()),
-                    mean_pred,
-                    label="Prediction",
-                    color="red",
-                    marker="o",
-                )
-                axs[ii].plot(
-                    utils.t2n(d_full.ravel()),
                     x1_true_plot,
                     label="True",
                     color="k",
                     marker="o",
                 )
+                axs[ii].plot(
+                    utils.t2n(d_full.ravel()),
+                    mean_pred,
+                    label="Prediction",
+                    color="red",
+                    marker="s",
+                    linestyle="--",
+                )
                 axs[ii].fill_between(
                     utils.t2n(d_full.ravel()),
-                    mean_pred - std_pred,
-                    mean_pred + std_pred,
+                    mean_pred - 5 * std_pred,
+                    mean_pred + 5 * std_pred,
                     alpha=0.3,
                     color="red",
                     linestyle="--",
-                    label=r"$\pm\sigma$",
+                    label=r"$\pm5\sigma$",
                 )
                 axs[ii].grid()
                 if ii == 0:

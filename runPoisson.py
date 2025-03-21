@@ -559,6 +559,9 @@ def train_source_model():
         assert (
             data_config.load_checkpoint is not None
         ), "For eval mode, a checkpoint must be provided"
+        assert (
+            data_config.load_dataset is True
+        ), "For using past checkpoint, the relevant dataset must be loaded"
         best_model_path = (
             data_config.checkpoint_path + "/" + data_config.load_checkpoint
         )
