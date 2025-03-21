@@ -199,8 +199,8 @@ class sourceFlow(Flow, L.LightningModule):
         self.nc = nc  # dimension of the conditional information
         self.nd = nd  # dimension of the domain
         self.domain_full = torch.FloatTensor(domain.get("full")).view(-1, self.nd)
-        self.domain_interior = (
-            torch.FloatTensor(domain.get("interior")).view(-1, self.nd).to(self.device)
+        self.domain_interior = torch.FloatTensor(domain.get("interior")).view(
+            -1, self.nd
         )
         self.flow_config = self.config.flow
         self.sig_min = self.flow_config.sig_min
@@ -262,7 +262,7 @@ class sourceFlow(Flow, L.LightningModule):
         skip = self.skip(enc_state + enc_cond)
         out = enc_state + enc_cond + skip
         # Encode the domain
-        out = self.domain_encoder(out, self.domain_interior)
+        out = self.domain_encoder(out, self.domain_interior.to(self.device))
 
         return out
 
