@@ -32,7 +32,7 @@ class Flow(ABC):
         """compute the derivative (time) of the conditional flow"""
         return x1 - x0
 
-    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor, d: torch.Tensor):
+    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor):
         """compute the vector field regression loss"""
         # Sample time
         t = torch.rand(len(x1), 1, device=self.device)
@@ -43,22 +43,22 @@ class Flow(ABC):
         # Compute the conditional flow derivative
         psi_prime = self.compute_conditional_flow_derivative(x0, x1)
         # Compute the vector field
-        vt = self.evaluate_vector_field(psi, c, d, t)
+        vt = self.evaluate_vector_field(psi, c, t)
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
         return loss
 
     def training_step(self, batch, batch_idx):
         """training step"""
-        x1, c, d = batch
-        loss = self.compute_loss(x1, c, d)
+        x1, c = batch
+        loss = self.compute_loss(x1, c)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
-        x1, c, d = batch
-        loss = self.compute_loss(x1, c, d)
+        x1, c = batch
+        loss = self.compute_loss(x1, c)
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
@@ -106,15 +106,13 @@ class Flow(ABC):
 
         return x, c
 
-    def __wrapper(
-        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
-    ):
+    def __wrapper(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
         """wrapper function"""
         batch_size = x.shape[0] * x.shape[1]
         x_eval = x.view(batch_size, -1)
         c_eval = c.view(batch_size, -1)
         t_eval = t.repeat(batch_size, 1)
-        vt = self.evaluate_vector_field(x_eval, c_eval, d, t_eval)
+        vt = self.evaluate_vector_field(x_eval, c_eval, t_eval)
         return vt.view(x.shape)
 
     @torch.no_grad()
@@ -130,11 +128,10 @@ class Flow(ABC):
     ):
         self.eval()  # set to eval mode
 
-        x1_true, c_true, d_true = dataset.tensors
-        x1_true, c_true, d_true = (
+        x1_true, c_true = dataset.tensors
+        x1_true, c_true = (
             x1_true.to(self.device),
             c_true.to(self.device),
-            d_true.to(self.device),
         )
         # create the batches
         batch_size = len(x1_true)
@@ -146,7 +143,7 @@ class Flow(ABC):
         # rhs function
 
         def rhs(t, x):
-            return self.__wrapper(x, c_batch, d_true, t)
+            return self.__wrapper(x, c_batch, t)
 
         x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
@@ -155,10 +152,9 @@ class Flow(ABC):
         x1_true_denormal, _ = self.denormalize_data(x=x1_true)
 
         # Append the boundary conditions
-        x1_pred_full, d_full = self.append_boundary_conditions(
-            x=x1_pred_denormal, d=d_true
-        )
-        x1_true_full, _ = self.append_boundary_conditions(x=x1_true_denormal)
+        x1_pred_full = self.append_boundary_conditions(x1_pred_denormal)
+
+        x1_true_full = self.append_boundary_conditions(x=x1_true_denormal)
         x1_pred_full = x1_pred_full.view(x1_pred.shape[0], x1_pred.shape[1], -1)
 
         if plot:
@@ -174,14 +170,14 @@ class Flow(ABC):
                 std_pred = x1_pred_plot.std(axis=0)
 
                 axs[ii].plot(
-                    utils.t2n(d_full.ravel()),
+                    utils.t2n(self.domain_full.ravel()),
                     x1_true_plot,
                     label="True",
                     color="k",
                     marker="o",
                 )
                 axs[ii].plot(
-                    utils.t2n(d_full.ravel()),
+                    utils.t2n(self.domain_full.ravel()),
                     mean_pred,
                     label="Prediction",
                     color="red",
@@ -189,7 +185,7 @@ class Flow(ABC):
                     linestyle="--",
                 )
                 axs[ii].fill_between(
-                    utils.t2n(d_full.ravel()),
+                    utils.t2n(self.domain_full.ravel()),
                     mean_pred - 5 * std_pred,
                     mean_pred + 5 * std_pred,
                     alpha=0.3,
@@ -214,9 +210,7 @@ class Flow(ABC):
         pass
 
     @abstractmethod
-    def evaluate_vector_field(
-        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
-    ):
+    def evaluate_vector_field(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
         """evaluate the vector field"""
         pass
 

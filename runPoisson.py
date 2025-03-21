@@ -14,7 +14,7 @@ from scipy.sparse import diags
 
 from scipy.sparse.linalg import spsolve
 from src.flow import Flow
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 from omegaconf import OmegaConf
 from src.archs.encoding import RBFFiLM
 
@@ -126,7 +126,8 @@ class Poisson_case_2:
             "domain": [0.0, 1.0],
             "value": [0.0, 0.0],
         }  # Values of boundary conditions
-        self.domain = torch.linspace(0, self.L, self.n_pts)[1:-1]  # interior domain
+        self.full_domain = torch.linspace(0, self.L, self.n_pts)  # full domain
+        self.interior_domain = self.full_domain[1:-1]  # interior domain
         self.nx = self.n_pts - 2  # Number of points in the interior domain
         self.nc = self.n_modes  # Number of modes for the forcing term
         self.nd = 1  # Dimension of the domain
@@ -153,7 +154,7 @@ class Poisson_case_2:
 
     def solve(self, theta):
         N = self.n_pts - 2  # Number of interior points
-        x = self.domain  # interior points
+        x = self.interior_domain  # interior points
         dx = self.L / (N + 1)
         A = (
             diags([1, -2, 1], [-1, 0, 1], shape=(N, N)) / dx**2
@@ -186,6 +187,7 @@ class sourceFlow(Flow, L.LightningModule):
         nx: int,
         nc: int,
         nd: int,
+        domain: dict,
         normalization_config_file: str,
         boundary_conditions: dict,
     ):
@@ -196,6 +198,10 @@ class sourceFlow(Flow, L.LightningModule):
         self.nx = nx  # dimension of the field
         self.nc = nc  # dimension of the conditional information
         self.nd = nd  # dimension of the domain
+        self.domain_full = torch.FloatTensor(domain.get("full")).view(-1, self.nd)
+        self.domain_interior = (
+            torch.FloatTensor(domain.get("interior")).view(-1, self.nd).to(self.device)
+        )
         self.flow_config = self.config.flow
         self.sig_min = self.flow_config.sig_min
         self.latent_dim = self.flow_config.latent_dim
@@ -244,11 +250,9 @@ class sourceFlow(Flow, L.LightningModule):
         x0 = torch.randn_like(x1, device=self.device)
         return x0
 
-    def evaluate_vector_field(
-        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
-    ):
+    def evaluate_vector_field(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
         """evaluate the vector field"""
-        # encod time
+        # encode time
         enc_time = self.time_embedding(t, self.n_freq)
         # encode the state
         enc_state = self.state_encoder(torch.cat([x, enc_time], dim=-1))
@@ -258,7 +262,7 @@ class sourceFlow(Flow, L.LightningModule):
         skip = self.skip(enc_state + enc_cond)
         out = enc_state + enc_cond + skip
         # Encode the domain
-        out = self.domain_encoder(out, d)
+        out = self.domain_encoder(out, self.domain_interior)
 
         return out
 
@@ -267,28 +271,16 @@ class sourceFlow(Flow, L.LightningModule):
         x0 = torch.randn(batch_size, n_gen, self.nx, device=self.device)
         return x0
 
-    def append_boundary_conditions(
-        self, x: torch.Tensor = None, d: torch.Tensor = None
-    ):
+    def append_boundary_conditions(self, x: torch.Tensor):
         """function appends the boundary conditon"""
-        if x is not None:
-            left_boundary = self.boundary_conditions.get("value")[0] * torch.ones(
-                x.shape[0], 1, device=self.device
-            )
-            right_boundary = self.boundary_conditions.get("value")[1] * torch.ones(
-                x.shape[0], 1, device=self.device
-            )
-            x = torch.cat([left_boundary, x, right_boundary], dim=-1)
-        if d is not None:
-            left_boundary = self.boundary_conditions.get("domain")[0] * torch.ones(
-                1, 1, device=self.device
-            )
-            right_boundary = self.boundary_conditions.get("domain")[1] * torch.ones(
-                1, 1, device=self.device
-            )
-            d = torch.cat([left_boundary, d, right_boundary], dim=0)
-
-        return x, d
+        left_boundary = self.boundary_conditions.get("value")[0] * torch.ones(
+            x.shape[0], 1, device=self.device
+        )
+        right_boundary = self.boundary_conditions.get("value")[1] * torch.ones(
+            x.shape[0], 1, device=self.device
+        )
+        x = torch.cat([left_boundary, x, right_boundary], dim=-1)
+        return x
 
 
 class residualFlow(Flow, L.LightningModule):
@@ -405,7 +397,10 @@ class dataModule(L.LightningDataModule):
         self.nx = self.poisson.nx
         self.nc = self.poisson.nc
         self.nd = self.poisson.nd
-        self.domain = self.poisson.domain
+        self.domain = {
+            "full": self.poisson.full_domain.tolist(),
+            "interior": self.poisson.interior_domain.tolist(),
+        }
 
         self.boundary_conditions = self.poisson.boundary_conditions
 
@@ -467,7 +462,6 @@ class dataModule(L.LightningDataModule):
             # Extract the data
             field = self.poisson.field
             condition = self.poisson.condition
-            domain = self.poisson.domain.view(-1, 1)
 
             # split
             n_train = int(self.n_samples * self.loader_config.train_ratio)
@@ -484,8 +478,8 @@ class dataModule(L.LightningDataModule):
             field_val, condition_val = self.normalize_dataset(field_val, condition_val)
 
             # Create the datasets
-            self.train_set = CustomDataset(field_train, condition_train, domain)
-            self.val_set = CustomDataset(field_val, condition_val, domain)
+            self.train_set = TensorDataset(field_train, condition_train)
+            self.val_set = TensorDataset(field_val, condition_val)
 
             # Save
             save_data_dict = {"train": self.train_set, "val": self.val_set}
@@ -514,7 +508,6 @@ class dataModule(L.LightningDataModule):
             self.train_set,
             batch_size=self.loader_config.batch_size,
             shuffle=True,
-            collate_fn=self.collate_fn,
         )
 
     def val_dataloader(self):
@@ -523,7 +516,6 @@ class dataModule(L.LightningDataModule):
             self.val_set,
             batch_size=self.loader_config.batch_size,
             shuffle=False,
-            collate_fn=self.collate_fn,
         )
 
 
@@ -540,6 +532,7 @@ def train_source_model():
         nx=data_module.nx,
         nc=data_module.nc,
         nd=data_module.nd,
+        domain=data_module.domain,
         normalization_config_file=data_module.normalization_file,
         boundary_conditions=data_module.boundary_conditions,
     )
