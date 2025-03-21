@@ -72,27 +72,20 @@ class Flow(ABC):
         f = torch.arange(len(d), device=self.device).view(-1, 1) / 10000
         return (f * d).sin()
 
-    def normaliza_data(self, x: torch.Tensor = None, c: torch.Tensor = None):
+    def normalize_data(self, x: torch.Tensor = None, c: torch.Tensor = None):
         """function normalizes the data"""
         condition_stats = self.normalization_config["condition"]
         field_stats = self.normalization_config["field"]
-        raise NotImplementedError
 
-        # Normalize the condition
         if c is not None:
-            if self.normalization_config["boundary"]["condition"]:
-                c = (c - condition_stats["mean"]) / condition_stats["std"]
-            else:
-                c[:, 1:-1] = (
-                    c[:, 1:-1] - condition_stats["mean"]
-                ) / condition_stats.get["std"]
+            condition_mean = condition_stats["mean"].to(self.device)
+            condition_std = condition_stats["std"].to(self.device)
+            c = (c - condition_mean) / condition_std
 
-        # Normalize the field
         if x is not None:
-            if self.normalization_config["boundary"]["field"]:
-                x = (x - field_stats["mean"]) / field_stats.get["std"]
-            else:
-                x[:, 1:-1] = (x[:, 1:-1] - field_stats["mean"]) / field_stats["std"]
+            field_mean = field_stats["mean"].to(self.device)
+            field_std = field_stats["std"].to(self.device)
+            x = (x - field_mean) / field_std
 
         return x, c
 
@@ -101,25 +94,16 @@ class Flow(ABC):
         condition_stats = self.normalization_config["condition"]
         field_stats = self.normalization_config["field"]
 
-        # Normalize the condition
         if c is not None:
             condition_mean = condition_stats["mean"].to(self.device)
             condition_std = condition_stats["std"].to(self.device)
+            c = c * condition_std + condition_mean
 
-            if self.normalization_config["boundary"]["condition"]:
-                c = c * condition_std + condition_mean
-            else:
-                c[:, 1:-1] = c[:, 1:-1] * condition_std + condition_mean
-
-        # Normalize the field
         if x is not None:
             field_mean = field_stats["mean"].to(self.device)
             field_std = field_stats["std"].to(self.device)
+            x = x * field_std + field_mean
 
-            if self.normalization_config["boundary"]["field"]:
-                x = x * field_std + field_mean
-            else:
-                x[:, 1:-1] = x[:, 1:-1] * field_std + field_mean
         return x, c
 
     def __wrapper(
@@ -166,11 +150,16 @@ class Flow(ABC):
 
         x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
-        # denormalize the data
-        x1_pred_denorm, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
-        x1_pred_denorm = x1_pred_denorm.view(x1_pred.shape)
+        # Denormalize the data
+        x1_pred_denormal, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
+        x1_true_denormal, _ = self.denormalize_data(x=x1_true)
 
-        x1_true_denorm, _ = self.denormalize_data(x=x1_true)
+        # Append the boundary conditions
+        x1_pred_full, d_full = self.append_boundary_conditions(
+            x=x1_pred_denormal, d=d_true
+        )
+        x1_true_full, _ = self.append_boundary_conditions(x=x1_true_denormal)
+        x1_pred_full = x1_pred_full.view(x1_pred.shape[0], x1_pred.shape[1], -1)
 
         if plot:
             # idx_plot = torch.randperm(len(x1_true))[:12]
@@ -178,26 +167,28 @@ class Flow(ABC):
             fig, axs = plt.subplots(3, 4, figsize=(12, 9))
             axs = axs.flatten()
             for ii in range(len(idx_plot)):
-                x1_pred_plot = utils.t2n(x1_pred_denorm[idx_plot[ii]])
-                x1_true_plot = utils.t2n(x1_true_denorm[idx_plot[ii]]).ravel()
+                x1_pred_plot = utils.t2n(x1_pred_full[idx_plot[ii]])
+                x1_true_plot = utils.t2n(x1_true_full[idx_plot[ii]]).ravel()
+
                 mean_pred = x1_pred_plot.mean(axis=0)
                 std_pred = x1_pred_plot.std(axis=0)
+
                 axs[ii].plot(
-                    utils.t2n(d_true.ravel()),
+                    utils.t2n(d_full.ravel()),
                     mean_pred,
                     label="Prediction",
                     color="red",
                     marker="o",
                 )
                 axs[ii].plot(
-                    utils.t2n(d_true.ravel()),
+                    utils.t2n(d_full.ravel()),
                     x1_true_plot,
                     label="True",
                     color="k",
                     marker="o",
                 )
                 axs[ii].fill_between(
-                    utils.t2n(d_true.ravel()),
+                    utils.t2n(d_full.ravel()),
                     mean_pred - std_pred,
                     mean_pred + std_pred,
                     alpha=0.3,
@@ -231,4 +222,9 @@ class Flow(ABC):
     @abstractmethod
     def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """get the initial condition for the flow"""
+        pass
+
+    @abstractmethod
+    def append_boundary_conditions(self, x: torch.Tensor):
+        """append the boundary conditions to the data"""
         pass

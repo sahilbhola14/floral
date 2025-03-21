@@ -121,21 +121,24 @@ class Poisson_case_2:
         self.n_pts = config.get("n_pts")
         self.n_samples = config.get("n_samples")
         self.n_modes = 5  # Number of modes for the forcing term
-        self.boundary_normalization = {"condition": True, "field": False}
         self.L = 1.0  # domain length
-        self.domain = torch.linspace(0, self.L, self.n_pts)  # full domain
-        self.nx = self.n_pts  # Number of points in the domain
+        self.boundary_conditions = {
+            "domain": [0.0, 1.0],
+            "value": [0.0, 0.0],
+        }  # Values of boundary conditions
+        self.domain = torch.linspace(0, self.L, self.n_pts)[1:-1]  # interior domain
+        self.nx = self.n_pts - 2  # Number of points in the interior domain
         self.nc = self.n_modes  # Number of modes for the forcing term
         self.nd = 1  # Dimension of the domain
 
     def compute_dataset(self):
         """Function computes the dataset"""
         self.condition = self.sample_theta()  # condition for the field
-        self.field = torch.zeros(self.n_samples, self.n_pts)  # field
+        self.field = torch.zeros(self.n_samples, self.nx)  # field
 
         for ii in range(self.n_samples):
             u = self.solve(self.condition[ii])
-            self.field[ii] = utils.n2t(u)
+            self.field[ii] = utils.n2t(u)[1:-1]  # Only interior field is generated
 
     def sample_theta(self):
         """Sample the model parameters"""
@@ -150,7 +153,7 @@ class Poisson_case_2:
 
     def solve(self, theta):
         N = self.n_pts - 2  # Number of interior points
-        x = self.domain[1:-1]  # interior points
+        x = self.domain  # interior points
         dx = self.L / (N + 1)
         A = (
             diags([1, -2, 1], [-1, 0, 1], shape=(N, N)) / dx**2
@@ -178,7 +181,13 @@ class sourceFlow(Flow, L.LightningModule):
     """SOURCE Flow Model"""
 
     def __init__(
-        self, config: dict, nx: int, nc: int, nd: int, normalization_config_file: str
+        self,
+        config: dict,
+        nx: int,
+        nc: int,
+        nd: int,
+        normalization_config_file: str,
+        boundary_conditions: dict,
     ):
         super(sourceFlow, self).__init__()
         self.save_hyperparameters()
@@ -192,6 +201,7 @@ class sourceFlow(Flow, L.LightningModule):
         self.latent_dim = self.flow_config.latent_dim
         self.n_freq = self.flow_config.time_emb_freq
         self.normalization_config = torch.load(normalization_config_file)
+        self.boundary_conditions = boundary_conditions
 
         # State embedding
         self.state_encoder = nn.Sequential(
@@ -256,6 +266,29 @@ class sourceFlow(Flow, L.LightningModule):
         """sample the initial condition"""
         x0 = torch.randn(batch_size, n_gen, self.nx, device=self.device)
         return x0
+
+    def append_boundary_conditions(
+        self, x: torch.Tensor = None, d: torch.Tensor = None
+    ):
+        """function appends the boundary conditon"""
+        if x is not None:
+            left_boundary = self.boundary_conditions.get("value")[0] * torch.ones(
+                x.shape[0], 1, device=self.device
+            )
+            right_boundary = self.boundary_conditions.get("value")[1] * torch.ones(
+                x.shape[0], 1, device=self.device
+            )
+            x = torch.cat([left_boundary, x, right_boundary], dim=-1)
+        if d is not None:
+            left_boundary = self.boundary_conditions.get("domain")[0] * torch.ones(
+                1, 1, device=self.device
+            )
+            right_boundary = self.boundary_conditions.get("domain")[1] * torch.ones(
+                1, 1, device=self.device
+            )
+            d = torch.cat([left_boundary, d, right_boundary], dim=0)
+
+        return x, d
 
 
 class residualFlow(Flow, L.LightningModule):
@@ -374,12 +407,12 @@ class dataModule(L.LightningDataModule):
         self.nd = self.poisson.nd
         self.domain = self.poisson.domain
 
+        self.boundary_conditions = self.poisson.boundary_conditions
+
         self.normalization_config = {}
-        self.normalization_config["boundary"] = self.poisson.boundary_normalization
 
         self.dataset_file = "dataset_" + self.model + ".pt"
         self.normalization_file = "normalization_config_" + self.model + ".pt"
-
         self.setup()
 
     def normalize_dataset(self, field, condition):
@@ -387,35 +420,32 @@ class dataModule(L.LightningDataModule):
         condition_stats = self.normalization_config["condition"]
         field_stats = self.normalization_config["field"]
 
-        # Normalize the condition
-        if self.normalization_config["boundary"]["condition"]:
-            condition = (condition - condition_stats["mean"]) / condition_stats["std"]
-        else:
-            condition[:, 1:-1] = (
-                condition[:, 1:-1] - condition_stats["mean"]
-            ) / condition_stats.get["std"]
+        condition_mean, condition_std = condition_stats.get(
+            "mean"
+        ), condition_stats.get("std")
+        field_mean, field_std = field_stats.get("mean"), field_stats.get("std")
 
+        assert (
+            condition.shape[-1] == len(condition_mean) == len(condition_std)
+        ), "Invalid dimensions"
+        assert (
+            field.shape[-1] == len(field_mean) == len(field_std)
+        ), "Invalid dimensions"
+
+        # Normalize the condition
+        condition = (condition - condition_mean) / condition_std
         # Normalize the field
-        if self.normalization_config["boundary"]["field"]:
-            field = (field - field_stats["mean"]) / field_stats.get["std"]
-        else:
-            field[:, 1:-1] = (field[:, 1:-1] - field_stats["mean"]) / field_stats["std"]
+        field = (field - field_mean) / field_std
+
         return field, condition
 
     def comp_dataset_stats(self, field_train, condition_train):
         """function computes the dataset statistics"""
-        if self.normalization_config["boundary"]["condition"]:
-            condition_mean = condition_train.mean(0)
-            condition_std = condition_train.std(0)
-        else:
-            condition_mean = condition_train[:, 1:-1].mean(0)
-            condition_std = condition_train[:, 1:-1].std(0)
-        if self.normalization_config["boundary"]["field"]:
-            field_mean = field_train.mean(0)
-            field_std = field_train.std(0)
-        else:
-            field_mean = field_train[:, 1:-1].mean(0)
-            field_std = field_train[:, 1:-1].std(0)
+        condition_mean = condition_train.mean(0)
+        condition_std = condition_train.std(0)
+
+        field_mean = field_train.mean(0)
+        field_std = field_train.std(0)
 
         field_stats = {}
         field_stats["mean"] = field_mean
@@ -511,6 +541,7 @@ def train_source_model():
         nc=data_module.nc,
         nd=data_module.nd,
         normalization_config_file=data_module.normalization_file,
+        boundary_conditions=data_module.boundary_conditions,
     )
     checkpointer = utils.get_checkpointer(data_config.checkpoint_path)
     trainer = utils.get_trainer(
@@ -538,29 +569,11 @@ def train_source_model():
     # Load the best model
     model = sourceFlow.load_from_checkpoint(best_model_path)
     # Plotting
-    model.evaluate_dataset(data_module.val_set, plot=True)  # get the prediction
+    model.evaluate_dataset(
+        data_module.val_set, plot=True, n_gen=2
+    )  # get the prediction
 
     return checkpointer.best_model_path
-
-
-def train_residual_model(best_source_model_path):
-    """train the residual model"""
-    raise NotImplementedError
-    # data_module = dataModule(config, model="high_fidelity")
-    # model = residualFlow(
-    #     config,
-    #     nx=data_module.nx,
-    #     nc=data_module.nc,
-    #     nd=data_module.nd,
-    #     best_source_model_path=best_source_model_path,
-    # )
-    # checkpointer = utils.get_checkpointer(config.data.high_fidelity.checkpoint_path)
-
-    # trainer = utils.get_trainer(
-    #     checkpointer=checkpointer,
-    #     logger_name=config.data.high_fidelity.logger_name,
-    #     train_config=config.train.high_fidelity,
-    # )
 
 
 if __name__ == "__main__":
