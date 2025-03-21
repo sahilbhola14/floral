@@ -72,6 +72,52 @@ class Flow(ABC):
         f = torch.arange(len(d), device=self.device).view(-1, 1) / 10000
         return (f * d).sin()
 
+    def normaliza_data(self, x: torch.Tensor = None, c: torch.Tensor = None):
+        """function normalizes the data"""
+        condition_stats = self.normalization_config["condition"]
+        field_stats = self.normalization_config["field"]
+
+        # Normalize the condition
+        if c is not None:
+            if self.normalization_config["boundary"]["condition"]:
+                c = (c - condition_stats["mean"]) / condition_stats["std"]
+            else:
+                c[:, 1:-1] = (
+                    c[:, 1:-1] - condition_stats["mean"]
+                ) / condition_stats.get["std"]
+
+        # Normalize the field
+        if x is not None:
+            if self.normalization_config["boundary"]["field"]:
+                x = (x - field_stats["mean"]) / field_stats.get["std"]
+            else:
+                x[:, 1:-1] = (x[:, 1:-1] - field_stats["mean"]) / field_stats["std"]
+
+        return x, c
+
+    def denormalize_data(self, x: torch.Tensor = None, c: torch.Tensor = None):
+        """function denormalizes the data"""
+        condition_stats = self.normalization_config["condition"]
+        field_stats = self.normalization_config["field"]
+
+        # Normalize the condition
+        if c is not None:
+            if self.normalization_config["boundary"]["condition"]:
+                c = c * condition_stats["std"] + condition_stats["mean"]
+            else:
+                c[:, 1:-1] = (
+                    c[:, 1:-1] * condition_stats["std"] + condition_stats.get["mean"]
+                )
+
+        # Normalize the field
+        if x is not None:
+            if self.normalization_config["boundary"]["field"]:
+                x = x * field_stats["std"] + field_stats.get["mean"]
+            else:
+                x[:, 1:-1] = x[:, 1:-1] * field_stats["std"] + field_stats["mean"]
+
+        return x, c
+
     def __wrapper(
         self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
     ):
@@ -116,13 +162,18 @@ class Flow(ABC):
 
         x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
+        # denormalize the data
+        x1_true_denorm, _ = self.denormalize_data(x=x1_true)
+        x1_pred_denorm, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
+        x1_pred_denorm = x1_pred_denorm.view(x1_pred.shape)
+
         if plot:
             idx_plot = torch.randperm(len(x1_true))[:12]
             fig, axs = plt.subplots(3, 4, figsize=(12, 9))
             axs = axs.flatten()
             for ii in range(len(idx_plot)):
-                x1_pred_plot = utils.t2n(x1_pred[idx_plot[ii]])
-                x1_true_plot = utils.t2n(x1_true[idx_plot[ii]]).ravel()
+                x1_pred_plot = utils.t2n(x1_pred_denorm[idx_plot[ii]])
+                x1_true_plot = utils.t2n(x1_true_denorm[idx_plot[ii]]).ravel()
                 mean_pred = x1_pred_plot.mean(axis=0)
                 std_pred = x1_pred_plot.std(axis=0)
                 axs[ii].plot(

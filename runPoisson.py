@@ -174,7 +174,11 @@ class CustomDataset(Dataset):
 
 
 class sourceFlow(Flow, L.LightningModule):
-    def __init__(self, config: dict, nx: int, nc: int, nd: int):
+    """SOURCE Flow Model"""
+
+    def __init__(
+        self, config: dict, nx: int, nc: int, nd: int, normalization_config_file: str
+    ):
         super(sourceFlow, self).__init__()
         self.save_hyperparameters()
 
@@ -186,7 +190,9 @@ class sourceFlow(Flow, L.LightningModule):
         self.sig_min = self.flow_config.sig_min
         self.latent_dim = self.flow_config.latent_dim
         self.n_freq = self.flow_config.time_emb_freq
+        self.normalization_config = torch.load(normalization_config_file)
 
+        # State embedding
         self.state_encoder = nn.Sequential(
             nn.Linear(self.nx + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
@@ -208,7 +214,7 @@ class sourceFlow(Flow, L.LightningModule):
             nn.Linear(64, self.latent_dim),
         )
 
-        # Skip
+        # Skip connection
         self.skip = nn.Sequential(
             nn.Linear(self.latent_dim, 64),
             nn.BatchNorm1d(64),
@@ -222,15 +228,6 @@ class sourceFlow(Flow, L.LightningModule):
         # Domain encoder
         self.domain_encoder = RBFFiLM(in_dim=self.nd, out_dim=self.latent_dim)
 
-        # Output
-        # self.out = nn.Sequential(
-        #         nn.Linear(self.nx, 64),
-        #         nn.ReLU(),
-        #         nn.Linear(64, 64),
-        #         nn.ReLU(),
-        #         nn.Linear(64, self.nx),
-        #         )
-
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
         x0 = torch.randn_like(x1, device=self.device)
@@ -242,8 +239,6 @@ class sourceFlow(Flow, L.LightningModule):
         """evaluate the vector field"""
         # encod time
         enc_time = self.time_embedding(t, self.n_freq)
-        # encode the domain
-        # enc_domain = self.position_embedding(d)
         # encode the state
         enc_state = self.state_encoder(torch.cat([x, enc_time], dim=-1))
         # encode the condition
@@ -262,6 +257,99 @@ class sourceFlow(Flow, L.LightningModule):
         return x0
 
 
+class residualFlow(Flow, L.LightningModule):
+    """RESIDUAL Flow Model"""
+
+    def __init__(
+        self, config: dict, nx: int, nc: int, nd: int, best_source_model_path: str
+    ):
+        super(residualFlow, self).__init__()
+        self.save_hyperparameters()
+
+        self.config = config  # config
+        self.nx = nx  # dimension of the field
+        self.nc = nc  # dimension of the conditional information
+        self.nd = nd  # dimension of the domain
+        self.flow_config = self.config.flow
+        self.sig_min = self.flow_config.sig_min
+        self.latent_dim = self.flow_config.latent_dim
+        self.n_freq = self.flow_config.time_emb_freq
+
+        # source flow
+        self.best_source_model_path = best_source_model_path
+        self.source_model = self.initialize_source_flow_model()
+
+        # State embedding
+        self.state_encoder = nn.Sequential(
+            nn.Linear(self.nx + 2 * self.n_freq, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, self.latent_dim),
+        )
+
+        # Conditional embedding
+        self.condition_encoder = nn.Sequential(
+            nn.Linear(self.nc + 2 * self.n_freq, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, self.latent_dim),
+        )
+
+        # Skip connection
+        self.skip = nn.Sequential(
+            nn.Linear(self.latent_dim, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, self.latent_dim),
+        )
+
+        # Domain encoder
+        self.domain_encoder = RBFFiLM(in_dim=self.nd, out_dim=self.latent_dim)
+
+    def initialize_source_flow_model(self):
+        """Initialize the source flow model (set to eval mode)"""
+        source_model = sourceFlow.load_from_checkpoint(self.best_source_model_path)
+        for param in source_model.parameters():
+            param.requires_grad = False
+        return source_model
+
+    def query_source_model(self, c_normalized):
+        """Query the source model
+        Args:
+            c_normalized (torch.Tensor): normalized condition tensor
+        """
+        raise NotImplementedError
+
+    def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
+        """sample the base density"""
+        raise NotImplementedError
+
+    def evaluate_vector_field(
+        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
+    ):
+        """evaluate the vector field"""
+        raise NotImplementedError
+
+    def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
+        """sample the initial condition"""
+        raise NotImplementedError
+
+
 class dataModule(L.LightningDataModule):
     def __init__(self, config, model="low_fidelity"):
         super(dataModule, self).__init__()
@@ -273,7 +361,11 @@ class dataModule(L.LightningDataModule):
             else self.config.data.high_fidelity
         )
         self.n_samples = self.data_config.n_samples  # number of samples (train + val)
-        self.loader_config = self.config.dataloader
+        self.loader_config = (
+            self.config.dataloader.low_fidelity
+            if model == "low_fidelity"
+            else self.config.dataloader.high_fidelity
+        )
         self.poisson = Poisson_case_2(self.data_config)  # Solve the equations
 
         self.nx = self.poisson.nx
@@ -404,23 +496,56 @@ class dataModule(L.LightningDataModule):
         )
 
 
-if __name__ == "__main__":
-    # Low fidelity
+def train_source_model():
+    """train the source(low) fidelity model"""
     data_module = dataModule(config, model="low_fidelity")
     model = sourceFlow(
         config,
         nx=data_module.nx,
         nc=data_module.nc,
         nd=data_module.nd,
+        normalization_config_file=data_module.normalization_file,
     )
     checkpointer = utils.get_checkpointer(config.data.low_fidelity.checkpoint_path)
     trainer = utils.get_trainer(
         checkpointer=checkpointer,
         logger_name=config.data.low_fidelity.logger_name,
-        train_config=config.train,
+        train_config=config.train.low_fidelity,
     )
     # train the model
     trainer.fit(model, data_module)
-    # # load the best model
+    # load the best model
     model = sourceFlow.load_from_checkpoint(checkpointer.best_model_path)
+    # evaluate the validation set
     model.evaluate_dataset(data_module.val_set, plot=True)  # get the prediction
+
+    return checkpointer.best_model_path
+
+
+def train_residual_model(best_source_model_path):
+    """train the residual model"""
+    raise NotImplementedError
+    # data_module = dataModule(config, model="high_fidelity")
+    # model = residualFlow(
+    #     config,
+    #     nx=data_module.nx,
+    #     nc=data_module.nc,
+    #     nd=data_module.nd,
+    #     best_source_model_path=best_source_model_path,
+    # )
+    # checkpointer = utils.get_checkpointer(config.data.high_fidelity.checkpoint_path)
+
+    # trainer = utils.get_trainer(
+    #     checkpointer=checkpointer,
+    #     logger_name=config.data.high_fidelity.logger_name,
+    #     train_config=config.train.high_fidelity,
+    # )
+
+
+if __name__ == "__main__":
+    # train the LF model
+    best_source_model_path = train_source_model()
+    # best_source_model_path = ""
+
+    # train the HF model
+    # train_residual_model(best_source_model_path)
