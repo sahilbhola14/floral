@@ -3,6 +3,7 @@ import torch
 import pytorch_lightning as L
 import argparse
 import utils.utils as utils
+import os.path as osp
 
 # import scipy.sparse as sp
 
@@ -498,7 +499,12 @@ class dataModule(L.LightningDataModule):
 
 def train_source_model():
     """train the source(low) fidelity model"""
-    data_module = dataModule(config, model="low_fidelity")
+    # Specs
+    model = "low_fidelity"
+    data_config = config.data.low_fidelity
+    train_config = config.train.low_fidelity
+
+    data_module = dataModule(config, model=model)
     model = sourceFlow(
         config,
         nx=data_module.nx,
@@ -506,17 +512,32 @@ def train_source_model():
         nd=data_module.nd,
         normalization_config_file=data_module.normalization_file,
     )
-    checkpointer = utils.get_checkpointer(config.data.low_fidelity.checkpoint_path)
+    checkpointer = utils.get_checkpointer(data_config.checkpoint_path)
     trainer = utils.get_trainer(
         checkpointer=checkpointer,
-        logger_name=config.data.low_fidelity.logger_name,
-        train_config=config.train.low_fidelity,
+        logger_name=data_config.logger_name,
+        train_config=train_config,
     )
-    # train the model
-    trainer.fit(model, data_module)
-    # load the best model
-    model = sourceFlow.load_from_checkpoint(checkpointer.best_model_path)
-    # evaluate the validation set
+
+    if train_config.mode == "train":
+        # Train
+        trainer.fit(model, data_module)
+        best_model_path = checkpointer.best_model_path
+    elif train_config.mode == "eval":
+        # Load the checkpoint
+        assert (
+            data_config.load_checkpoint is not None
+        ), "For eval mode, a checkpoint must be provided"
+        best_model_path = (
+            data_config.checkpoint_path + "/" + data_config.load_checkpoint
+        )
+        assert osp.exists(best_model_path), "Config file unavailable (Typo?)"
+    else:
+        raise ValueError("Invalid mode")
+
+    # Load the best model
+    model = sourceFlow.load_from_checkpoint(best_model_path)
+    # Plotting
     model.evaluate_dataset(data_module.val_set, plot=True)  # get the prediction
 
     return checkpointer.best_model_path

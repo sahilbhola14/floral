@@ -1,38 +1,41 @@
 # Configutations for Poisson Equation
 
 data:
-  path: null
   low_fidelity:
     n_pts: 10 # number of spatial points
-    n_samples: 100 # number of data samples
+    n_samples: 10000 # number of data samples
     checkpoint_path: "./experiments/mfFlow/Poisson/lowFidelity/checkpoints"
-    logger_name: "poisson_low_fidelity"
-    load_dataset: False
+    load_checkpoint: "model-epoch=2996-val_loss=0.02.ckpt"
+    logger_name: "poisson_low_fidelity" # logger folder
+    load_dataset: True # load past dataset
   high_fidelity:
     n_pts: 100 # number of spatial points
     n_samples: 100 # number of data samples
     checkpoint_path: "./experiments/mfFlow/Poisson/highFidelity/checkpoints"
-    logger_name: "poisson_high_fidelity"
-    load_dataset: False
+    load_checkpoint: null
+    logger_name: "poisson_high_fidelity" # logger folder
+    load_dataset: False # load past dataset
 
 dataloader:
   low_fidelity:
-    batch_size: 1024
-    train_ratio: 0.7
+    batch_size: 1024 # batch size
+    train_ratio: 0.7 # percentage of {n_samples} to train
   high_fidelity:
-    batch_size: 1024
-    train_ratio: 0.7
+    batch_size: 1024 # batch size
+    train_ratio: 0.7 # percentage of {n_samples} to train
 
 train:
   low_fidelity:
-    accelerator: 'cpu'
+    mode: "eval" # {train} model trains the model, {eval} model evals the model
+    accelerator: 'gpu'
     devices: 1
     strategy: 'ddp'
     precision: 'bf16-mixed'
-    max_epochs: 1
+    max_epochs: 3000
     learning_rate: 1.0e-2
     weight_decay: 1.0e-4
   high_fidelity:
+    mode: "eval" # {train} model trains the model, {eval} model evals the model
     accelerator: 'cpu'
     devices: 1
     strategy: 'ddp'
@@ -40,8 +43,6 @@ train:
     max_epochs: 1
     learning_rate: 1.0e-2
     weight_decay: 1.0e-4
-
-
 
 flow:
   time_emb_freq: 4 # time embedding

@@ -76,6 +76,7 @@ class Flow(ABC):
         """function normalizes the data"""
         condition_stats = self.normalization_config["condition"]
         field_stats = self.normalization_config["field"]
+        raise NotImplementedError
 
         # Normalize the condition
         if c is not None:
@@ -102,20 +103,23 @@ class Flow(ABC):
 
         # Normalize the condition
         if c is not None:
+            condition_mean = condition_stats["mean"].to(self.device)
+            condition_std = condition_stats["std"].to(self.device)
+
             if self.normalization_config["boundary"]["condition"]:
-                c = c * condition_stats["std"] + condition_stats["mean"]
+                c = c * condition_std + condition_mean
             else:
-                c[:, 1:-1] = (
-                    c[:, 1:-1] * condition_stats["std"] + condition_stats.get["mean"]
-                )
+                c[:, 1:-1] = c[:, 1:-1] * condition_std + condition_mean
 
         # Normalize the field
         if x is not None:
-            if self.normalization_config["boundary"]["field"]:
-                x = x * field_stats["std"] + field_stats.get["mean"]
-            else:
-                x[:, 1:-1] = x[:, 1:-1] * field_stats["std"] + field_stats["mean"]
+            field_mean = field_stats["mean"].to(self.device)
+            field_std = field_stats["std"].to(self.device)
 
+            if self.normalization_config["boundary"]["field"]:
+                x = x * field_std + field_mean
+            else:
+                x[:, 1:-1] = x[:, 1:-1] * field_std + field_mean
         return x, c
 
     def __wrapper(
@@ -163,12 +167,14 @@ class Flow(ABC):
         x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
         # denormalize the data
-        x1_true_denorm, _ = self.denormalize_data(x=x1_true)
         x1_pred_denorm, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
         x1_pred_denorm = x1_pred_denorm.view(x1_pred.shape)
 
+        x1_true_denorm, _ = self.denormalize_data(x=x1_true)
+
         if plot:
-            idx_plot = torch.randperm(len(x1_true))[:12]
+            # idx_plot = torch.randperm(len(x1_true))[:12]
+            idx_plot = range(12)
             fig, axs = plt.subplots(3, 4, figsize=(12, 9))
             axs = axs.flatten()
             for ii in range(len(idx_plot)):
