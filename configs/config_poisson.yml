@@ -26,7 +26,7 @@ dataloader:
 
 train:
   low_fidelity:
-    mode: "eval" # {train} model trains the model, {eval} model evals the model
+    mode: "train" # {train} model trains the model, {eval} model evals the model
     accelerator: 'gpu'
     devices: 3
     strategy: 'ddp'
