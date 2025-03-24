@@ -309,7 +309,15 @@ class residualFlow(Flow, L.LightningModule):
     """RESIDUAL Flow Model"""
 
     def __init__(
-        self, config: dict, nx: int, nc: int, nd: int, best_source_model_path: str
+        self,
+        config: dict,  # configuration
+        nx: int,  # dimension of the field (interior)
+        nc: int,  # dimension of the conditions
+        nd: int,  # dimension of the domain
+        domain: dict,  # domain information (interior and full)
+        normalization_config_file: str,  # normalization config file
+        boundary_conditions: dict,  # boundary conditions
+        best_source_model_path: str,  # path to the best source model
     ):
         super(residualFlow, self).__init__()
         self.save_hyperparameters()
@@ -318,10 +326,16 @@ class residualFlow(Flow, L.LightningModule):
         self.nx = nx  # dimension of the field
         self.nc = nc  # dimension of the conditional information
         self.nd = nd  # dimension of the domain
+        self.domain_full = torch.FloatTensor(domain.get("full")).view(-1, self.nd)
+        self.domain_interior = torch.FloatTensor(domain.get("interior")).view(
+            -1, self.nd
+        )
         self.flow_config = self.config.flow
         self.sig_min = self.flow_config.sig_min
         self.latent_dim = self.flow_config.latent_dim
         self.n_freq = self.flow_config.time_emb_freq
+        self.normalization_config = torch.load(normalization_config_file)
+        self.boundary_conditions = boundary_conditions
 
         # source flow
         self.best_source_model_path = best_source_model_path
@@ -372,6 +386,7 @@ class residualFlow(Flow, L.LightningModule):
     def initialize_source_flow_model(self):
         """Initialize the source flow model (set to eval mode)"""
         source_model = sourceFlow.load_from_checkpoint(self.best_source_model_path)
+        assert osp.exists(self.best_source_model_path), "Invalid source path"
         for param in source_model.parameters():
             param.requires_grad = False
         return source_model
@@ -383,19 +398,79 @@ class residualFlow(Flow, L.LightningModule):
         """
         raise NotImplementedError
 
+    @torch.no_grad()
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
-        raise NotImplementedError
+        _, c_denormal = self.denormalize_data(
+            c=c
+        )  # low fideltiy query takes in denormalized condition
+        interpolation_config = {
+            "interpolate": True,
+            "target_domain": self.domain_full,
+        }
+        # Generate one sample from the (trained) source model
+        x0_denormal = self.source_model.query(
+            c_denormal, interpolation_config=interpolation_config, n_gen=1
+        ).squeeze(1)
 
-    def evaluate_vector_field(
-        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
-    ):
+        assert x0_denormal.shape == x1.shape, "Invalid dimensions"
+
+        # Normalize according to the residual model
+        x0, _ = self.normalize_data(x=x0_denormal)
+
+        return x0
+
+    def evaluate_vector_field(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
         """evaluate the vector field"""
-        raise NotImplementedError
+        # encode time
+        enc_time = self.time_embedding(t, self.n_freq)
+        # encode the state
+        enc_state = self.state_encoder(torch.cat([x, enc_time], dim=-1))
+        # encode the condition
+        enc_cond = self.condition_encoder(torch.cat([c, enc_time], dim=-1))
+        # skip connection
+        skip = self.skip(enc_state + enc_cond)
+        out = enc_state + enc_cond + skip
+        # Encode the domain
+        out = self.domain_encoder(out, self.domain_interior.to(self.device))
+
+        return out
 
     def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """sample the initial condition"""
-        raise NotImplementedError
+        _, c_denormal = self.denormalize_data(
+            c=c
+        )  # low fideltiy query takes in denormalized condition
+        interpolation_config = {
+            "interpolate": True,
+            "target_domain": self.domain_full,
+        }
+        # Generate one sample from the (trained) source model
+        x0_denormal = self.source_model.query(
+            c_denormal, interpolation_config=interpolation_config, n_gen=n_gen
+        ).squeeze(1)
+
+        # Normalize according to the residual model
+        x0, _ = self.normalize_data(x=x0_denormal)
+
+        assert x0.shape == (batch_size, n_gen, self.nx), "Invalid dimensions"
+
+        return x0
+
+    def append_boundary_conditions(self, x: torch.Tensor):
+        """function appends the boundary conditon"""
+        left_boundary = self.boundary_conditions.get("value")[0] * torch.ones(
+            x.shape[0], 1, device=self.device
+        )
+        right_boundary = self.boundary_conditions.get("value")[1] * torch.ones(
+            x.shape[0], 1, device=self.device
+        )
+        x = torch.cat([left_boundary, x, right_boundary], dim=-1)
+        return x
+
+    def remove_boundary_conditions(self, x: torch.Tensor):
+        """remove the boundary conditions"""
+        return x[:, 1:-1]
 
 
 class dataModule(L.LightningDataModule):
@@ -616,7 +691,7 @@ def train_source_model():
     model = sourceFlow.load_from_checkpoint(best_model_path)
     # Evaluate the validation dataset
     model.evaluate_dataset(
-        data_module.val_set, plot=True, n_gen=2
+        data_module.val_set, plot=True, n_gen=100
     )  # get the prediction
 
     # Query the model
@@ -641,10 +716,64 @@ def train_source_model():
     return checkpointer.best_model_path
 
 
+def train_residual_model(best_source_model_path):
+    """train the residual model"""
+    # Specs
+    model = "high_fidelity"
+    data_config = config.data.high_fidelity
+    train_config = config.train.high_fidelity
+
+    data_module = dataModule(config, model=model)
+
+    model = residualFlow(
+        config,
+        nx=data_module.nx,
+        nc=data_module.nc,
+        nd=data_module.nd,
+        domain=data_module.domain,
+        normalization_config_file=data_module.normalization_file,
+        boundary_conditions=data_module.boundary_conditions,
+        best_source_model_path=best_source_model_path,
+    )
+    checkpointer = utils.get_checkpointer(data_config.checkpoint_path)
+    trainer = utils.get_trainer(
+        checkpointer=checkpointer,
+        logger_name=data_config.logger_name,
+        train_config=train_config,
+    )
+    if train_config.mode == "train":
+        # Train
+        trainer.fit(model, data_module)
+        best_model_path = checkpointer.best_model_path
+    elif train_config.mode == "eval":
+        # Load the checkpoint
+        assert (
+            data_config.load_checkpoint is not None
+        ), "For eval mode, a checkpoint must be provided"
+        assert (
+            data_config.load_dataset is True
+        ), "For using past checkpoint, the relevant dataset must be loaded"
+        best_model_path = (
+            data_config.checkpoint_path + "/" + data_config.load_checkpoint
+        )
+        assert osp.exists(best_model_path), "Config file unavailable (Typo?)"
+    else:
+        raise ValueError("Invalid mode")
+
+    # Load the best model
+    model = residualFlow.load_from_checkpoint(best_model_path)
+    # Evaluate the validation dataset
+    model.evaluate_dataset(
+        data_module.val_set, plot=True, n_gen=2
+    )  # get the prediction
+
+
 if __name__ == "__main__":
     # train the LF model
-    best_source_model_path = train_source_model()
-    # best_source_model_path = ""
-
+    # best_source_model_path = train_source_model()
+    best_source_model_path = (
+        "experiments/mfFlow/Poisson/lowFidelity/"
+        "checkpoints/model-epoch=00-val_loss=2.68.ckpt"
+    )
     # train the HF model
-    # train_residual_model(best_source_model_path)
+    train_residual_model(best_source_model_path)

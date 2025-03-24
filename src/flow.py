@@ -247,15 +247,26 @@ class Flow(ABC):
             x1_pred_denormal = self.append_boundary_conditions(
                 x1_pred_denormal.view(-1, self.nx)
             ).view(-1, 1, len(self.domain_full))
-            target_domain = interpolation_config.get("target_domain")
+            target_domain = interpolation_config.get(
+                "target_domain"
+            )  # full domain for interpolation
+            assert (
+                target_domain.shape[-1] == self.nd and target_domain.ndim == 2
+            ), "Invalid target domain"
             interpolated_values = torch.nn.functional.interpolate(
                 x1_pred_denormal,
                 size=len(target_domain),
                 mode="linear",
                 align_corners=True,
-            ).squeeze(1)
-            interpolated_values = self.remove_boundary_conditions(interpolated_values)
-            return interpolated_values.view(x1_pred.shape[0], x1_pred.shape[1], -1)
+            ).squeeze(
+                1
+            )  # interpolate on the full domain
+            interpolated_values = self.remove_boundary_conditions(
+                interpolated_values
+            )  # remove boundary conditions
+            return interpolated_values.view(
+                x1_pred.shape[0], x1_pred.shape[1], -1
+            )  # return the interpolated values
         else:
             return x1_pred_denormal
 
@@ -277,4 +288,9 @@ class Flow(ABC):
     @abstractmethod
     def append_boundary_conditions(self, x: torch.Tensor):
         """append the boundary conditions to the data"""
+        pass
+
+    @abstractmethod
+    def remove_boundary_conditions(self, x: torch.Tensor):
+        """remove the boundary conditions to the data"""
         pass
