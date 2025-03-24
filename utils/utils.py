@@ -13,6 +13,7 @@ from datetime import datetime
 plt.rcParams["image.cmap"] = "inferno"
 plt.rcParams["text.usetex"] = True
 plt.rcParams["font.size"] = 14
+plt.rcParams["lines.linewidth"] = 2
 
 
 @rank_zero_only
