@@ -346,11 +346,11 @@ class residualFlow(Flow, L.LightningModule):
             nn.Linear(self.nx + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(64, self.latent_dim),
         )
 
@@ -359,11 +359,11 @@ class residualFlow(Flow, L.LightningModule):
             nn.Linear(self.nc + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(64, self.latent_dim),
         )
 
@@ -372,11 +372,11 @@ class residualFlow(Flow, L.LightningModule):
             nn.Linear(self.latent_dim, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(64, self.latent_dim),
         )
 
@@ -710,7 +710,7 @@ def train_source_model():
     plt.figure()
     plt.plot(domain_interior_true.ravel(), utils.t2n(x1_pred[0].mean(0)))
     plt.plot(domain_interior_true, x1_true[0])
-    plt.savefig("test_query.png")
+    plt.savefig("interpolation_low.png")
     plt.close()
 
     return checkpointer.best_model_path
@@ -764,7 +764,7 @@ def train_residual_model(best_source_model_path):
     model = residualFlow.load_from_checkpoint(best_model_path)
     # Evaluate the validation dataset
     model.evaluate_dataset(
-        data_module.val_set, plot=True, n_gen=2
+        data_module.val_set, plot=True, n_gen=100
     )  # get the prediction
 
 
@@ -773,7 +773,7 @@ if __name__ == "__main__":
     # best_source_model_path = train_source_model()
     best_source_model_path = (
         "experiments/mfFlow/Poisson/lowFidelity/"
-        "checkpoints/model-epoch=00-val_loss=2.68.ckpt"
+        "checkpoints/model-epoch=2805-val_loss=0.02.ckpt"
     )
-    # train the HF model
+    # # train the HF model
     train_residual_model(best_source_model_path)

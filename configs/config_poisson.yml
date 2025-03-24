@@ -14,14 +14,14 @@ data:
     checkpoint_path: "./experiments/mfFlow/Poisson/highFidelity/checkpoints"
     load_checkpoint: null
     logger_name: "poisson_high_fidelity" # logger folder
-    load_dataset: False # load past dataset
+    load_dataset: True # load past dataset
 
 dataloader:
   low_fidelity:
     batch_size: 1024 # batch size
     train_ratio: 0.7 # percentage of {n_samples} to train
   high_fidelity:
-    batch_size: 1024 # batch size
+    batch_size: 16 # batch size
     train_ratio: 0.7 # percentage of {n_samples} to train
 
 train:
@@ -35,12 +35,12 @@ train:
     learning_rate: 1.0e-2
     weight_decay: 1.0e-4
   high_fidelity:
-    mode: "eval" # {train} model trains the model, {eval} model evals the model
-    accelerator: 'cpu'
-    devices: 1
+    mode: "train" # {train} model trains the model, {eval} model evals the model
+    accelerator: 'gpu'
+    devices: 3
     strategy: 'ddp'
     precision: 'bf16-mixed'
-    max_epochs: 1
+    max_epochs: 1000
     learning_rate: 1.0e-2
     weight_decay: 1.0e-4
 
