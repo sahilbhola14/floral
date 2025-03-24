@@ -300,6 +300,10 @@ class sourceFlow(Flow, L.LightningModule):
         x = torch.cat([left_boundary, x, right_boundary], dim=-1)
         return x
 
+    def remove_boundary_conditions(self, x: torch.Tensor):
+        """remove the boundary conditions"""
+        return x[:, 1:-1]
+
 
 class residualFlow(Flow, L.LightningModule):
     """RESIDUAL Flow Model"""
@@ -485,8 +489,8 @@ class dataModule(L.LightningDataModule):
 
         interpolation_config = {}
         interpolation_config["field_true"] = field_true
-        interpolation_config["domain_full_true"] = domain_full_true
-        interpolation_config["domain_interior_true"] = domain_interior_true
+        interpolation_config["domain_full_true"] = domain_full_true.view(-1, 1)
+        interpolation_config["domain_interior_true"] = domain_interior_true.view(-1, 1)
         interpolation_config["condition"] = condition_val
 
         return interpolation_config
@@ -619,13 +623,17 @@ def train_source_model():
     interpolation_config = data_module.interpolation_config
     c = interpolation_config.get("condition")  # unormalized condition to evaluate
     x1_true = interpolation_config.get("field_true")  # true field
-    domain_interior_true = interpolation_config.get(
-        "domain_interior_true"
-    )  # true field
-    x1_pred = model.query(c)
+    domain_interior_true = interpolation_config.get("domain_interior_true")
+    x1_pred = model.query(
+        c,
+        interpolation_config={
+            "interpolate": True,
+            "target_domain": interpolation_config.get("domain_full_true"),
+        },
+    )
 
     plt.figure()
-    plt.plot(data_module.domain.get("interior"), utils.t2n(x1_pred[0].mean(0)))
+    plt.plot(domain_interior_true.ravel(), utils.t2n(x1_pred[0].mean(0)))
     plt.plot(domain_interior_true, x1_true[0])
     plt.savefig("test_query.png")
     plt.close()

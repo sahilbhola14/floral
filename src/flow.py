@@ -208,6 +208,7 @@ class Flow(ABC):
     def query(
         self,
         c_denorm,
+        interpolation_config,
         n_gen: int = 100,  # number of generated samples (per initial condition)
         nT: int = 100,  # number of time steps
         method="dopri5",
@@ -241,7 +242,22 @@ class Flow(ABC):
         x1_pred_denormal, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
         x1_pred_denormal = x1_pred_denormal.view(x1_pred.shape)
 
-        return x1_pred_denormal
+        # Interpolate (if needed)
+        if interpolation_config.get("interpolate"):
+            x1_pred_denormal = self.append_boundary_conditions(
+                x1_pred_denormal.view(-1, self.nx)
+            ).view(-1, 1, len(self.domain_full))
+            target_domain = interpolation_config.get("target_domain")
+            interpolated_values = torch.nn.functional.interpolate(
+                x1_pred_denormal,
+                size=len(target_domain),
+                mode="linear",
+                align_corners=True,
+            ).squeeze(1)
+            interpolated_values = self.remove_boundary_conditions(interpolated_values)
+            return interpolated_values.view(x1_pred.shape[0], x1_pred.shape[1], -1)
+        else:
+            return x1_pred_denormal
 
     @abstractmethod
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
