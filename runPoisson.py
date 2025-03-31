@@ -768,7 +768,66 @@ def train_residual_model(best_source_model_path):
     )  # get the prediction
 
 
+def compare_fidelities():
+    """Function compares the fidelities"""
+    modes = [2, 5, 8]
+    low_field_list = []
+    high_field_list = []
+    for ii in modes:
+        config_low = config.data.low_fidelity
+        poisson_low = Poisson_case_2(config_low, modes=ii)  # Solve the equations
+        poisson_low.compute_dataset()
+        low_field, low_condition = poisson_low.field, poisson_low.condition
+        low_field = torch.cat(
+            [
+                0.0 * torch.ones(low_field.shape[0], 1),
+                low_field,
+                0.0 * torch.ones(low_field.shape[0], 1),
+            ],
+            dim=-1,
+        )
+        low_domain = poisson_low.domain_full
+
+        config_high = config.data.high_fidelity
+        high_field, high_domain, _ = poisson_low.get_true_solution(
+            low_condition[0], n_pts=config_high.n_pts
+        )
+        high_field = utils.n2t(high_field).view(1, -1)
+
+        low_field_list.append(low_field)
+        high_field_list.append(high_field)
+
+    fig, axs = plt.subplots(1, len(modes), figsize=(15, 5))
+    axs = axs.ravel()
+    for ii in range(len(modes)):
+        axs[ii].plot(
+            utils.t2n(low_domain),
+            utils.t2n(low_field_list[ii][0]),
+            label="Low Fidelity",
+            color="red",
+            marker="o",
+        )
+        axs[ii].plot(
+            utils.t2n(high_domain),
+            utils.t2n(high_field_list[ii][0]),
+            label="High Fidelity",
+            color="blue",
+        )
+        axs[ii].grid()
+        axs[ii].set_xlabel(r"$x$")
+        if ii == 0:
+            axs[ii].set_ylabel(r"$u(x;\zeta)$")
+            axs[ii].legend(loc="upper right")
+        axs[ii].set_title(f"Modes, $M$: {modes[ii]}")
+        axs[ii].set_ylim([-0.05, 0.05])
+    plt.tight_layout()
+    plt.savefig("fidelity_comparison.png")
+    plt.close()
+
+
 if __name__ == "__main__":
+    # Compare the fidelities
+    compare_fidelities()
     # train the LF model
     # best_source_model_path = train_source_model()
     best_source_model_path = (
