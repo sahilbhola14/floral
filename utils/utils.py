@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import json
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 import pytorch_lightning as L
 from pytorch_lightning.utilities import rank_zero_only
@@ -44,6 +45,57 @@ def get_checkpointer(path: str):
         filename="model-{epoch:02d}-{val_loss:.2f}",
     )
     return ckp
+
+
+def restrict_domain(
+    x: torch.Tensor, source_domain: torch.Tensor, target_domain: torch.Tensor
+):
+    """Function evaluates the tensor x at the points in source_domain and returns
+    the values at the points in target_domain.
+    Args:
+    x: torch.Tensor(batch_size, len(source_domain))
+    source_domain: torch.Tensor(len(source_domain))
+    target_domain: torch.Tensor(len(target_domain))
+    Returns:
+    torch.Tensor(batch_size, len(target_domain))
+    """
+
+    batch_size, n_D = x.shape
+
+    # Normalize the source and target domains to [-1, 1]
+    x_d_norm = (
+        2
+        * (target_domain - source_domain.min())
+        / (source_domain.max() - source_domain.min())
+        - 1
+    )
+
+    # Reshape data to match grid_sample input requirements
+    data = x.unsqueeze(1)  # (batch_size, 1, n_D)
+    x_d_norm = x_d_norm.view(1, -1, 1).expand(
+        batch_size, -1, -1
+    )  # (batch_size, n_d, 1)
+
+    # Add a dummy second coordinate (0) to make it (batch_size, n_d, 2)
+    x_d_norm = torch.cat(
+        [x_d_norm, torch.zeros_like(x_d_norm)], dim=-1
+    )  # (batch_size, n_d, 2)
+
+    # Perform interpolation
+    interpolated = (
+        F.grid_sample(
+            data.unsqueeze(1),
+            x_d_norm.unsqueeze(1),
+            align_corners=True,
+            mode="bilinear",
+        )
+        .squeeze(1)
+        .squeeze(1)
+    )
+
+    assert interpolated.shape == (batch_size, len(target_domain))
+
+    return interpolated
 
 
 def get_logger(name: str):
