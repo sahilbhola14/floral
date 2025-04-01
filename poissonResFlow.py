@@ -410,7 +410,16 @@ class residualFlow(Flow, L.LightningModule):
             out = vt_source + enc_cond + skip
 
         else:
-            raise NotImplementedError("Not Implemented")
+            # encode time
+            enc_time = self.time_embedding(t, self.n_freq)
+            # encode the state
+            enc_state = self.state_encoder(torch.cat([x, enc_time], dim=-1))
+            # encode the condition
+            enc_cond = self.condition_encoder(torch.cat([c, enc_time], dim=-1))
+            # skip connection
+            skip = self.skip(enc_state + enc_cond)
+
+            out = enc_state + enc_cond + skip
 
         return out
 
