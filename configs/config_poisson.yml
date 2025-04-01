@@ -1,16 +1,18 @@
 # Configutations for Poisson Equation
 
 data:
+  modes: 4 # number of modes
+  MF2M: True # if True then High fideltiy will use low fideltiy model
   low_fidelity:
     n_pts: 10 # number of spatial points
-    n_samples: 10000 # number of data samples
+    n_samples: 5000 # number of data samples
     checkpoint_path: "./experiments/mfFlow/Poisson/lowFidelity/checkpoints"
     load_checkpoint: "model-epoch=2856-val_loss=0.02.ckpt"
     logger_name: "poisson_low_fidelity" # logger folder
-    load_dataset: True # load past dataset
+    load_dataset: False # load past dataset
   high_fidelity:
-    n_pts: 100 # number of spatial points
-    n_samples: 100 # number of data samples
+    n_pts: 50 # number of spatial points
+    n_samples: 500 # number of data samples
     checkpoint_path: "./experiments/mfFlow/Poisson/highFidelity/checkpoints"
     load_checkpoint: null
     logger_name: "poisson_high_fidelity" # logger folder
@@ -18,10 +20,10 @@ data:
 
 dataloader:
   low_fidelity:
-    batch_size: 1024 # batch size
+    batch_size: 128 # batch size
     train_ratio: 0.7 # percentage of {n_samples} to train
   high_fidelity:
-    batch_size: 16 # batch size
+    batch_size: 256 # batch size
     train_ratio: 0.7 # percentage of {n_samples} to train
 
 train:
@@ -41,7 +43,7 @@ train:
     strategy: 'ddp'
     precision: 'bf16-mixed'
     max_epochs: 1000
-    learning_rate: 1.0e-2
+    learning_rate: 5.0e-3
     weight_decay: 1.0e-4
 
 flow:
@@ -56,3 +58,4 @@ generate:
 plot:
   visualize: False
   save: True
+  n_gen: 500

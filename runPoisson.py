@@ -17,7 +17,8 @@ from scipy.sparse.linalg import spsolve
 from src.flow import Flow
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 from omegaconf import OmegaConf
-from src.archs.encoding import RBFFiLM
+
+# from src.archs.encoding import RBFFiLM
 
 parser = argparse.ArgumentParser(
     description="Multi-Fidelity Flow Matching for Poisson Equation"
@@ -118,10 +119,10 @@ class Poisson_case_2:
     where f(x;θ) = sum_{i=1}^n θ_i sin(2πi x)
     """
 
-    def __init__(self, config):
+    def __init__(self, config, modes=5):
         self.n_pts = config.get("n_pts")
         self.n_samples = config.get("n_samples")
-        self.n_modes = 5  # Number of modes for the forcing term
+        self.n_modes = modes  # Number of modes for the forcing term
         self.L = 1.0  # domain length
         self.boundary_conditions = {
             "domain": [0.0, 1.0],
@@ -235,7 +236,7 @@ class sourceFlow(Flow, L.LightningModule):
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Linear(64, self.latent_dim),
+            nn.Linear(64, self.nx),
         )
 
         # Conditional embedding
@@ -246,22 +247,22 @@ class sourceFlow(Flow, L.LightningModule):
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Linear(64, self.latent_dim),
+            nn.Linear(64, self.nx),
         )
 
         # Skip connection
         self.skip = nn.Sequential(
-            nn.Linear(self.latent_dim, 64),
+            nn.Linear(self.nx, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Linear(64, self.latent_dim),
+            nn.Linear(64, self.nx),
         )
 
         # Domain encoder
-        self.domain_encoder = RBFFiLM(in_dim=self.nd, out_dim=self.latent_dim)
+        # self.domain_encoder = RBFFiLM(in_dim=self.nd, out_dim=self.latent_dim)
 
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
@@ -280,7 +281,7 @@ class sourceFlow(Flow, L.LightningModule):
         skip = self.skip(enc_state + enc_cond)
         out = enc_state + enc_cond + skip
         # Encode the domain
-        out = self.domain_encoder(out, self.domain_interior.to(self.device))
+        # out = self.domain_encoder(out, self.domain_interior.to(self.device))
 
         return out
 
@@ -343,15 +344,11 @@ class residualFlow(Flow, L.LightningModule):
 
         # State embedding
         self.state_encoder = nn.Sequential(
-            nn.Linear(self.nx + 2 * self.n_freq, 64),
-            nn.BatchNorm1d(64),
+            nn.Linear(self.nx + 2 * self.n_freq, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, self.latent_dim),
+            nn.Dropout(0.1),
+            nn.Linear(128, self.nx),
         )
 
         # Conditional embedding
@@ -359,37 +356,32 @@ class residualFlow(Flow, L.LightningModule):
             nn.Linear(self.nc + 2 * self.n_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, self.latent_dim),
+            nn.Dropout(0.1),
+            nn.Linear(64, self.nx),
         )
 
         # Skip connection
         self.skip = nn.Sequential(
-            nn.Linear(self.latent_dim, 64),
-            nn.BatchNorm1d(64),
+            nn.Linear(self.nx, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(64, self.latent_dim),
+            nn.Dropout(0.1),
+            nn.Linear(128, self.nx),
         )
 
         # Domain encoder
-        self.domain_encoder = RBFFiLM(in_dim=self.nd, out_dim=self.latent_dim)
+        # self.domain_encoder = RBFFiLM(in_dim=self.nd, out_dim=self.latent_dim)
 
     def initialize_source_flow_model(self):
         """Initialize the source flow model (set to eval mode)"""
-        source_model = sourceFlow.load_from_checkpoint(self.best_source_model_path)
-        assert osp.exists(self.best_source_model_path), "Invalid source path"
-        for param in source_model.parameters():
-            param.requires_grad = False
-        return source_model
+        if self.best_source_model_path is not None:
+            source_model = sourceFlow.load_from_checkpoint(self.best_source_model_path)
+            assert osp.exists(self.best_source_model_path), "Invalid source path"
+            for param in source_model.parameters():
+                param.requires_grad = False
+            return source_model
+        else:
+            return None
 
     def query_source_model(self, c_normalized):
         """Query the source model
@@ -401,22 +393,28 @@ class residualFlow(Flow, L.LightningModule):
     @torch.no_grad()
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
-        _, c_denormal = self.denormalize_data(
-            c=c
-        )  # low fideltiy query takes in denormalized condition
-        interpolation_config = {
-            "interpolate": True,
-            "target_domain": self.domain_full,
-        }
-        # Generate one sample from the (trained) source model
-        x0_denormal = self.source_model.query(
-            c_denormal, interpolation_config=interpolation_config, n_gen=1
-        ).squeeze(1)
+        if self.best_source_model_path is None:
+            x0 = torch.randn_like(x1, device=self.device)
+        else:
+            _, c_denormal = self.denormalize_data(
+                c=c
+            )  # low fideltiy query takes in denormalized condition
+            interpolation_config = {
+                "interpolate": True,
+                "target_domain": self.domain_full,
+            }
+            # Generate one sample from the (trained) source model
+            x0_denormal = self.source_model.query(
+                c_denormal, interpolation_config=interpolation_config, n_gen=1
+            ).squeeze(1)
 
-        assert x0_denormal.shape == x1.shape, "Invalid dimensions"
+            assert x0_denormal.shape == x1.shape, "Invalid dimensions"
 
-        # Normalize according to the residual model
-        x0, _ = self.normalize_data(x=x0_denormal)
+            # Normalize according to the residual model
+            x0, _ = self.normalize_data(x=x0_denormal)
+
+            # Add noise
+            x0 += 1e-1 * torch.randn_like(x0, device=self.device)
 
         return x0
 
@@ -432,28 +430,34 @@ class residualFlow(Flow, L.LightningModule):
         skip = self.skip(enc_state + enc_cond)
         out = enc_state + enc_cond + skip
         # Encode the domain
-        out = self.domain_encoder(out, self.domain_interior.to(self.device))
+        # out = self.domain_encoder(out, self.domain_interior.to(self.device))
 
         return out
 
     def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """sample the initial condition"""
-        _, c_denormal = self.denormalize_data(
-            c=c
-        )  # low fideltiy query takes in denormalized condition
-        interpolation_config = {
-            "interpolate": True,
-            "target_domain": self.domain_full,
-        }
-        # Generate one sample from the (trained) source model
-        x0_denormal = self.source_model.query(
-            c_denormal, interpolation_config=interpolation_config, n_gen=n_gen
-        ).squeeze(1)
+        if self.best_source_model_path is None:
+            x0 = torch.randn(batch_size, n_gen, self.nx, device=self.device)
+        else:
+            _, c_denormal = self.denormalize_data(
+                c=c
+            )  # low fideltiy query takes in denormalized condition
+            interpolation_config = {
+                "interpolate": True,
+                "target_domain": self.domain_full,
+            }
+            # Generate one sample from the (trained) source model
+            x0_denormal = self.source_model.query(
+                c_denormal, interpolation_config=interpolation_config, n_gen=n_gen
+            ).squeeze(1)
 
-        # Normalize according to the residual model
-        x0, _ = self.normalize_data(x=x0_denormal)
+            # Normalize according to the residual model
+            x0, _ = self.normalize_data(x=x0_denormal)
 
-        assert x0.shape == (batch_size, n_gen, self.nx), "Invalid dimensions"
+            # Add noise
+            x0 += 1e-1 * torch.randn_like(x0, device=self.device)
+
+            assert x0.shape == (batch_size, n_gen, self.nx), "Invalid dimensions"
 
         return x0
 
@@ -489,7 +493,9 @@ class dataModule(L.LightningDataModule):
             if model == "low_fidelity"
             else self.config.dataloader.high_fidelity
         )
-        self.poisson = Poisson_case_2(self.data_config)  # Solve the equations
+        self.poisson = Poisson_case_2(
+            self.data_config, modes=self.config.data.modes
+        )  # Solve the equations
 
         self.nx = self.poisson.nx
         self.nc = self.poisson.nc
@@ -552,20 +558,39 @@ class dataModule(L.LightningDataModule):
 
     def get_interpolation_config(self, condition_val):
         """get interpolation config"""
-        n_pts_true = 200
-        field_true = torch.zeros(len(condition_val), n_pts_true - 2)
+        # True/High-fideltiy solution
+        n_pts_high = self.config.data.high_fidelity.n_pts
+        field_true = torch.zeros(len(condition_val), n_pts_high - 2)
         for ii in range(len(condition_val)):
             (
                 u_true,
                 domain_full_true,
                 domain_interior_true,
-            ) = self.poisson.get_true_solution(condition_val[ii], n_pts=n_pts_true)
+            ) = self.poisson.get_true_solution(condition_val[ii], n_pts=n_pts_high)
             field_true[ii] = utils.n2t(u_true)[1:-1]  # removed the boundary
+
+        # Low-fideltiy solution
+        n_pts_low = self.config.data.low_fidelity.n_pts
+        field_coarse = torch.zeros(len(condition_val), n_pts_low - 2)
+        for ii in range(len(condition_val)):
+            (
+                u_true,
+                domain_full_coarse,
+                domain_interior_coarse,
+            ) = self.poisson.get_true_solution(condition_val[ii], n_pts=n_pts_low)
+            field_coarse[ii] = utils.n2t(u_true)[1:-1]  # removed the boundary
 
         interpolation_config = {}
         interpolation_config["field_true"] = field_true
         interpolation_config["domain_full_true"] = domain_full_true.view(-1, 1)
         interpolation_config["domain_interior_true"] = domain_interior_true.view(-1, 1)
+
+        interpolation_config["field_coarse"] = field_coarse
+        interpolation_config["domain_full_coarse"] = domain_full_coarse.view(-1, 1)
+        interpolation_config["domain_interior_coarse"] = domain_interior_coarse.view(
+            -1, 1
+        )
+
         interpolation_config["condition"] = condition_val
 
         return interpolation_config
@@ -690,28 +715,28 @@ def train_source_model():
     # Load the best model
     model = sourceFlow.load_from_checkpoint(best_model_path)
     # Evaluate the validation dataset
-    model.evaluate_dataset(
-        data_module.val_set, plot=True, n_gen=100
-    )  # get the prediction
+    # model.evaluate_dataset(
+    #     data_module.val_set, plot=True, n_gen=100
+    # )  # get the prediction
 
     # Query the model
-    interpolation_config = data_module.interpolation_config
-    c = interpolation_config.get("condition")  # unormalized condition to evaluate
-    x1_true = interpolation_config.get("field_true")  # true field
-    domain_interior_true = interpolation_config.get("domain_interior_true")
-    x1_pred = model.query(
-        c,
-        interpolation_config={
-            "interpolate": True,
-            "target_domain": interpolation_config.get("domain_full_true"),
-        },
-    )
+    # interpolation_config = data_module.interpolation_config
+    # c = interpolation_config.get("condition")  # unormalized condition to evaluate
+    # x1_true = interpolation_config.get("field_true")  # true field
+    # domain_interior_true = interpolation_config.get("domain_interior_true")
+    # x1_pred = model.query(
+    #     c,
+    #     interpolation_config={
+    #         "interpolate": True,
+    #         "target_domain": interpolation_config.get("domain_full_true"),
+    #     },
+    # )
 
-    plt.figure()
-    plt.plot(domain_interior_true.ravel(), utils.t2n(x1_pred[0].mean(0)))
-    plt.plot(domain_interior_true, x1_true[0])
-    plt.savefig("interpolation_low.png")
-    plt.close()
+    # plt.figure()
+    # plt.plot(domain_interior_true.ravel(), utils.t2n(x1_pred[0].mean(0)))
+    # plt.plot(domain_interior_true, x1_true[0])
+    # plt.savefig("interpolation_low.png")
+    # plt.close()
 
     return checkpointer.best_model_path
 
@@ -763,17 +788,150 @@ def train_residual_model(best_source_model_path):
     # Load the best model
     model = residualFlow.load_from_checkpoint(best_model_path)
     # Evaluate the validation dataset
+    n_gen = config.plot.n_gen
     model.evaluate_dataset(
-        data_module.val_set, plot=True, n_gen=100
+        data_module.val_set, plot=True, n_gen=n_gen
     )  # get the prediction
+
+    # Query the model
+    interpolation_config = data_module.interpolation_config
+    c = interpolation_config.get("condition")  # unormalized condition to evaluate
+    x1_true = interpolation_config.get("field_true")  # true field
+    x1_pred = model.query(
+        c,
+        interpolation_config={
+            "interpolate": True,
+            "target_domain": interpolation_config.get("domain_full_true"),
+        },
+        n_gen=n_gen,
+    )
+
+    x1_high_save = utils.t2n(model.append_boundary_conditions(x1_true.to(model.device)))
+    x1_high_pred_save = utils.t2n(
+        model.append_boundary_conditions(x1_pred.view(-1, model.nx)).view(
+            x1_true.shape[0], n_gen, -1
+        )
+    )
+    domain_true_save = utils.t2n(interpolation_config.get("domain_full_true"))
+
+    if config.data.MF2M:
+        x1_low = interpolation_config.get("field_coarse")
+        x1_pred_low = model.source_model.query(
+            c,
+            interpolation_config={
+                "interpolate": False,
+                "target_domain": interpolation_config.get("domain_full_true"),
+            },
+            n_gen=n_gen,
+        )
+        x1_low_save = utils.t2n(
+            model.source_model.append_boundary_conditions(x1_low.to(model.device))
+        )
+        x1_low_pred_save = utils.t2n(
+            model.source_model.append_boundary_conditions(
+                x1_pred_low.view(-1, model.source_model.nx)
+            )
+        ).reshape(x1_low.shape[0], n_gen, -1)
+
+        domain_coarse_save = utils.t2n(interpolation_config.get("domain_full_coarse"))
+
+        save_data = {}
+        save_data["MF2M"] = {
+            "true": x1_high_save,
+            "pred": x1_high_pred_save,
+            "domain": domain_true_save,
+        }
+        save_data["Low"] = {
+            "true": x1_low_save,
+            "pred": x1_low_pred_save,
+            "domain": domain_coarse_save,
+        }
+
+        np.save("Poisson_MF2M.npy", save_data)
+
+    else:
+        save_data = {}
+        save_data["High"] = {
+            "true": x1_high_save,
+            "pred": x1_high_pred_save,
+            "domain": domain_true_save,
+        }
+        np.save("Poisson_High.npy", save_data)
+
+
+def compare_fidelities():
+    """Function compares the fidelities"""
+    modes = [2, 5, 8]
+    low_field_list = []
+    high_field_list = []
+    for ii in modes:
+        config_low = config.data.low_fidelity
+        poisson_low = Poisson_case_2(config_low, modes=ii)  # Solve the equations
+        poisson_low.compute_dataset()
+        low_field, low_condition = poisson_low.field, poisson_low.condition
+        low_field = torch.cat(
+            [
+                0.0 * torch.ones(low_field.shape[0], 1),
+                low_field,
+                0.0 * torch.ones(low_field.shape[0], 1),
+            ],
+            dim=-1,
+        )
+        low_domain = poisson_low.domain_full
+
+        config_high = config.data.high_fidelity
+        high_field, high_domain, _ = poisson_low.get_true_solution(
+            low_condition[0], n_pts=config_high.n_pts
+        )
+        high_field = utils.n2t(high_field).view(1, -1)
+
+        low_field_list.append(low_field)
+        high_field_list.append(high_field)
+
+    fig, axs = plt.subplots(1, len(modes), figsize=(15, 5))
+    axs = axs.ravel()
+    for ii in range(len(modes)):
+        axs[ii].plot(
+            utils.t2n(low_domain),
+            utils.t2n(low_field_list[ii][0]),
+            label="Low Fidelity",
+            color="red",
+            marker="o",
+        )
+        axs[ii].plot(
+            utils.t2n(high_domain),
+            utils.t2n(high_field_list[ii][0]),
+            label="High Fidelity",
+            color="blue",
+        )
+        axs[ii].grid()
+        axs[ii].set_xlabel(r"$x$")
+        if ii == 0:
+            axs[ii].set_ylabel(r"$u(x;\zeta)$")
+            axs[ii].legend(loc="upper right")
+        axs[ii].set_title(f"Modes, $M$: {modes[ii]}")
+        axs[ii].set_ylim([-0.05, 0.05])
+    plt.tight_layout()
+    plt.savefig("fidelity_comparison.png")
+    plt.close()
 
 
 if __name__ == "__main__":
+    # Compare the fidelities
+    # compare_fidelities()
+
     # train the LF model
-    # best_source_model_path = train_source_model()
-    best_source_model_path = (
-        "experiments/mfFlow/Poisson/lowFidelity/"
-        "checkpoints/model-epoch=2805-val_loss=0.02.ckpt"
-    )
-    # # train the HF model
+    if config.data.MF2M:
+        assert (
+            config.data.high_fidelity.load_dataset is True
+        ), "Must be evaluated on the same dataset. Run without MF2M flag, then reuse"
+        best_source_model_path = train_source_model()  # Train low fidelity model
+        # best_source_model_path = (
+        #     "experiments/mfFlow/Poisson/lowFidelity/"
+        #     "checkpoints/model-epoch=2805-val_loss=0.02.ckpt"
+        # )
+    else:
+        best_source_model_path = None  # Do not use Low fidelity model
+
+    # train the HF model
     train_residual_model(best_source_model_path)
