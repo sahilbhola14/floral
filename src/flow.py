@@ -1,6 +1,6 @@
 import torch
-import matplotlib.pyplot as plt
-import utils.utils as utils
+
+# import utils.utils as utils
 
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint
@@ -32,7 +32,7 @@ class Flow(ABC):
         """compute the derivative (time) of the conditional flow"""
         return x1 - x0
 
-    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor):
+    def compute_loss(self, x1: torch.Tensor, c: torch.Tensor, d: torch.Tensor):
         """compute the vector field regression loss"""
         # Sample time
         t = torch.rand(len(x1), 1, device=self.device)
@@ -43,22 +43,22 @@ class Flow(ABC):
         # Compute the conditional flow derivative
         psi_prime = self.compute_conditional_flow_derivative(x0, x1)
         # Compute the vector field
-        vt = self.evaluate_vector_field(psi, c, t)
+        vt = self.evaluate_vector_field(psi, c, d, t)
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
         return loss
 
     def training_step(self, batch, batch_idx):
         """training step"""
-        x1, c = batch
-        loss = self.compute_loss(x1, c)
+        x1, c, d = batch
+        loss = self.compute_loss(x1, c, d)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
-        x1, c = batch
-        loss = self.compute_loss(x1, c)
+        x1, c, d = batch
+        loss = self.compute_loss(x1, c, d)
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
@@ -106,20 +106,24 @@ class Flow(ABC):
 
         return x, c
 
-    def __wrapper(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
+    def __wrapper(
+        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
+    ):
         """wrapper function"""
         batch_size = x.shape[0] * x.shape[1]
         x_eval = x.view(batch_size, -1)
         c_eval = c.view(batch_size, -1)
+        d_eval = d.view(batch_size, -1)
         t_eval = t.repeat(batch_size, 1)
-        vt = self.evaluate_vector_field(x_eval, c_eval, t_eval)
+        vt = self.evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
         return vt.view(x.shape)
 
     @torch.no_grad()
-    def evaluate_dataset(
+    def interpolate(
         self,
-        dataset: torch.utils.data.Dataset,
-        n_gen: int = 100,  # number of generated samples (per initial condition)
+        c_eval: torch.Tensor,
+        d_eval: torch.Tensor,
+        n_gen: int = 200,  # number of generated samples (per initial condition)
         nT: int = 100,  # number of time steps
         method="dopri5",
         atol=1e-4,
@@ -127,148 +131,30 @@ class Flow(ABC):
         plot: bool = False,
     ):
         self.eval()  # set to eval mode
-
-        x1_true, c_true = dataset.tensors
-        x1_true, c_true = (
-            x1_true.to(self.device),
-            c_true.to(self.device),
-        )
-        # create the batches
-        batch_size = len(x1_true)
-        c_batch = c_true.unsqueeze(1).repeat(1, n_gen, 1)
-        x0 = self.sample_initial_condition(c_true, batch_size=batch_size, n_gen=n_gen)
-
-        # time grid
+        c_eval, d_eval = c_eval.to(self.device), d_eval.to(self.device)
+        assert c_eval.ndim == 2, "c_eval should be 2D"
+        assert d_eval.ndim == 2, "d_eval should be 2D"
+        assert c_eval.shape[-1] == self.nc, "c_eval should have shape (batch_size, nc)"
+        assert c_eval.shape[0] == 1, "c_eval should have shape (1, nc)"
+        # Create batches
+        batch_size = d_eval.shape[0]
+        c_batch = c_eval.unsqueeze(1).repeat(batch_size, n_gen, 1)
+        d_batch = d_eval.unsqueeze(1).repeat(1, n_gen, 1)
+        # Sample initial condition
+        x0 = self.sample_initial_condition(c_batch, batch_size, n_gen)
+        # Sample time
         t = torch.linspace(0, 1, nT, device=self.device)
-        # rhs function
+
+        # RHS
 
         def rhs(t, x):
-            return self.__wrapper(x, c_batch, t)
+            vt = self.__wrapper(x, c_batch, d_batch, t)
+            return vt
 
-        x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
+        # Integrate
+        x1 = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
 
-        # Denormalize the data
-        x1_pred_denormal, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
-        x1_true_denormal, _ = self.denormalize_data(x=x1_true)
-
-        # Append the boundary conditions
-        x1_pred_full = self.append_boundary_conditions(x1_pred_denormal)
-
-        x1_true_full = self.append_boundary_conditions(x=x1_true_denormal)
-        x1_pred_full = x1_pred_full.view(x1_pred.shape[0], x1_pred.shape[1], -1)
-
-        if plot:
-            # idx_plot = torch.randperm(len(x1_true))[:12]
-            idx_plot = range(12)
-            fig, axs = plt.subplots(3, 4, figsize=(12, 9))
-            axs = axs.flatten()
-            for ii in range(len(idx_plot)):
-                x1_pred_plot = utils.t2n(x1_pred_full[idx_plot[ii]])
-                x1_true_plot = utils.t2n(x1_true_full[idx_plot[ii]]).ravel()
-
-                mean_pred = x1_pred_plot.mean(axis=0)
-                std_pred = x1_pred_plot.std(axis=0)
-
-                axs[ii].plot(
-                    utils.t2n(self.domain_full.ravel()),
-                    x1_true_plot,
-                    label="True",
-                    color="k",
-                    marker="o",
-                )
-                axs[ii].plot(
-                    utils.t2n(self.domain_full.ravel()),
-                    mean_pred,
-                    label="Prediction",
-                    color="red",
-                    marker="s",
-                    linestyle="--",
-                )
-                axs[ii].fill_between(
-                    utils.t2n(self.domain_full.ravel()),
-                    mean_pred - 5 * std_pred,
-                    mean_pred + 5 * std_pred,
-                    alpha=0.3,
-                    color="red",
-                    linestyle="--",
-                    label=r"$\pm5\sigma$",
-                )
-                axs[ii].grid()
-                if ii == 0:
-                    axs[ii].legend()
-                if ii % 4 == 0:
-                    axs[ii].set_ylabel("u(x)", labelpad=20)
-                if ii // 4 == 2:
-                    axs[ii].set_xlabel("x")
-            plt.tight_layout()
-            plt.savefig("prediction.png")
-            plt.close()
-
-    @torch.no_grad()
-    def query(
-        self,
-        c_denorm,
-        interpolation_config,
-        n_gen: int = 100,  # number of generated samples (per initial condition)
-        nT: int = 100,  # number of time steps
-        method="dopri5",
-        atol=1e-4,
-        rtol=1e-4,
-        plot: bool = False,
-    ):
-        """Function evaluates the model for a given c_denorm (denormalized condition)"""
-        self.eval()  # set to eval mode
-
-        c_denorm = c_denorm.to(self.device)
-
-        # Normalize the condition
-        _, c_norm = self.normalize_data(c=c_denorm)
-
-        # create the batches
-        batch_size = len(c_norm)
-        c_batch = c_norm.unsqueeze(1).repeat(1, n_gen, 1)
-        x0 = self.sample_initial_condition(c_denorm, batch_size=batch_size, n_gen=n_gen)
-
-        # time grid
-        t = torch.linspace(0, 1, nT, device=self.device)
-        # rhs function
-
-        def rhs(t, x):
-            return self.__wrapper(x, c_batch, t)
-
-        x1_pred = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
-
-        # Denormalize the data
-        x1_pred_denormal, _ = self.denormalize_data(x=x1_pred.view(-1, self.nx))
-        x1_pred_denormal = x1_pred_denormal.view(x1_pred.shape)
-
-        # Interpolate (if needed)
-        if interpolation_config.get("interpolate"):
-            x1_pred_denormal = self.append_boundary_conditions(
-                x1_pred_denormal.view(-1, self.nx)
-            ).view(-1, 1, len(self.domain_full))
-            target_domain = interpolation_config.get(
-                "target_domain"
-            )  # full domain for interpolation
-            assert (
-                target_domain.shape[-1] == self.nd and target_domain.ndim == 2
-            ), "Invalid target domain"
-            interpolated_values = torch.nn.functional.interpolate(
-                x1_pred_denormal,
-                size=len(target_domain),
-                mode="linear",
-                align_corners=True,
-            ).squeeze(
-                1
-            )  # interpolate on the full domain
-            interpolated_values = self.remove_boundary_conditions(
-                interpolated_values
-            )  # remove boundary conditions
-            return interpolated_values.view(
-                x1_pred.shape[0], x1_pred.shape[1], -1
-            )  # return the interpolated values
-        else:
-            return x1_pred_denormal
+        return x1
 
     @abstractmethod
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
@@ -276,7 +162,9 @@ class Flow(ABC):
         pass
 
     @abstractmethod
-    def evaluate_vector_field(self, x: torch.Tensor, c: torch.Tensor, t: torch.Tensor):
+    def evaluate_vector_field(
+        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
+    ):
         """evaluate the vector field"""
         pass
 
