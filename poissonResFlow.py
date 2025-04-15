@@ -126,6 +126,37 @@ def generate_data():
     return low_data, high_data
 
 
+def comp_qoi(u, dx):
+    # Compute the gradient
+    du_dx = np.gradient(u, dx)
+    # Energy
+    energy_density = 0.5 * (du_dx**2)
+    return np.sum(energy_density) * dx
+
+
+def compute_true_qoi(n_samples=500000):
+    """
+    Compute the true qoi q = E[P], where a realization of p is an integral QoI
+    over the domain
+    """
+    space = GRF(1, length_scale=0.05, N=1000, interp="cubic")
+    features = space.random(n_samples)
+    domain_high = np.linspace(0, 1, HIGH_CONFIG.get("M"))
+    dx = domain_high[1] - domain_high[0]
+    features_high = space.eval_u(features, domain_high)
+    p_samples = []
+    # weight = np.exp(-10 * (domain_high - 0.5 )** 2)
+    for ii in range(n_samples):
+        # compute the solution
+        sol = solver(features_high[ii], HIGH_CONFIG.get("M"))
+        p_samples.append(comp_qoi(sol, dx))
+
+    qoi = np.mean(np.array(p_samples))
+    print(f"Integral QoI: {qoi} using {n_samples} Monte-Carlo samples")
+    np.save("integral_qoi.npy", qoi)
+    return qoi
+
+
 # DataModule
 class dataModule(L.LightningDataModule):
     def __init__(self, low_data, high_data, p_train=0.7):
@@ -187,6 +218,10 @@ class dataModule(L.LightningDataModule):
         self.test_config["high_field"] = high_field_at_domain_val
         self.test_config["low_field"] = low_field_at_domain_high_val
         self.test_config["field_stats"] = {"mean": field_mean, "std": field_std}
+        self.test_config["condition_stats"] = {
+            "mean": condition_mean,
+            "std": condition_std,
+        }
 
         # Dataset
         self.train_set = TensorDataset(field_train, condition_train, domain_train)
@@ -292,6 +327,8 @@ class ResFlow(Flow, L.LightningModule):
 
 
 if __name__ == "__main__":
+    # Compute the true QoI
+    compute_true_qoi()
     # generate data
     low_data, high_data = generate_data()
     # DataModule
