@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader, TensorDataset
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
 # Begin Parameters
-N_SAMPLES = 200
+N_SAMPLES = 500
 LOW_CONFIG = {"M": 10}
 HIGH_CONFIG = {"M": 100}
 RESIDUAL = True
@@ -152,7 +152,6 @@ class dataModule(L.LightningDataModule):
             field = high_field - low_field
         else:
             field = high_field
-
         # Condition
         condition = utils.n2t(self.high_data.get("features"))
 
@@ -161,6 +160,20 @@ class dataModule(L.LightningDataModule):
         field_train, field_val = field[:n_train], field[n_train:]
         condition_train, condition_val = condition[:n_train], condition[n_train:]
         domain_train, domain_val = domain[:n_train], domain[n_train:]
+
+        # Normalize
+        field_mean, field_std = field_train.mean(0), field_train.std(0)
+        condition_mean, condition_std = condition_train.mean(0), condition_train.std(0)
+
+        field_train = (field_train - field_mean) / field_std  # Normalize train field
+        field_val = (field_val - field_mean) / field_std  # Normalize val field
+
+        condition_train = (
+            condition_train - condition_mean
+        ) / condition_std  # Normalize train condition
+        condition_val = (
+            condition_val - condition_mean
+        ) / condition_std  # Normalize val condition
 
         # Testing Config
         self.test_config = {}
@@ -173,6 +186,7 @@ class dataModule(L.LightningDataModule):
         self.test_config["condition"] = condition_val
         self.test_config["high_field"] = high_field_at_domain_val
         self.test_config["low_field"] = low_field_at_domain_high_val
+        self.test_config["field_stats"] = {"mean": field_mean, "std": field_std}
 
         # Dataset
         self.train_set = TensorDataset(field_train, condition_train, domain_train)
@@ -196,7 +210,7 @@ class ResFlow(Flow, L.LightningModule):
 
         self.sig_min = 1e-5
         self.n_freq = 4
-        self.latent_dim = 1
+        self.latent_dim = 32
 
         # State embedding
         self.state_encoder = nn.Sequential(
@@ -226,8 +240,10 @@ class ResFlow(Flow, L.LightningModule):
         )
 
         # Domain Encoder
+        num_centers = 10
+        self.centers = nn.Parameter(torch.linspace(0, 1, num_centers))
         self.domain_encoder = nn.Sequential(
-            nn.Linear(self.latent_dim, 64),
+            nn.Linear(num_centers, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Dropout(0.1),
@@ -235,6 +251,9 @@ class ResFlow(Flow, L.LightningModule):
         )
 
         self.bias = nn.Parameter(torch.zeros(self.nx))
+
+    def rbf_encoding(self, mod, gamma=10.0):
+        return torch.exp(-gamma * (mod - self.centers) ** 2)
 
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
@@ -254,7 +273,8 @@ class ResFlow(Flow, L.LightningModule):
         enc_skip = self.skip(enc_state + enc_condition)
         out = enc_skip + enc_state + enc_condition
         # Encode the domain
-        enc_domain = self.domain_encoder(d)
+        rbf_encoding = self.rbf_encoding(d)
+        enc_domain = self.domain_encoder(rbf_encoding)
 
         return torch.sum(out * enc_domain, dim=-1, keepdims=True) + self.bias
 
@@ -282,7 +302,7 @@ if __name__ == "__main__":
     checkpointer = utils.get_checkpointer("./experiments/mfFlow/Poisson/checkpoints")
     # Trainer
     train_config = SimpleNamespace(
-        **{"max_epochs": 4, "devices": 1, "accelerator": "cpu", "strategy": "ddp"}
+        **{"max_epochs": 10000, "devices": 2, "accelerator": "gpu", "strategy": "ddp"}
     )
     trainer = utils.get_trainer(
         checkpointer=checkpointer, logger_name="mfFlow", train_config=train_config
@@ -298,17 +318,25 @@ if __name__ == "__main__":
     fig, axs = plt.subplots(2, 5, figsize=(20, 8), sharex=True, sharey=True)
     axs = axs.ravel()
     d_eval = data_module.test_config.get("domain")
-    for ii in range(len(axs)):
+    for ii in range(len(axs) // 2):
         c_eval = data_module.test_config.get("condition")[ii].view(1, -1)
         x1_true = data_module.test_config.get("high_field")[ii]
         low_field = data_module.test_config.get("low_field")[ii]
-        x1_hat = model.interpolate(c_eval, d_eval).squeeze(-1).T
+        x1_hat = model.interpolate(c_eval, d_eval).squeeze(-1).T.detach().to("cpu")
         if RESIDUAL:
-            x1_hat = x1_hat + low_field
+            # Denormalize
+            pred_residual = (
+                x1_hat * data_module.test_config["field_stats"]["std"]
+            ) + data_module.test_config["field_stats"]["mean"]
+            x1_hat = pred_residual + low_field
+
+        # True Residual
+        true_residual = x1_true - low_field
 
         mean_pred = utils.t2n(x1_hat.mean(0))
         std_pred = utils.t2n(x1_hat.std(0))
 
+        # Field Plot
         axs[ii].plot(utils.t2n(d_eval), utils.t2n(x1_true), label="True", color="blue")
         axs[ii].plot(utils.t2n(d_eval), utils.t2n(low_field), label="Low", color="red")
         axs[ii].plot(utils.t2n(d_eval), mean_pred, label="CorrFlow", color="green")
@@ -322,4 +350,29 @@ if __name__ == "__main__":
         axs[ii].set_xlabel(r"x")
         axs[ii].set_ylabel(r"u(x,f(x))")
         axs[ii].label_outer()
-    plt.show()
+        if ii == 0:
+            axs[ii].legend()
+
+        # Residual
+        axs[ii + 5].plot(
+            utils.t2n(d_eval), utils.t2n(true_residual), label="True", color="blue"
+        )
+        axs[ii + 5].plot(
+            utils.t2n(d_eval),
+            utils.t2n(pred_residual.mean(0)),
+            label="CorrFlow",
+            color="green",
+        )
+        axs[ii + 5].fill_between(
+            utils.t2n(d_eval).ravel(),
+            pred_residual.mean(0) - pred_residual.std(0),
+            pred_residual.mean(0) + pred_residual.std(0),
+            alpha=0.2,
+            color="green",
+        )
+        axs[ii + 5].set_xlabel(r"x")
+        axs[ii + 5].set_ylabel(r"residual")
+        axs[ii + 5].label_outer()
+
+    plt.tight_layout()
+    plt.savefig("corrFlow.png")
