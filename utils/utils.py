@@ -1,4 +1,5 @@
 import os
+import os.path as osp
 import numpy as np
 import torch
 import json
@@ -33,6 +34,10 @@ def n2t(array: np.ndarray) -> torch.Tensor:
 def make_dirs(dirname) -> None:
     if not os.path.exists(dirname):
         os.makedirs(dirname)
+
+
+def check_path(path: str) -> None:
+    assert osp.exists(path), f"Path {path} does not exist"
 
 
 def get_checkpointer(path: str):

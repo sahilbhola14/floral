@@ -6,9 +6,8 @@ import argparse
 import utils.utils as utils
 import torch.nn as nn
 
-from types import SimpleNamespace
 from src.flow import Flow
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 from omegaconf import OmegaConf
 
 parser = argparse.ArgumentParser(
@@ -27,95 +26,131 @@ utils.printer(f"Running with config: {args.config}")
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
 
-def comp_integral_field(u, dx):
-    # Compute the gradient
-    du_dx = np.gradient(u, dx, axis=1)
-    # Energy
-    energy_density = 0.5 * (du_dx**2)
-    return np.sum(energy_density, axis=1) * dx
-
-
 # DataModule
 class dataModule(L.LightningDataModule):
-    def __init__(self, low_data, high_data, p_train=0.7):
+    def __init__(self, config):
         super().__init__()
-        self.low_data = low_data
-        self.high_data = high_data
-        self.p_train = p_train
+        self.config = config
+        # Load Low Fidelity Data
+        utils.check_path(config.data.low_fidelity.data_path)
+        self.low_data = np.load(config.data.low_fidelity.data_path, allow_pickle=True)
+        # Load High Fidelity Data
+        utils.check_path(config.data.high_fidelity.data_path)
+        self.high_data = np.load(config.data.high_fidelity.data_path, allow_pickle=True)
+        # Config
+        self.data_config = self.config.data.high_fidelity
+        self.loader_config = self.config.dataloader
+        self.nx = self.high_data.get("y_high").shape[1]
+        self.nc = self.high_data.get("features").shape[1]
+        self.nd = self.high_data.get("x_high").shape[1]
 
     def setup(self, stage=None):
-        self.trian_set = None
-        self.val_set = None
-        pass
-        # # Field
-        # high_field = utils.n2t(self.high_data.get("y_high")).view(-1, 1)
-        # high_field_at_domain = utils.n2t(self.high_data.get("y_high_at_domain")).view(
-        #     -1, HIGH_CONFIG.get("M")
-        # )
+        print(f"Setting up data module for stage: {stage}")
+        if stage == "eval":
 
-        # low_field = utils.n2t(low_data.get("y_low_at_x_high")).view(-1, 1)
-        # low_field_at_domain_high = (
-        # utils.n2t(low_data.get("y_low_at_domain_high")).view(
-        #     -1, HIGH_CONFIG.get("M")
-        # ))
+            # Load the dataset
+            utils.check_path("train_set.pt")
+            utils.check_path("val_set.pt")
 
-        # domain = utils.n2t(high_data.get("x_high")).view(-1, 1)
+            self.train_set = torch.load("train_set.pt")
+            self.val_set = torch.load("val_set.pt")
 
-        # if RESIDUAL:
-        #     field = high_field - low_field
-        # else:
-        #     field = high_field
-        # # Condition
-        # condition = utils.n2t(self.high_data.get("features"))
+            # Load the test config
+            utils.check_path("test_config.npz")
+            self.test_config = np.load("test_config.npz", allow_pickle=True)
 
-        # # Split for training and validation
-        # n_train = int(N_SAMPLES * self.p_train)
-        # field_train, field_val = field[:n_train], field[n_train:]
-        # condition_train, condition_val = condition[:n_train], condition[n_train:]
-        # domain_train, domain_val = domain[:n_train], domain[n_train:]
+        else:
+            # Create the dataset
 
-        # # Normalize Data
-        # field_mean, field_std = field_train.mean(0), field_train.std(0)
-        # condition_mean, condition_std = (
-        # condition_train.mean(0), condition_train.std(0))
+            # Field
+            high_field = utils.n2t(self.high_data.get("y_high"))
+            high_field_at_domain = utils.n2t(self.high_data.get("y_high_at_domain"))
 
-        # field_train = (field_train - field_mean) / field_std  # Normalize train field
-        # field_val = (field_val - field_mean) / field_std  # Normalize val field
+            low_field = utils.n2t(self.low_data.get("y_low_at_x_high"))
+            low_field_at_domain_high = utils.n2t(
+                self.low_data.get("y_low_at_domain_high")
+            )
 
-        # condition_train = (
-        #     condition_train - condition_mean
-        # ) / condition_std  # Normalize train condition
-        # condition_val = (
-        #     condition_val - condition_mean
-        # ) / condition_std  # Normalize val condition
+            domain = utils.n2t(self.high_data.get("x_high"))
 
-        # # Testing Config
-        # self.test_config = {}
+            if self.config.data.corrFlow:
+                # Train the residual
+                field = high_field - low_field
+            else:
+                # Train the full field
+                field = high_field
 
-        # high_field_at_domain_val = high_field_at_domain[n_train:]
+            # Condition
+            condition = utils.n2t(self.high_data.get("features"))
 
-        # low_field_at_domain_high_val = low_field_at_domain_high[n_train:]
+            # Create subsets for training and validation
+            assert self.data_config.n_samples <= len(
+                field
+            ), "Not enough samples in the dataset"
+            field_sub = field[: self.data_config.n_samples]
+            condition_sub = condition[: self.data_config.n_samples]
+            domain_sub = domain[: self.data_config.n_samples]
 
-        # self.test_config["domain"] = (
-        # utils.n2t(self.high_data.get("domain")).view(-1, 1))
-        # self.test_config["low_domain"] = utils.n2t(self.low_data.get("domain")).view(
-        #     -1, 1
-        # )
-        # self.test_config["condition"] = condition_val
-        # self.test_config["high_field"] = high_field_at_domain_val
-        # self.test_config["low_field"] = low_field_at_domain_high_val
-        # self.test_config["field_stats"] = {"mean": field_mean, "std": field_std}
-        # self.test_config["condition_stats"] = {
-        #     "mean": condition_mean,
-        #     "std": condition_std,
-        # }
+            # Split for training and validation
+            n_train = int(self.data_config.n_samples * self.loader_config.train_ratio)
+            field_train, field_val = field_sub[:n_train], field_sub[n_train:]
+            condition_train, condition_val = (
+                condition_sub[:n_train],
+                condition_sub[n_train:],
+            )
+            domain_train, domain_val = domain_sub[:n_train], domain_sub[n_train:]
 
-        # # Save Test Config
-        # np.savez("test_config.npz", **self.test_config)
+            # Normalize the data
+            field_mean, field_std = field_train.mean(0), field_train.std(0)
+            condition_mean, condition_std = (
+                condition_train.mean(0),
+                condition_train.std(0),
+            )
 
-        # # Dataset
-        # self.train_set = TensorDataset(field_train, condition_train, domain_train)
-        # self.val_set = TensorDataset(field_val, condition_val, domain_val)
+            field_train = (
+                field_train - field_mean
+            ) / field_std  # Normalize train field
+            field_val = (field_val - field_mean) / field_std  # Normalize val field
+
+            condition_train = (
+                condition_train - condition_mean
+            ) / condition_std  # Normalize train condition
+            condition_val = (
+                condition_val - condition_mean
+            ) / condition_std  # Normalize val condition
+
+            # Create Testing Config
+            self.test_config = {}
+            high_field_at_domain_val = high_field_at_domain[n_train:]
+            low_field_at_domain_high_val = low_field_at_domain_high[n_train:]
+
+            self.test_config["field"] = {
+                "high": high_field_at_domain_val,
+                "low": low_field_at_domain_high_val,
+            }
+
+            self.test_config["condition"] = condition_val
+
+            self.test_config["domain"] = {
+                "high": utils.n2t(self.high_data.get("domain")).view(-1, 1),
+                "low": utils.n2t(self.low_data.get("domain")).view(-1, 1),
+            }
+
+            self.test_config["stats"] = {
+                "field": {"mean": field_mean, "std": field_std},
+                "condition": {"mean": condition_mean, "std": condition_std},
+            }
+
+            # Save Test Config
+            np.savez("test_config.npz", **self.test_config)
+
+            # Dataset
+            self.train_set = TensorDataset(field_train, condition_train, domain_train)
+            self.val_set = TensorDataset(field_val, condition_val, domain_val)
+
+            # Save the dataset
+            torch.save(self.train_set, "train_set.pt")
+            torch.save(self.val_set, "val_set.pt")
 
     def train_dataloader(self):
         return DataLoader(self.train_set, batch_size=256, shuffle=True)
@@ -126,20 +161,22 @@ class dataModule(L.LightningDataModule):
 
 # ResFlow
 class ResFlow(Flow, L.LightningModule):
-    def __init__(self, nx: int, nc: int, nd: int):
+    def __init__(self, config: dict, nx: int, nc: int, nd: int):
         super(ResFlow, self).__init__()
         self.save_hyperparameters()
         self.nx = nx
         self.nc = nc
         self.nd = nd
 
-        self.sig_min = 1e-5
-        self.n_freq = 4
-        self.latent_dim = 32
+        # Config
+        self.flow_config = config.flow
+        self.sig_min = self.flow_config.sig_min
+        self.time_emb_freq = self.flow_config.time_emb_freq
+        self.latent_dim = self.flow_config.latent_dim
 
         # State embedding
         self.state_encoder = nn.Sequential(
-            nn.Linear(self.nx + 2 * self.n_freq, 32),
+            nn.Linear(self.nx + 2 * self.time_emb_freq, 32),
             nn.BatchNorm1d(32),
             nn.ReLU(),
             nn.Dropout(0.1),
@@ -148,7 +185,7 @@ class ResFlow(Flow, L.LightningModule):
 
         # Conditional embedding
         self.condition_encoder = nn.Sequential(
-            nn.Linear(self.nc + 2 * self.n_freq, 32),
+            nn.Linear(self.nc + 2 * self.time_emb_freq, 32),
             nn.BatchNorm1d(32),
             nn.ReLU(),
             nn.Dropout(0.1),
@@ -165,7 +202,7 @@ class ResFlow(Flow, L.LightningModule):
         )
 
         # Domain Encoder
-        num_centers = 10
+        num_centers = self.flow_config.num_centers
         self.centers = nn.Parameter(torch.linspace(0, 1, num_centers))
         self.domain_encoder = nn.Sequential(
             nn.Linear(num_centers, 64),
@@ -189,7 +226,7 @@ class ResFlow(Flow, L.LightningModule):
     ):
         """evaluate the vector field"""
         # Encode the time
-        enc_time = self.time_embedding(t, self.n_freq)
+        enc_time = self.time_embedding(t, self.time_emb_freq)
         # Encode the state
         enc_state = self.state_encoder(torch.cat((x, enc_time), dim=-1))
         # Encode the condition
@@ -217,54 +254,70 @@ class ResFlow(Flow, L.LightningModule):
 
 
 # Plot predictions
-def plot_predictions(best_model_path, data_module):
+def plot_predictions(best_model_path, config, data_module):
     """Plot the predictions of the model"""
 
     # Load the best model
     model = ResFlow.load_from_checkpoint(best_model_path)
+    # Set to eval mode
+    model.eval()
 
     fig, axs = plt.subplots(2, 5, figsize=(20, 8), sharex=True, sharey=True)
     axs = axs.ravel()
 
-    # Query the model on {d_eval} domain
-    d_eval = data_module.test_config.get("domain")
-    dx = (d_eval[1] - d_eval[0]).item()
+    # Query the model on high fidelity domain
+    d_eval = data_module.test_config["domain"]["high"]
+    # dx = (d_eval[1] - d_eval[0]).item()
+
     for ii in range(len(axs) // 2):
         # Get the condition
-        c_eval = data_module.test_config.get("condition")[ii].view(1, -1)
+        c_eval = data_module.test_config["condition"][ii].view(1, -1)
         # Get the true prediciton on domain
-        x1_true = data_module.test_config.get("high_field")[ii]
+        high_field = data_module.test_config["field"]["high"][ii]
         # Get the low fidelity prediction
-        low_field = data_module.test_config.get("low_field")[ii]
+        low_field = data_module.test_config["field"]["low"][ii]
         # Get the model prediction
-        x1_hat = model.interpolate(c_eval, d_eval).squeeze(-1).T.detach().to("cpu")
-        pred_residual = None
-        # if RESIDUAL:
-        #     # Denormalize
-        #     pred_residual = (
-        #         x1_hat * data_module.test_config["field_stats"]["std"]
-        #     ) + data_module.test_config["field_stats"]["mean"]
+        pred_field = model.interpolate(c_eval, d_eval).squeeze(-1).T.detach().to("cpu")
+        # Get the true prediction
+        if config.data.corrFlow:
+            # Denormalize
+            pred_residual = (
+                pred_field * data_module.test_config["stats"]["field"]["std"]
+            ) + data_module.test_config["stats"]["field"]["mean"]
 
-        #     x1_hat = pred_residual + low_field
+            pred_field = pred_residual + low_field
 
         # True Residual
-        true_residual = x1_true - low_field
+        true_residual = high_field - low_field
 
         # Compute the Integral quantity
-        integral_field_true = comp_integral_field(utils.t2n(x1_true.view(1, -1)), dx)
-        integral_field_pred = comp_integral_field(utils.t2n(x1_hat), dx)
+        # integral_field_true = comp_integral_field(utils.t2n(high_field), dx)
+        # integral_field_pred = comp_integral_field(utils.t2n(pred_field), dx)
+        # integral_field_pred_mean, integral_field_pred_std = integral_field_pred.mean(
+        #     0
+        # ), integral_field_pred.std(0)
+
+        integral_field_true = 0.0
+        integral_field_pred = 0.0
         integral_field_pred_mean, integral_field_pred_std = integral_field_pred.mean(
             0
         ), integral_field_pred.std(0)
 
         # Mean prediction
-        mean_pred = utils.t2n(x1_hat.mean(0))
-        std_pred = utils.t2n(x1_hat.std(0))
+        mean_pred = utils.t2n(pred_field.mean(0))
+        std_pred = utils.t2n(pred_field.std(0))
 
         # Field Plot
-        axs[ii].plot(utils.t2n(d_eval), utils.t2n(x1_true), label="True", color="blue")
-        axs[ii].plot(utils.t2n(d_eval), utils.t2n(low_field), label="Low", color="red")
-        axs[ii].plot(utils.t2n(d_eval), mean_pred, label="CorrFlow", color="green")
+        axs[ii].plot(
+            utils.t2n(d_eval),
+            utils.t2n(high_field),
+            label="High fidelity",
+            color="blue",
+        )
+        axs[ii].plot(
+            utils.t2n(d_eval), utils.t2n(low_field), label="Low fiedelity", color="red"
+        )
+        axs[ii].plot(utils.t2n(d_eval), mean_pred, label="corrFlow", color="green")
         axs[ii].fill_between(
             utils.t2n(d_eval).ravel(),
             mean_pred - std_pred,
@@ -310,27 +363,35 @@ def plot_predictions(best_model_path, data_module):
 
 
 if __name__ == "__main__":
-    # Compute the true QoI (Integral Qoi)
-    # compute_true_qoi()
-
     # DataModule
-    data_module = dataModule()
-    # Model
-    model = ResFlow(nx=1, nc=100, nd=1)
-    # checkpointer
-    checkpointer = utils.get_checkpointer("./experiments/mfFlow/Poisson/checkpoints")
-    # Trainer
-    train_config = SimpleNamespace(
-        **{"max_epochs": 5000, "devices": 3, "accelerator": "gpu", "strategy": "ddp"}
-    )
-    trainer = utils.get_trainer(
-        checkpointer=checkpointer, logger_name="mfFlow", train_config=train_config
-    )
-    # Train
-    trainer.fit(model, data_module)
+    data_module = dataModule(config)
+    data_module.setup(config.train.stage)
 
-    # Load best model
-    best_model_path = checkpointer.best_model_path
-    print(f"Best path: {best_model_path}")
+    # Model
+    model = ResFlow(config, nx=data_module.nx, nc=data_module.nc, nd=data_module.nd)
+
+    # checkpointer
+    checkpointer = utils.get_checkpointer(
+        config.data.high_fidelity.checkpoint_save_path
+    )
+
+    # Trainer
+    trainer = utils.get_trainer(
+        checkpointer=checkpointer,
+        logger_name=config.data.high_fidelity.logger_name,
+        train_config=config.train,
+    )
+
+    # Train
+    if config.train.stage == "train":
+        # Train the model
+        trainer.fit(model, data_module)
+        # Load the best model
+        best_model_path = checkpointer.best_model_path
+    elif config.train.stage == "eval":
+        print("Skipping training")
+        utils.check_path(config.data.high_fidelity.checkpoint_load_path)
+        best_model_path = config.data.high_fidelity.checkpoint_load_path
+
     # Plot predictions
-    plot_predictions(best_model_path, data_module)
+    plot_predictions(best_model_path, config, data_module)

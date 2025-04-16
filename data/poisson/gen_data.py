@@ -94,8 +94,8 @@ def generate_data(args: Namespace):
         y_high.append(sol[idx].item())
         y_high_domain.append(sol)
 
-    x_high = np.array(x_high)  # High fidelity random sensor
-    y_high = np.array(y_high)  # High fidelity solution at random sensor
+    x_high = np.array(x_high).reshape(-1, 1)  # High fidelity random sensor
+    y_high = np.array(y_high).reshape(-1, 1)  # High fidelity solution at random sensor
     y_high_domain = np.array(y_high_domain)  # High fidelity solution
 
     high_data = {}
@@ -103,7 +103,7 @@ def generate_data(args: Namespace):
     high_data["y_high"] = y_high  # Field at randomly sampled sensor
     high_data["y_high_at_domain"] = y_high_domain  # Full high field
     high_data["features"] = features_high  # Features
-    high_data["domain"] = domain_high  # Full domain
+    high_data["domain"] = domain_high.reshape(-1, 1)  # Full domain
     high_data["n_sensors"] = args.m_high  # Number of sensors
 
     # Low Fidelity Data
@@ -117,8 +117,8 @@ def generate_data(args: Namespace):
         y_low_at_domain_high.append(interp(domain_high))
         y_low.append(sol)
 
-    y_low_at_x_high = np.array(
-        y_low_at_x_high
+    y_low_at_x_high = np.array(y_low_at_x_high).reshape(
+        -1, 1
     )  # Low fidelity solution at high random sensor
     y_low_at_domain_high = np.array(
         y_low_at_domain_high
@@ -135,7 +135,7 @@ def generate_data(args: Namespace):
     # Features sub-sampled on low domain
     low_data["features"] = features_low
     # Low domain
-    low_data["domain"] = domain_low
+    low_data["domain"] = domain_low.reshape(-1, 1)
     low_data["n_sensors"] = args.m_low  # Number of sensors
 
     # Save data
