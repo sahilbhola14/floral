@@ -26,6 +26,27 @@ utils.printer(f"Running with config: {args.config}")
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
 
+# Integral QoI
+def comp_integral_field(u, dx):
+    """Compute p = int_x u dx"""
+    # du_dx = np.gradient(u, dx, axis=1)
+
+    return np.sum(u**2, axis=1) * dx
+
+
+# Weight Initialization
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        # Good for ReLU
+        nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+    elif isinstance(m, nn.BatchNorm1d):
+        nn.init.constant_(m.weight, 1)
+        nn.init.constant_(m.bias, 0)
+
+
 # DataModule
 class dataModule(L.LightningDataModule):
     def __init__(self, config):
@@ -44,20 +65,39 @@ class dataModule(L.LightningDataModule):
         self.nc = self.high_data.get("features").shape[1]
         self.nd = self.high_data.get("x_high").shape[1]
 
+        # Save file names
+        self.test_config_file = (
+            "test_config_corrFlow"
+            if self.config.data.corrFlow
+            else "test_config_non_corrFlow"
+        )
+        self.dataset_file = {
+            "train": "train_set_corrFlow"
+            if self.config.data.corrFlow
+            else "train_set_non_corrFlow",
+            "val": "val_set_corrFlow"
+            if self.config.data.corrFlow
+            else "val_set_non_corrFlow",
+        }
+
     def setup(self, stage=None):
         print(f"Setting up data module for stage: {stage}")
         if stage == "eval":
 
             # Load the dataset
-            utils.check_path("train_set.pt")
-            utils.check_path("val_set.pt")
+            train_set_file = self.dataset_file["train"] + ".pt"
+            val_set_file = self.dataset_file["val"] + ".pt"
 
-            self.train_set = torch.load("train_set.pt")
-            self.val_set = torch.load("val_set.pt")
+            utils.check_path(train_set_file)
+            utils.check_path(val_set_file)
+
+            self.train_set = torch.load(train_set_file)
+            self.val_set = torch.load(val_set_file)
 
             # Load the test config
-            utils.check_path("test_config.npz")
-            self.test_config = np.load("test_config.npz", allow_pickle=True)
+            test_config_file = self.test_config_file + ".npy"
+            utils.check_path(test_config_file)
+            self.test_config = np.load(test_config_file, allow_pickle=True).item()
 
         else:
             # Create the dataset
@@ -123,10 +163,16 @@ class dataModule(L.LightningDataModule):
             self.test_config = {}
             high_field_at_domain_val = high_field_at_domain[n_train:]
             low_field_at_domain_high_val = low_field_at_domain_high[n_train:]
+            low_field_at_domain_low_val = utils.n2t(self.low_data.get("y_low"))[
+                n_train:
+            ]
+
+            self.test_config["n_evals"] = self.data_config.n_samples - n_train
 
             self.test_config["field"] = {
                 "high": high_field_at_domain_val,
                 "low": low_field_at_domain_high_val,
+                "low_at_low_domain": low_field_at_domain_low_val,
             }
 
             self.test_config["condition"] = condition_val
@@ -142,15 +188,17 @@ class dataModule(L.LightningDataModule):
             }
 
             # Save Test Config
-            np.savez("test_config.npz", **self.test_config)
+            np.save(self.test_config_file, self.test_config)
 
             # Dataset
             self.train_set = TensorDataset(field_train, condition_train, domain_train)
             self.val_set = TensorDataset(field_val, condition_val, domain_val)
 
             # Save the dataset
-            torch.save(self.train_set, "train_set.pt")
-            torch.save(self.val_set, "val_set.pt")
+            train_set_file = self.dataset_file["train"] + ".pt"
+            val_set_file = self.dataset_file["val"] + ".pt"
+            torch.save(self.train_set, train_set_file)
+            torch.save(self.val_set, val_set_file)
 
     def train_dataloader(self):
         return DataLoader(self.train_set, batch_size=256, shuffle=True)
@@ -237,8 +285,8 @@ class ResFlow(Flow, L.LightningModule):
         # Encode the domain
         rbf_encoding = self.rbf_encoding(d)
         enc_domain = self.domain_encoder(rbf_encoding)
-
-        return torch.sum(out * enc_domain, dim=-1, keepdims=True) + self.bias
+        out = torch.sum(out * enc_domain, dim=-1, keepdims=True) + self.bias
+        return x + out
 
     def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """get the initial condition for the flow"""
@@ -251,6 +299,120 @@ class ResFlow(Flow, L.LightningModule):
     def remove_boundary_conditions(self, x: torch.Tensor):
         """remove the boundary conditions to the data"""
         pass
+
+
+# Evaluate Test Set
+def eval_testset(best_model_path, config, data_module, n_evals=500):
+    """Evalute the test set"""
+    # Load the best model
+    model = ResFlow.load_from_checkpoint(best_model_path)
+    # Set to eval mode
+    model.eval()
+
+    # Query the model on high fidelity domain
+    d_eval = data_module.test_config["domain"]["high"]
+    dx = (d_eval[1] - d_eval[0]).item()
+
+    # Low fidelity domain
+    domain_low = data_module.test_config["domain"]["low"]
+    dx_low = (domain_low[1] - domain_low[0]).item()
+
+    n_evals = min(n_evals, data_module.test_config["n_evals"])
+
+    field = {"true": [], "low": [], "pred": []}
+    qoi = {"true": [], "low": [], "pred": []}
+    residual = {"true": [], "pred": []}
+
+    for ii in range(n_evals):
+        # Get the condition
+        c_eval = data_module.test_config["condition"][ii].view(1, -1)
+        # Get the true prediciton on domain
+        high_field = data_module.test_config["field"]["high"][ii]
+        # Get the low fidelity prediction (on high domain)
+        low_field = data_module.test_config["field"]["low"][ii]
+        # Get the low fideltiy prediction on (low domain)
+        low_field_at_low_domain = data_module.test_config["field"]["low_at_low_domain"][
+            ii
+        ]
+        # Get the model prediction
+        # (pred_field: flow field when corrFlow is false else residual)
+        if config.data.corrFlow:
+            pred_residual = (
+                model.interpolate(
+                    c_eval, d_eval, n_gen=config.generate.n_gen, nT=config.generate.nT
+                )
+                .squeeze(-1)
+                .T.detach()
+                .to("cpu")
+            )
+
+            pred_residual = (
+                pred_residual * data_module.test_config["stats"]["field"]["std"]
+            ) + data_module.test_config["stats"]["field"]["mean"]
+
+            pred_field = pred_residual + low_field
+
+        else:
+            pred_field = (
+                model.interpolate(
+                    c_eval, d_eval, n_gen=config.generate.n_gen, nT=config.generate.nT
+                )
+                .squeeze(-1)
+                .T.detach()
+                .to("cpu")
+            )
+
+            pred_field = (
+                pred_field * data_module.test_config["stats"]["field"]["std"]
+            ) + data_module.test_config["stats"]["field"]["mean"]
+
+            pred_residual = pred_field - low_field
+
+        # True Residual
+        true_residual = high_field - low_field
+
+        # Compute the Integral quantity
+        integral_field_true = comp_integral_field(utils.t2n(high_field.view(1, -1)), dx)
+        integral_field_pred = comp_integral_field(utils.t2n(pred_field), dx)
+        integral_field_low = comp_integral_field(
+            utils.t2n(low_field_at_low_domain.view(1, -1)), dx_low
+        )
+
+        # Update Dict
+        field["true"].append(high_field)
+        field["low"].append(low_field_at_low_domain)
+        field["pred"].append(pred_field)
+
+        qoi["true"].append(integral_field_true)
+        qoi["low"].append(integral_field_low)
+        qoi["pred"].append(integral_field_pred)
+
+        residual["true"].append(true_residual)
+        residual["pred"].append(pred_residual)
+
+    field["true"] = np.array(field["true"])
+    field["low"] = np.array(field["low"])
+    field["pred"] = np.array(field["pred"])
+
+    qoi["true"] = np.array(qoi["true"])
+    qoi["low"] = np.array(qoi["low"])
+    qoi["pred"] = np.array(qoi["pred"])
+
+    residual["true"] = np.array(residual["true"])
+    residual["pred"] = np.array(residual["pred"])
+
+    # Save
+    save_dict = {}
+    save_dict["field"] = field
+    save_dict["qoi"] = qoi
+    save_dict["residual"] = residual
+    save_dict["domain"] = {"high": utils.t2n(d_eval).ravel(), "low": domain_low}
+    np.savez(
+        "poisson_corrFlow_prediction.npz"
+        if config.data.corrFlow
+        else "poisson_non_corrFlow_prediction.npz",
+        **save_dict,
+    )
 
 
 # Plot predictions
@@ -267,41 +429,69 @@ def plot_predictions(best_model_path, config, data_module):
 
     # Query the model on high fidelity domain
     d_eval = data_module.test_config["domain"]["high"]
-    # dx = (d_eval[1] - d_eval[0]).item()
+    dx = (d_eval[1] - d_eval[0]).item()
+
+    # Low fidelity domain
+    domain_low = data_module.test_config["domain"]["low"]
+    dx_low = (domain_low[1] - domain_low[0]).item()
 
     for ii in range(len(axs) // 2):
         # Get the condition
         c_eval = data_module.test_config["condition"][ii].view(1, -1)
         # Get the true prediciton on domain
         high_field = data_module.test_config["field"]["high"][ii]
-        # Get the low fidelity prediction
+        # Get the low fidelity prediction (on high domain)
         low_field = data_module.test_config["field"]["low"][ii]
+        # Get the low fideltiy prediction on (low domain)
+        low_field_at_low_domain = data_module.test_config["field"]["low_at_low_domain"][
+            ii
+        ]
         # Get the model prediction
-        pred_field = model.interpolate(c_eval, d_eval).squeeze(-1).T.detach().to("cpu")
-        # Get the true prediction
+        # (pred_field: flow field when corrFlow is false else residual)
         if config.data.corrFlow:
-            # Denormalize
             pred_residual = (
-                pred_field * data_module.test_config["stats"]["field"]["std"]
+                model.interpolate(
+                    c_eval, d_eval, n_gen=config.generate.n_gen, nT=config.generate.nT
+                )
+                .squeeze(-1)
+                .T.detach()
+                .to("cpu")
+            )
+
+            pred_residual = (
+                pred_residual * data_module.test_config["stats"]["field"]["std"]
             ) + data_module.test_config["stats"]["field"]["mean"]
 
             pred_field = pred_residual + low_field
+
+        else:
+            pred_field = (
+                model.interpolate(
+                    c_eval, d_eval, n_gen=config.generate.n_gen, nT=config.generate.nT
+                )
+                .squeeze(-1)
+                .T.detach()
+                .to("cpu")
+            )
+
+            pred_field = (
+                pred_field * data_module.test_config["stats"]["field"]["std"]
+            ) + data_module.test_config["stats"]["field"]["mean"]
+
+            pred_residual = pred_field - low_field
 
         # True Residual
         true_residual = high_field - low_field
 
         # Compute the Integral quantity
-        # integral_field_true = comp_integral_field(utils.t2n(high_field), dx)
-        # integral_field_pred = comp_integral_field(utils.t2n(pred_field), dx)
-        # integral_field_pred_mean, integral_field_pred_std = integral_field_pred.mean(
-        #     0
-        # ), integral_field_pred.std(0)
-
-        integral_field_true = 0.0
-        integral_field_pred = 0.0
+        integral_field_true = comp_integral_field(utils.t2n(high_field.view(1, -1)), dx)
+        integral_field_pred = comp_integral_field(utils.t2n(pred_field), dx)
         integral_field_pred_mean, integral_field_pred_std = integral_field_pred.mean(
             0
         ), integral_field_pred.std(0)
+        integral_field_low = comp_integral_field(
+            utils.t2n(low_field_at_low_domain.view(1, -1)), dx_low
+        )
 
         # Mean prediction
         mean_pred = utils.t2n(pred_field.mean(0))
@@ -315,24 +505,36 @@ def plot_predictions(best_model_path, config, data_module):
             color="blue",
         )
         axs[ii].plot(
-            utils.t2n(d_eval), utils.t2n(low_field), label="Low fiedelity", color="red"
+            utils.t2n(domain_low),
+            utils.t2n(low_field_at_low_domain),
+            label="Low fidelity",
+            color="red",
+            marker="o",
+            linestyle="--",
         )
-        axs[ii].plot(utils.t2n(d_eval), mean_pred, label="corrFlow", color="green")
+        axs[ii].plot(
+            utils.t2n(d_eval),
+            mean_pred,
+            label="corrFlow" if config.data.corrFlow else "non_corrFlow",
+            color="green",
+        )
         axs[ii].fill_between(
             utils.t2n(d_eval).ravel(),
-            mean_pred - std_pred,
-            mean_pred + std_pred,
+            mean_pred - 3.0 * std_pred,
+            mean_pred + 3.0 * std_pred,
             alpha=0.2,
             color="green",
         )
         axs[ii].set_xlabel(r"x")
         axs[ii].set_ylabel(r"u(x,f(x))")
-        title = r"$q$: {:.3f} $\vert$ ".format(
-            integral_field_true.item()
-        ) + r"$\hat{{q}}$: {:.3f} $\pm$ {:.3f}".format(
-            integral_field_pred_mean.item(), integral_field_pred_std.item()
+        title = (
+            r"$q_{{HF}}$: {:.3f} $\vert$ ".format(integral_field_true.item())
+            + r"$q_{{LF}}$: {:.3f} $\vert$ ".format(integral_field_low.item())
+            + r"$\hat{{q}}$: {:.3f} $\pm$ {:.2e}".format(
+                integral_field_pred_mean.item(), integral_field_pred_std.item()
+            )
         )
-        axs[ii].set_title(title)
+        axs[ii].set_title(title, fontsize=12)
         axs[ii].label_outer()
         if ii == 0:
             axs[ii].legend()
@@ -344,13 +546,13 @@ def plot_predictions(best_model_path, config, data_module):
         axs[ii + 5].plot(
             utils.t2n(d_eval),
             utils.t2n(pred_residual.mean(0)),
-            label="CorrFlow",
+            label="corrFlow" if config.data.corrFlow else "non_corrFlow",
             color="green",
         )
         axs[ii + 5].fill_between(
             utils.t2n(d_eval).ravel(),
-            pred_residual.mean(0) - pred_residual.std(0),
-            pred_residual.mean(0) + pred_residual.std(0),
+            pred_residual.mean(0) - 3.0 * pred_residual.std(0),
+            pred_residual.mean(0) + 3.0 * pred_residual.std(0),
             alpha=0.2,
             color="green",
         )
@@ -359,7 +561,7 @@ def plot_predictions(best_model_path, config, data_module):
         axs[ii + 5].label_outer()
 
     plt.tight_layout()
-    plt.savefig("corrFlow.png")
+    plt.savefig("corrFlow.png" if config.data.corrFlow else "non_corrFlow.png")
 
 
 if __name__ == "__main__":
@@ -369,16 +571,24 @@ if __name__ == "__main__":
 
     # Model
     model = ResFlow(config, nx=data_module.nx, nc=data_module.nc, nd=data_module.nd)
+    # Initialize Weights
+    model.apply(init_weights)
 
     # checkpointer
+    ckp_save_path = config.data.high_fidelity.checkpoint_save_path
     checkpointer = utils.get_checkpointer(
-        config.data.high_fidelity.checkpoint_save_path
+        ckp_save_path + "/corrFlow"
+        if config.data.corrFlow
+        else ckp_save_path + "/non_corrFlow"
     )
 
     # Trainer
+    logger_name = config.data.high_fidelity.logger_name
     trainer = utils.get_trainer(
         checkpointer=checkpointer,
-        logger_name=config.data.high_fidelity.logger_name,
+        logger_name=logger_name + "_corrFlow"
+        if config.data.corrFlow
+        else logger_name + "_non_corrFlow",
         train_config=config.train,
     )
 
@@ -388,10 +598,16 @@ if __name__ == "__main__":
         trainer.fit(model, data_module)
         # Load the best model
         best_model_path = checkpointer.best_model_path
+        utils.printer(f"Best checkpoint: {best_model_path}")
     elif config.train.stage == "eval":
-        print("Skipping training")
+        utils.printer("Skipping Training and Loading Checkpoint")
         utils.check_path(config.data.high_fidelity.checkpoint_load_path)
         best_model_path = config.data.high_fidelity.checkpoint_load_path
 
+    # Evalute test set
+    # eval_testset(best_model_path, config, data_module, n_evals=500)
+
     # Plot predictions
     plot_predictions(best_model_path, config, data_module)
+
+    utils.printer("Done!")

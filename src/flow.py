@@ -128,7 +128,6 @@ class Flow(ABC):
         method="dopri5",
         atol=1e-4,
         rtol=1e-4,
-        plot: bool = False,
     ):
         self.eval()  # set to eval mode
         c_eval, d_eval = c_eval.to(self.device), d_eval.to(self.device)
