@@ -2,128 +2,29 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import pytorch_lightning as L
-
-# import argparse
+import argparse
 import utils.utils as utils
-
-# import os.path as osp
-
 import torch.nn as nn
 
 from types import SimpleNamespace
-from sklearn import gaussian_process as gp
-from scipy import interpolate
 from src.flow import Flow
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
+from omegaconf import OmegaConf
 
-# from omegaconf import OmegaConf
-# from src.archs.encoding import RBFFiLM
+parser = argparse.ArgumentParser(
+    description="Multi-Fidelity Flow Matching for Poisson Equation"
+)
+parser.add_argument(
+    "--config",
+    type=str,
+    default="configs/config_poisson.yml",
+    help="Path to the config file",
+)
+args = parser.parse_args()
+config = OmegaConf.load(args.config)
+utils.printer(f"Running with config: {args.config}")
 
 torch.set_float32_matmul_precision("medium")  # for tensor cores
-
-# Begin Parameters
-N_SAMPLES = 500
-LOW_CONFIG = {"M": 10}
-HIGH_CONFIG = {"M": 100}
-RESIDUAL = True
-# End Parameters
-
-
-def solver(f, N):
-    """solver for the Poisson equation"""
-    h = 1 / (N - 1)
-    K = -2 * np.eye(N - 2) + np.eye(N - 2, k=1) + np.eye(N - 2, k=-1)
-    b = h**2 * 20 * f[1:-1]
-    u = np.linalg.solve(K, b)
-    u = np.concatenate(([0], u, [0]))
-    return u
-
-
-# GP
-class GRF:
-    def __init__(self, T, kernel="RBF", length_scale=1, N=1000, interp="cubic"):
-        self.T = T
-        self.kernel = kernel
-        self.length_scale = length_scale
-        self.N = N
-        self.x = np.linspace(0, T, self.N)[:, None]
-        self.interp = interp
-        kernel = gp.kernels.RBF(length_scale=self.length_scale)
-        self.K = kernel(self.x)
-        self.L = np.linalg.cholesky(self.K + 1e-13 * np.eye(self.N))
-
-    def random(self, n):
-        """generate a random field sample"""
-        return np.dot(self.L, np.random.randn(self.N, n)).T
-
-    def eval_u(self, ys, sensors):
-        """evaluate the random field at the sensor locations"""
-        y_interp = []
-        for y in ys:
-            interp = interpolate.interp1d(
-                self.x.ravel(), y, kind=self.interp, copy=False, assume_sorted=True
-            )
-            y_interp.append(interp(sensors))
-
-        return np.array(y_interp)
-
-
-# DataGeneration
-def generate_data():
-    space = GRF(1, length_scale=0.05, N=1000, interp="cubic")
-    features = space.random(N_SAMPLES)
-    domain_high = np.linspace(0, 1, HIGH_CONFIG.get("M"))
-    domain_low = np.linspace(0, 1, LOW_CONFIG.get("M"))
-    features_high = space.eval_u(features, domain_high)
-    features_low = space.eval_u(features, domain_low)
-
-    # High Fidelity Data
-    x_high, y_high, y_high_domain = [], [], []
-    for ii in range(N_SAMPLES):
-        sol = solver(features_high[ii], HIGH_CONFIG.get("M"))
-        idx = np.random.choice(HIGH_CONFIG.get("M"), 1, replace=False)
-        x_high.append(domain_high[idx].item())
-        y_high.append(sol[idx].item())
-        y_high_domain.append(sol)
-
-    x_high = np.array(x_high)  # High fidelity random sensor
-    y_high = np.array(y_high)  # High fidelity solution at random sensor
-    y_high_domain = np.array(y_high_domain)  # High fidelity solution
-
-    high_data = {}
-    high_data["x_high"] = x_high
-    high_data["y_high"] = y_high
-    high_data["y_high_at_domain"] = y_high_domain
-    high_data["features"] = features_high
-    high_data["domain"] = domain_high
-
-    # Low Fidelity Data
-    y_low, y_low_at_x_high, y_low_at_domain_high = [], [], []
-    for ii in range(N_SAMPLES):
-        sol = solver(features_low[ii], LOW_CONFIG.get("M"))
-        interp = interpolate.interp1d(
-            domain_low, sol, kind="cubic", copy=False, assume_sorted=True
-        )
-        y_low_at_x_high.append(interp(x_high[ii]))
-        y_low_at_domain_high.append(interp(domain_high))
-        y_low.append(sol)
-
-    y_low_at_x_high = np.array(
-        y_low_at_x_high
-    )  # Low fidelity solution at high random sensor
-    y_low_at_domain_high = np.array(
-        y_low_at_domain_high
-    )  # Low fidelity solution at high domain
-    y_low = np.array(y_low)  # Low fideltiy solution
-
-    low_data = {}
-    low_data["y_low_at_x_high"] = y_low_at_x_high
-    low_data["y_low_at_domain_high"] = y_low_at_domain_high
-    low_data["y_low"] = y_low
-    low_data["features"] = features_low
-    low_data["domain"] = domain_low
-
-    return low_data, high_data
 
 
 def comp_integral_field(u, dx):
@@ -132,30 +33,6 @@ def comp_integral_field(u, dx):
     # Energy
     energy_density = 0.5 * (du_dx**2)
     return np.sum(energy_density, axis=1) * dx
-
-
-def compute_true_qoi(n_samples=100000):
-    """
-    Compute the true qoi q = E[P], where a realization of p is an integral QoI
-    over the domain
-    """
-    space = GRF(1, length_scale=0.05, N=1000, interp="cubic")
-    features = space.random(n_samples)
-    domain_high = np.linspace(0, 1, HIGH_CONFIG.get("M"))
-    dx = domain_high[1] - domain_high[0]
-    features_high = space.eval_u(features, domain_high)
-    # weight = np.exp(-10 * (domain_high - 0.5 )** 2)
-    sol = []
-    for ii in range(n_samples):
-        # compute the solution
-        sol.append(solver(features_high[ii], HIGH_CONFIG.get("M")))
-    sol = np.array(sol)
-    # Compute the integral
-    integral_field = comp_integral_field(sol, dx)
-    qoi = np.mean(integral_field)
-    print(f"Integral QoI: {qoi} using {n_samples} Monte-Carlo samples")
-    np.save("integral_qoi.npy", qoi)
-    return qoi
 
 
 # DataModule
@@ -167,72 +44,84 @@ class dataModule(L.LightningDataModule):
         self.p_train = p_train
 
     def setup(self, stage=None):
-        # Field
-        high_field = utils.n2t(self.high_data.get("y_high")).view(-1, 1)
-        high_field_at_domain = utils.n2t(self.high_data.get("y_high_at_domain")).view(
-            -1, HIGH_CONFIG.get("M")
-        )
+        self.trian_set = None
+        self.val_set = None
+        pass
+        # # Field
+        # high_field = utils.n2t(self.high_data.get("y_high")).view(-1, 1)
+        # high_field_at_domain = utils.n2t(self.high_data.get("y_high_at_domain")).view(
+        #     -1, HIGH_CONFIG.get("M")
+        # )
 
-        low_field = utils.n2t(low_data.get("y_low_at_x_high")).view(-1, 1)
-        low_field_at_domain_high = utils.n2t(low_data.get("y_low_at_domain_high")).view(
-            -1, HIGH_CONFIG.get("M")
-        )
+        # low_field = utils.n2t(low_data.get("y_low_at_x_high")).view(-1, 1)
+        # low_field_at_domain_high = (
+        # utils.n2t(low_data.get("y_low_at_domain_high")).view(
+        #     -1, HIGH_CONFIG.get("M")
+        # ))
 
-        domain = utils.n2t(high_data.get("x_high")).view(-1, 1)
+        # domain = utils.n2t(high_data.get("x_high")).view(-1, 1)
 
-        if RESIDUAL:
-            field = high_field - low_field
-        else:
-            field = high_field
-        # Condition
-        condition = utils.n2t(self.high_data.get("features"))
+        # if RESIDUAL:
+        #     field = high_field - low_field
+        # else:
+        #     field = high_field
+        # # Condition
+        # condition = utils.n2t(self.high_data.get("features"))
 
-        # Split for training and validation
-        n_train = int(N_SAMPLES * self.p_train)
-        field_train, field_val = field[:n_train], field[n_train:]
-        condition_train, condition_val = condition[:n_train], condition[n_train:]
-        domain_train, domain_val = domain[:n_train], domain[n_train:]
+        # # Split for training and validation
+        # n_train = int(N_SAMPLES * self.p_train)
+        # field_train, field_val = field[:n_train], field[n_train:]
+        # condition_train, condition_val = condition[:n_train], condition[n_train:]
+        # domain_train, domain_val = domain[:n_train], domain[n_train:]
 
-        # Normalize Data
-        field_mean, field_std = field_train.mean(0), field_train.std(0)
-        condition_mean, condition_std = condition_train.mean(0), condition_train.std(0)
+        # # Normalize Data
+        # field_mean, field_std = field_train.mean(0), field_train.std(0)
+        # condition_mean, condition_std = (
+        # condition_train.mean(0), condition_train.std(0))
 
-        field_train = (field_train - field_mean) / field_std  # Normalize train field
-        field_val = (field_val - field_mean) / field_std  # Normalize val field
+        # field_train = (field_train - field_mean) / field_std  # Normalize train field
+        # field_val = (field_val - field_mean) / field_std  # Normalize val field
 
-        condition_train = (
-            condition_train - condition_mean
-        ) / condition_std  # Normalize train condition
-        condition_val = (
-            condition_val - condition_mean
-        ) / condition_std  # Normalize val condition
+        # condition_train = (
+        #     condition_train - condition_mean
+        # ) / condition_std  # Normalize train condition
+        # condition_val = (
+        #     condition_val - condition_mean
+        # ) / condition_std  # Normalize val condition
 
-        # Testing Config
-        self.test_config = {}
+        # # Testing Config
+        # self.test_config = {}
 
-        high_field_at_domain_val = high_field_at_domain[n_train:]
+        # high_field_at_domain_val = high_field_at_domain[n_train:]
 
-        low_field_at_domain_high_val = low_field_at_domain_high[n_train:]
+        # low_field_at_domain_high_val = low_field_at_domain_high[n_train:]
 
-        self.test_config["domain"] = utils.n2t(self.high_data.get("domain")).view(-1, 1)
-        self.test_config["condition"] = condition_val
-        self.test_config["high_field"] = high_field_at_domain_val
-        self.test_config["low_field"] = low_field_at_domain_high_val
-        self.test_config["field_stats"] = {"mean": field_mean, "std": field_std}
-        self.test_config["condition_stats"] = {
-            "mean": condition_mean,
-            "std": condition_std,
-        }
+        # self.test_config["domain"] = (
+        # utils.n2t(self.high_data.get("domain")).view(-1, 1))
+        # self.test_config["low_domain"] = utils.n2t(self.low_data.get("domain")).view(
+        #     -1, 1
+        # )
+        # self.test_config["condition"] = condition_val
+        # self.test_config["high_field"] = high_field_at_domain_val
+        # self.test_config["low_field"] = low_field_at_domain_high_val
+        # self.test_config["field_stats"] = {"mean": field_mean, "std": field_std}
+        # self.test_config["condition_stats"] = {
+        #     "mean": condition_mean,
+        #     "std": condition_std,
+        # }
 
-        # Dataset
-        self.train_set = TensorDataset(field_train, condition_train, domain_train)
-        self.val_set = TensorDataset(field_val, condition_val, domain_val)
+        # # Save Test Config
+        # np.savez("test_config.npz", **self.test_config)
+
+        # # Dataset
+        # self.train_set = TensorDataset(field_train, condition_train, domain_train)
+        # self.val_set = TensorDataset(field_val, condition_val, domain_val)
 
     def train_dataloader(self):
-        return DataLoader(self.train_set, batch_size=64, shuffle=True)
+        return DataLoader(self.train_set, batch_size=256, shuffle=True)
 
     def val_dataloader(self):
-        return DataLoader(self.val_set, batch_size=64, shuffle=False)
+        return DataLoader(self.val_set, batch_size=256, shuffle=False)
 
 
 # ResFlow
@@ -349,14 +238,14 @@ def plot_predictions(best_model_path, data_module):
         low_field = data_module.test_config.get("low_field")[ii]
         # Get the model prediction
         x1_hat = model.interpolate(c_eval, d_eval).squeeze(-1).T.detach().to("cpu")
+        pred_residual = None
+        # if RESIDUAL:
+        #     # Denormalize
+        #     pred_residual = (
+        #         x1_hat * data_module.test_config["field_stats"]["std"]
+        #     ) + data_module.test_config["field_stats"]["mean"]
 
-        if RESIDUAL:
-            # Denormalize
-            pred_residual = (
-                x1_hat * data_module.test_config["field_stats"]["std"]
-            ) + data_module.test_config["field_stats"]["mean"]
-
-            x1_hat = pred_residual + low_field
+        #     x1_hat = pred_residual + low_field
 
         # True Residual
         true_residual = x1_true - low_field
@@ -385,14 +274,10 @@ def plot_predictions(best_model_path, data_module):
         )
         axs[ii].set_xlabel(r"x")
         axs[ii].set_ylabel(r"u(x,f(x))")
-        title = (
-            "True integral: {} |"
-            "Pred: {}"
-            "{}".format(
-                integral_field_true.item(),
-                integral_field_pred_mean.item(),
-                integral_field_pred_std.item(),
-            )
+        title = r"$q$: {:.3f} $\vert$ ".format(
+            integral_field_true.item()
+        ) + r"$\hat{{q}}$: {:.3f} $\pm$ {:.3f}".format(
+            integral_field_pred_mean.item(), integral_field_pred_std.item()
         )
         axs[ii].set_title(title)
         axs[ii].label_outer()
@@ -427,17 +312,16 @@ def plot_predictions(best_model_path, data_module):
 if __name__ == "__main__":
     # Compute the true QoI (Integral Qoi)
     # compute_true_qoi()
-    # generate data
-    low_data, high_data = generate_data()
+
     # DataModule
-    data_module = dataModule(low_data, high_data)
+    data_module = dataModule()
     # Model
-    model = ResFlow(nx=1, nc=HIGH_CONFIG.get("M"), nd=1)
+    model = ResFlow(nx=1, nc=100, nd=1)
     # checkpointer
     checkpointer = utils.get_checkpointer("./experiments/mfFlow/Poisson/checkpoints")
     # Trainer
     train_config = SimpleNamespace(
-        **{"max_epochs": 1, "devices": 1, "accelerator": "cpu", "strategy": "ddp"}
+        **{"max_epochs": 5000, "devices": 3, "accelerator": "gpu", "strategy": "ddp"}
     )
     trainer = utils.get_trainer(
         checkpointer=checkpointer, logger_name="mfFlow", train_config=train_config
@@ -447,5 +331,6 @@ if __name__ == "__main__":
 
     # Load best model
     best_model_path = checkpointer.best_model_path
+    print(f"Best path: {best_model_path}")
     # Plot predictions
     plot_predictions(best_model_path, data_module)
