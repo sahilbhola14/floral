@@ -26,8 +26,8 @@ parser.add_argument(
 )
 args = parser.parse_args()
 print(
-    f"Generating {args.n_samples} samples for High fidelity (m: {args.m_high})"
-    "and Low fideltiy (m: {args.m_low})"
+    "Generating {0:d} samples for High fidelity (m: {1:d})"
+    "and Low fideltiy (m: {2:d})".format(args.n_samples, args.m_high, args.m_low)
 )
 
 
@@ -139,8 +139,8 @@ def generate_data(args: Namespace):
     low_data["n_sensors"] = args.m_low  # Number of sensors
 
     # Save data
-    np.savez("low_fideltiy.npz", **low_data)
-    np.savez("high_fideltiy.npz", **high_data)
+    np.savez("low_fidelity.npz", **low_data)
+    np.savez("high_fidelity.npz", **high_data)
     print("Data saved to low_fidelity.npz and high_fidelity.npz")
 
 
