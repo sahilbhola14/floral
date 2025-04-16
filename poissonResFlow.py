@@ -126,15 +126,15 @@ def generate_data():
     return low_data, high_data
 
 
-def comp_qoi(u, dx):
+def comp_integral_field(u, dx):
     # Compute the gradient
-    du_dx = np.gradient(u, dx)
+    du_dx = np.gradient(u, dx, axis=1)
     # Energy
     energy_density = 0.5 * (du_dx**2)
-    return np.sum(energy_density) * dx
+    return np.sum(energy_density, axis=1) * dx
 
 
-def compute_true_qoi(n_samples=500000):
+def compute_true_qoi(n_samples=100000):
     """
     Compute the true qoi q = E[P], where a realization of p is an integral QoI
     over the domain
@@ -144,14 +144,15 @@ def compute_true_qoi(n_samples=500000):
     domain_high = np.linspace(0, 1, HIGH_CONFIG.get("M"))
     dx = domain_high[1] - domain_high[0]
     features_high = space.eval_u(features, domain_high)
-    p_samples = []
     # weight = np.exp(-10 * (domain_high - 0.5 )** 2)
+    sol = []
     for ii in range(n_samples):
         # compute the solution
-        sol = solver(features_high[ii], HIGH_CONFIG.get("M"))
-        p_samples.append(comp_qoi(sol, dx))
-
-    qoi = np.mean(np.array(p_samples))
+        sol.append(solver(features_high[ii], HIGH_CONFIG.get("M")))
+    sol = np.array(sol)
+    # Compute the integral
+    integral_field = comp_integral_field(sol, dx)
+    qoi = np.mean(integral_field)
     print(f"Integral QoI: {qoi} using {n_samples} Monte-Carlo samples")
     np.save("integral_qoi.npy", qoi)
     return qoi
@@ -192,7 +193,7 @@ class dataModule(L.LightningDataModule):
         condition_train, condition_val = condition[:n_train], condition[n_train:]
         domain_train, domain_val = domain[:n_train], domain[n_train:]
 
-        # Normalize
+        # Normalize Data
         field_mean, field_std = field_train.mean(0), field_train.std(0)
         condition_mean, condition_std = condition_train.mean(0), condition_train.std(0)
 
@@ -326,50 +327,48 @@ class ResFlow(Flow, L.LightningModule):
         pass
 
 
-if __name__ == "__main__":
-    # Compute the true QoI
-    compute_true_qoi()
-    # generate data
-    low_data, high_data = generate_data()
-    # DataModule
-    data_module = dataModule(low_data, high_data)
-    # Model
-    model = ResFlow(nx=1, nc=HIGH_CONFIG.get("M"), nd=1)
-    # checkpointer
-    checkpointer = utils.get_checkpointer("./experiments/mfFlow/Poisson/checkpoints")
-    # Trainer
-    train_config = SimpleNamespace(
-        **{"max_epochs": 10000, "devices": 2, "accelerator": "gpu", "strategy": "ddp"}
-    )
-    trainer = utils.get_trainer(
-        checkpointer=checkpointer, logger_name="mfFlow", train_config=train_config
-    )
-    # Train
-    trainer.fit(model, data_module)
+# Plot predictions
+def plot_predictions(best_model_path, data_module):
+    """Plot the predictions of the model"""
 
-    # Load best model
-    best_model_path = checkpointer.best_model_path
+    # Load the best model
     model = ResFlow.load_from_checkpoint(best_model_path)
 
-    # Test
     fig, axs = plt.subplots(2, 5, figsize=(20, 8), sharex=True, sharey=True)
     axs = axs.ravel()
+
+    # Query the model on {d_eval} domain
     d_eval = data_module.test_config.get("domain")
+    dx = (d_eval[1] - d_eval[0]).item()
     for ii in range(len(axs) // 2):
+        # Get the condition
         c_eval = data_module.test_config.get("condition")[ii].view(1, -1)
+        # Get the true prediciton on domain
         x1_true = data_module.test_config.get("high_field")[ii]
+        # Get the low fidelity prediction
         low_field = data_module.test_config.get("low_field")[ii]
+        # Get the model prediction
         x1_hat = model.interpolate(c_eval, d_eval).squeeze(-1).T.detach().to("cpu")
+
         if RESIDUAL:
             # Denormalize
             pred_residual = (
                 x1_hat * data_module.test_config["field_stats"]["std"]
             ) + data_module.test_config["field_stats"]["mean"]
+
             x1_hat = pred_residual + low_field
 
         # True Residual
         true_residual = x1_true - low_field
 
+        # Compute the Integral quantity
+        integral_field_true = comp_integral_field(utils.t2n(x1_true.view(1, -1)), dx)
+        integral_field_pred = comp_integral_field(utils.t2n(x1_hat), dx)
+        integral_field_pred_mean, integral_field_pred_std = integral_field_pred.mean(
+            0
+        ), integral_field_pred.std(0)
+
+        # Mean prediction
         mean_pred = utils.t2n(x1_hat.mean(0))
         std_pred = utils.t2n(x1_hat.std(0))
 
@@ -386,6 +385,16 @@ if __name__ == "__main__":
         )
         axs[ii].set_xlabel(r"x")
         axs[ii].set_ylabel(r"u(x,f(x))")
+        title = (
+            "True integral: {} |"
+            "Pred: {}"
+            "{}".format(
+                integral_field_true.item(),
+                integral_field_pred_mean.item(),
+                integral_field_pred_std.item(),
+            )
+        )
+        axs[ii].set_title(title)
         axs[ii].label_outer()
         if ii == 0:
             axs[ii].legend()
@@ -413,3 +422,30 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.savefig("corrFlow.png")
+
+
+if __name__ == "__main__":
+    # Compute the true QoI (Integral Qoi)
+    # compute_true_qoi()
+    # generate data
+    low_data, high_data = generate_data()
+    # DataModule
+    data_module = dataModule(low_data, high_data)
+    # Model
+    model = ResFlow(nx=1, nc=HIGH_CONFIG.get("M"), nd=1)
+    # checkpointer
+    checkpointer = utils.get_checkpointer("./experiments/mfFlow/Poisson/checkpoints")
+    # Trainer
+    train_config = SimpleNamespace(
+        **{"max_epochs": 1, "devices": 1, "accelerator": "cpu", "strategy": "ddp"}
+    )
+    trainer = utils.get_trainer(
+        checkpointer=checkpointer, logger_name="mfFlow", train_config=train_config
+    )
+    # Train
+    trainer.fit(model, data_module)
+
+    # Load best model
+    best_model_path = checkpointer.best_model_path
+    # Plot predictions
+    plot_predictions(best_model_path, data_module)
