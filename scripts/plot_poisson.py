@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import plot_utils as utils
+import seaborn as sns
 
 plt.style.use("journal.mplstyle")
 
@@ -59,33 +60,20 @@ def compute_Mean_CRPS(prediction, target):
     return np.mean(crps)
 
 
-if __name__ == "__main__":
-    # Field
-    true_field = get_field(corrFlow, "true")
-    low_field = get_field(corrFlow, "low")
-    pred_field_corrFlow = get_field(corrFlow, "pred")
-    pred_field_non_corrFlow = get_field(non_corrFlow, "pred")
-
-    # Domain
-    domain_high = get_domain(corrFlow, "high")
-    domain_low = get_domain(corrFlow, "low")
-
-    # QoI
-    true_qoi = get_qoi(corrFlow, "true")
-    low_qoi = get_qoi(corrFlow, "low")
-    pred_qoi_corrFlow = get_qoi(corrFlow, "pred")
-    pred_qoi_non_corrFlow = get_qoi(non_corrFlow, "pred")
-
-    # Residual
-    true_residual = get_residual(corrFlow, "true")
-    residual_corrFlow = get_residual(corrFlow, "pred")
-    residual_non_corrFlow = get_residual(non_corrFlow, "pred")
-
-    # CRPS
-    crps_corrFlow = compute_Mean_CRPS(pred_qoi_corrFlow, true_qoi).item()
-    crps_non_corrFlow = compute_Mean_CRPS(pred_qoi_non_corrFlow, true_qoi).item()
-
-    # Plotting
+def plot_field(
+    true_field,
+    low_field,
+    pred_field_corrFlow,
+    pred_field_non_corrFlow,
+    domain_high,
+    domain_low,
+    true_residual,
+    residual_corrFlow,
+    residual_non_corrFlow,
+    crps_corrFlow,
+    crps_non_corrFlow,
+):
+    """Plot the fields"""
     fig, axs = plt.subplots(
         2, n_plot, figsize=(n_plot * 2.5, 5), sharex=True, sharey=True
     )
@@ -112,7 +100,7 @@ if __name__ == "__main__":
         axs[ii].plot(
             domain_high,
             mean_non_corrFlow_prediciton,
-            "g",
+            "b",
             label="High-fidelity",
             linestyle="--",
         )
@@ -120,7 +108,7 @@ if __name__ == "__main__":
             domain_high,
             mean_non_corrFlow_prediciton - 3.0 * std_non_corrFlow_prediciton,
             mean_non_corrFlow_prediciton + 3.0 * std_non_corrFlow_prediciton,
-            color="g",
+            color="b",
             alpha=0.2,
         )
 
@@ -151,7 +139,7 @@ if __name__ == "__main__":
         axs[ii + n_plot].plot(
             domain_high,
             mean_non_corrFlow_residual,
-            "g",
+            "b",
             label="High-fidelity",
             linestyle="--",
         )
@@ -159,7 +147,7 @@ if __name__ == "__main__":
             domain_high,
             mean_non_corrFlow_residual - 2.0 * std_non_corrFlow_residual,
             mean_non_corrFlow_residual + 2.0 * std_non_corrFlow_residual,
-            color="g",
+            color="b",
             alpha=0.2,
         )
         axs[ii + n_plot].plot(
@@ -188,3 +176,81 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.savefig("poisson.png", dpi=300, bbox_inches="tight")
     plt.close()
+
+
+def plot_qoi_plots(true_qoi, low_qoi, pred_qoi_corrFlow, pred_qoi_non_corrFlow):
+    """Plot violin plots for QoI"""
+    fig, axs = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+    axs = axs.ravel()
+    idx = np.random.choice(len(true_qoi), size=len(axs), replace=False)
+    for ii in range(len(axs)):
+        iplot = idx[ii]
+        # Extract the relevant QoI data for this batch element
+        true = true_qoi[iplot]
+        pred_corrFlow = pred_qoi_corrFlow[iplot, :]  # Remove the last dimension
+        pred_non_corrFlow = pred_qoi_non_corrFlow[iplot, :]  # Remove the last dimension
+
+        # Compute CRPS
+        crps_corrFlow = compute_Mean_CRPS(
+            pred_corrFlow.reshape(1, -1), true.reshape(1, 1)
+        )
+        crps_non_corrFlow = compute_Mean_CRPS(
+            pred_non_corrFlow.reshape(1, -1), true.reshape(1, 1)
+        )
+
+        # Plot violin plots
+        sns.violinplot(data=[true, pred_non_corrFlow, pred_corrFlow], ax=axs[ii])
+
+        # Set the x-tick labels manually
+        axs[ii].set_xticklabels(["True", "High-Fidelty", "corrFlow"])
+
+        # Print CRPS to title
+        axs[ii].set_title(
+            r"$\mathrm{CRPS}_{\mathrm{High\text{-}fidelity}} = {%s}$, "
+            r"$\mathrm{CRPS}_{\mathrm{corrFlow}} = {%s}$"
+            % (utils.to_latex_sci(crps_non_corrFlow), utils.to_latex_sci(crps_corrFlow))
+        )
+
+        # Set titles and labels
+        axs[ii].set_ylabel(r"QoI, $q$")
+        axs[ii].set_xlabel("Method")
+
+    plt.tight_layout()
+    plt.savefig("poisson_qoi.png")
+    plt.close()
+
+
+if __name__ == "__main__":
+    # Field
+    true_field = get_field(corrFlow, "true")
+    low_field = get_field(corrFlow, "low")
+    pred_field_corrFlow = get_field(corrFlow, "pred")
+    pred_field_non_corrFlow = get_field(non_corrFlow, "pred")
+
+    # Domain
+    domain_high = get_domain(corrFlow, "high")
+    domain_low = get_domain(corrFlow, "low")
+
+    # QoI
+    true_qoi = get_qoi(corrFlow, "true")
+    low_qoi = get_qoi(corrFlow, "low")
+    pred_qoi_corrFlow = get_qoi(corrFlow, "pred")
+    pred_qoi_non_corrFlow = get_qoi(non_corrFlow, "pred")
+
+    # Residual
+    true_residual = get_residual(corrFlow, "true")
+    residual_corrFlow = get_residual(corrFlow, "pred")
+    residual_non_corrFlow = get_residual(non_corrFlow, "pred")
+
+    # CRPS
+    crps_corrFlow = compute_Mean_CRPS(pred_qoi_corrFlow, true_qoi).item()
+    crps_non_corrFlow = compute_Mean_CRPS(pred_qoi_non_corrFlow, true_qoi).item()
+
+    # Plot the Field
+    # plot_field(true_field, low_field, pred_field_corrFlow, pred_field_non_corrFlow,
+    #            domain_high, domain_low,
+    #            true_residual, residual_corrFlow, residual_non_corrFlow,
+    #            crps_corrFlow, crps_non_corrFlow
+    #            )
+    # Plot QoI plots
+    plot_qoi_plots(true_qoi, low_qoi, pred_qoi_corrFlow, pred_qoi_non_corrFlow)
