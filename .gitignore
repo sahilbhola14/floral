@@ -178,3 +178,8 @@ undodir/
 
 # data
 .pt
+*.png
+*.npy
+data/
+experiments/
+logs/
