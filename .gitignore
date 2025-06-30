@@ -180,5 +180,7 @@ undodir/
 .pt
 *.png
 *.npy
+*.npz
+*.pt
 experiments/
 logs/
