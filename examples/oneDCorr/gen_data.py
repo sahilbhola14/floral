@@ -31,6 +31,15 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "-n", "--n_samples", type=int, default=2000, help="Number of samples to generate"
 )
+
+parser.add_argument(
+    "-nt",
+    "--n_test_samples",
+    type=int,
+    default=50,
+    help="Number of samples to generate test",
+)
+
 parser.add_argument(
     "-mh",
     "--m_high",
@@ -43,7 +52,10 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-print(f"Generating {args.n_samples} samples")
+print(
+    f"Generating {args.n_samples} samples for training and validation,\
+    and {args.n_test_samples} for testing."
+)
 
 
 def eval_high_fidelity_model(a: np.ndarray, x: np.ndarray):
@@ -84,7 +96,7 @@ def generate():
     """generate the data"""
     domain = np.linspace(0, 1, args.m_high)  # high fidelity domain
     features = sample_input_function(
-        args.n_samples, domain
+        args.n_samples + args.n_test_samples, domain
     )  # samples of the input functions
     hf_solution = eval_high_fidelity_model(
         features, domain
@@ -94,15 +106,24 @@ def generate():
     )  # evaluate low fidelity model
 
     high_data = {
-        "field": hf_solution,
-        "condition": features,
+        "field": hf_solution[: args.n_samples],
+        "condition": features[: args.n_samples],
         "domain": domain.reshape(-1, 1),
         "resolution": args.m_high,
     }
 
     low_data = {
-        "field": lf_solution,
-        "condition": features,
+        "field": lf_solution[: args.n_samples],
+        "condition": features[: args.n_samples],
+        "domain": domain.reshape(-1, 1),
+        "resolution": args.m_high,
+    }
+
+    # Test config
+    test_data = {
+        "LF_field": lf_solution[args.n_samples :],
+        "HF_field": hf_solution[args.n_samples :],
+        "condition": features[args.n_samples :],
         "domain": domain.reshape(-1, 1),
         "resolution": args.m_high,
     }
@@ -113,6 +134,7 @@ def generate():
     # save
     np.savez("high_fidelity.npz", **high_data)
     np.savez("low_fidelity.npz", **low_data)
+    np.savez("test_data.npz", **test_data)
 
 
 if __name__ == "__main__":

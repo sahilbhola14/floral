@@ -60,6 +60,7 @@ class OpDataModule(L.LightningDataModule):
         n_sensors: int,
         mfFlow: bool,
         dataloader_config: dict,
+        test_data_path: str,
     ):
         """Base class for data modules in PyTorch Lightning.
         Args:
@@ -78,6 +79,7 @@ class OpDataModule(L.LightningDataModule):
         self.n_sensors = n_sensors  # Number of sensors in the output field
         self.mfFlow = mfFlow  # If True, use residual learning
         self.dataloader_config = dataloader_config  # Configuration for the dataloader
+        self.test_data_path = test_data_path  # Path for the test data
         self.train_ratio = dataloader_config.get(
             "train_ratio"
         )  # Ratio of training data
@@ -307,27 +309,55 @@ class OpDataModule(L.LightningDataModule):
 
         return data
 
-    def _get_test_config(self, data_dict: dict):
+    def _get_test_config(self):
         """prepare the test config
         Notes:
         - Only condition is normalized as the fields are used for only comparison.
         """
-        LF_field = data_dict.get("LF_field", None)
-        HF_field = data_dict.get("HF_field", None)
-        HF_condition = data_dict.get("HF_condition", None)
-        HF_domain = data_dict.get("HF_domain", None)
+        # Check if test config is avilable
+        check_path(self.test_data_path)
+        # Load the test data
+        test_data = np.load(self.test_data_path, allow_pickle=True)
+        # Check keys
+        req_keys = ["LF_field", "HF_field", "condition", "domain"]
+        assert all(
+            test_key in test_data for test_key in req_keys
+        ), f"Test data must contain the keys: {req_keys}"
+        LF_field = test_data.get("LF_field", None)
+        HF_field = test_data.get("HF_field", None)
+        condition = test_data.get("condition", None)
+        domain = test_data.get("domain", None)
+        # Check shapes
+        assert (
+            LF_field.shape[1] == self.nc
+        ), f"LF_field shape mismatch: expected {self.nc}, got {LF_field.shape[1]}"
+        assert (
+            HF_field.shape[1] == self.nc
+        ), f"HF_field shape mismatch: expected {self.nc}, got {HF_field.shape[1]}"
+        assert (
+            condition.shape[1] == self.nc
+        ), f"Condition shape mismatch: expected {self.nc}, got {condition.shape[1]}"
+        assert (
+            domain.shape[1] == self.nd
+        ), f"Domain shape mismatch: expected {self.nd}, got {domain.shape[1]}"
+
+        # Convert to tensors
+        LF_field = n2t(LF_field)
+        HF_field = n2t(HF_field)
+        condition = n2t(condition)
+        domain = n2t(domain)
 
         # Normalize the condition
         condition_mean = self.statistics["condition"]["mean"]
         condition_std = self.statistics["condition"]["std"]
-        condition = (HF_condition - condition_mean) / condition_std
+        condition = (condition - condition_mean) / condition_std
 
         # Create config dict
         test_config = {
             "LF_field": LF_field,
             "HF_field": HF_field,
             "condition": condition,
-            "domain": HF_domain,
+            "domain": domain,
         }
 
         return test_config
@@ -346,7 +376,7 @@ class OpDataModule(L.LightningDataModule):
             train_data_norm, val_data_norm = self._normalize_data(train_data, val_data)
 
             # Prepare test configuration
-            self.test_config = self._get_test_config(op_data_dict)
+            self.test_config = self._get_test_config()
 
             # Create datasets
             self.train_set = TensorDataset(

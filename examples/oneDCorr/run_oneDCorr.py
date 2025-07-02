@@ -35,6 +35,7 @@ def get_data_module():
         n_sensors=config.data.high_fidelity.n_sensors,
         mfFlow=config.mfFlow,
         dataloader_config=config.dataloader,
+        test_data_path=config.data.test_data_path,
     )
 
     # Setup the data module
