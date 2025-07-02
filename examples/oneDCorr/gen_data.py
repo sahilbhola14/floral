@@ -94,16 +94,16 @@ def generate():
     )  # evaluate low fidelity model
 
     high_data = {
-        "domain": domain.reshape(1, -1),
-        "features": features,
         "field": hf_solution,
+        "condition": features,
+        "domain": domain.reshape(-1, 1),
         "resolution": args.m_high,
     }
 
     low_data = {
-        "domain": domain.reshape(1, -1),
-        "features": features,
         "field": lf_solution,
+        "condition": features,
+        "domain": domain.reshape(-1, 1),
         "resolution": args.m_high,
     }
 

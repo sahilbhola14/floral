@@ -1,0 +1,25 @@
+[build-system]
+requires = [
+    "setuptools>=61",
+    "wheel"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mfFlow"
+version = "0.1.0"
+description = "A python package for probabilistic neural operators using flow matching"
+authors = [{name="Sahil Bhola", email="sbhola@umich.edu"}, {name="Karthik Duraisamy", email="kdur@umich.edu"}]
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.urls]
+Homepage = "https://github.com/sahilbhola14/mfFlow"
+
+[tools.setuptools.package-dir]
+"" = "src"
+
+[tools.setuptools.packages.find]
+where = ["src"]

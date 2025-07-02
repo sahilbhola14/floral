@@ -1,0 +1,15 @@
+name: mfFlow
+channels:
+  - conda-forge
+  - defaults
+  - anaconda
+dependencies:
+  - tqdm
+  - numpy
+  - torch
+  - matplotlib
+  - pip
+  - pip:
+    - omegaconf
+    - build
+    - twine

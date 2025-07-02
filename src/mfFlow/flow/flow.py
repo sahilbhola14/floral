@@ -1,12 +1,11 @@
 import torch
-
-# import utils.utils as utils
-
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint
 
 
 class Flow(ABC):
+    """Base class for flow models."""
+
     def configure_optimizers(self):
         """optimizer configuration"""
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-2, weight_decay=1e-4)
@@ -106,7 +105,7 @@ class Flow(ABC):
 
         return x, c
 
-    def __wrapper(
+    def _wrapper(
         self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
     ):
         """wrapper function"""
@@ -147,7 +146,7 @@ class Flow(ABC):
         # RHS
 
         def rhs(t, x):
-            vt = self.__wrapper(x, c_batch, d_batch, t)
+            vt = self._wrapper(x, c_batch, d_batch, t)
             return vt
 
         # Integrate
@@ -170,14 +169,4 @@ class Flow(ABC):
     @abstractmethod
     def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
         """get the initial condition for the flow"""
-        pass
-
-    @abstractmethod
-    def append_boundary_conditions(self, x: torch.Tensor):
-        """append the boundary conditions to the data"""
-        pass
-
-    @abstractmethod
-    def remove_boundary_conditions(self, x: torch.Tensor):
-        """remove the boundary conditions to the data"""
         pass
