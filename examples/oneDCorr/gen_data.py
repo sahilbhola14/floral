@@ -53,8 +53,8 @@ parser.add_argument(
 args = parser.parse_args()
 
 print(
-    f"Generating {args.n_samples} samples for training and validation,\
-    and {args.n_test_samples} for testing."
+    f"Generating {args.n_samples} samples for training and validation, "
+    f"and {args.n_test_samples} for testing."
 )
 
 
