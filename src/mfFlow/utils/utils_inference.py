@@ -1,6 +1,7 @@
 import torch
 import pytorch_lightning as L
 from mfFlow.utils import printer
+from tqdm import tqdm
 
 
 class Inference:
@@ -37,9 +38,13 @@ class Inference:
         n_samples = self.test_config.get("n_samples")
         field = {"LF_field": [], "HF_field": [], "Prediction": []}
         residual = {"True": [], "Prediction": []}
-
-        for ii in range(n_samples):
-            printer("Pecentage: {:.2f}%".format(ii / n_samples * 100))
+        pbar = tqdm(
+            range(n_samples),
+            desc="Inference",
+            ncols=150,
+            leave=True,
+        )
+        for ii in pbar:
             # Get the condition
             c_eval = (
                 self.test_config["condition"][ii].unsqueeze(0).to(self.model.device)
@@ -105,6 +110,8 @@ class Inference:
             results,
             save_path,
         )
+
+        pbar.close()
 
     def _get_prediction(self, c_eval: torch.Tensor, d_eval: torch.Tensor):
         """Get the model prediction"""
