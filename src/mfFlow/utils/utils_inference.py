@@ -98,9 +98,12 @@ class Inference:
 
         # Save the results to a file
         path = self.job_name + "_results"
+        save_path = path + "_mfFlow" if self.mfFlow else path
+        save_path += ".pt"
+        printer("Saving results to {}".format(save_path))
         torch.save(
             results,
-            path + "_mfFlow.pt" if self.mfFlow else path + ".pt",
+            save_path,
         )
 
     def _get_prediction(self, c_eval: torch.Tensor, d_eval: torch.Tensor):
