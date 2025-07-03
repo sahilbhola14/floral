@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as L
 from torch.utils.data import DataLoader, TensorDataset
-from mfFlow.utils import check_path, get_logger
+from mfFlow.utils import check_path, get_logger, printer
 
 
 def t2n(tensor: torch.Tensor) -> torch.Tensor:
@@ -80,12 +80,18 @@ class OpDataModule(L.LightningDataModule):
         self.mfFlow = mfFlow  # If True, use residual learning
         self.dataloader_config = dataloader_config  # Configuration for the dataloader
         self.test_data_path = test_data_path  # Path for the test data
-        self.train_ratio = dataloader_config.get(
+        self.train_ratio = self.dataloader_config.get(
             "train_ratio"
         )  # Ratio of training data
         self.reload = self.dataloader_config.get(
             "reload"
         )  # If True, reload the dataset
+
+        # if True, reload the sensors
+        # Note, if self.reload is True, self.reload_sensors will be ignored and
+        # the sensors will be reloaded
+        self.reload_sensors = self.dataloader_config.get("reload_sensors")
+
         self.batch_size = self.dataloader_config.get(
             "batch_size"
         )  # Batch size for the dataloader
@@ -103,6 +109,7 @@ class OpDataModule(L.LightningDataModule):
             },
             "statistics": "statistics_mfFlow.pt" if self.mfFlow else "statistics.pt",
             "test_config": "test_config_mfFlow.pt" if self.mfFlow else "test_config.pt",
+            "sensor_locations": "sensor_locations.pt",
         }
 
     def _extract_fields(self, data_dict: dict):
@@ -160,11 +167,26 @@ class OpDataModule(L.LightningDataModule):
         assert (
             n_sensors_available >= self.n_sensors
         ), f"Not enough sensors available: {n_sensors_available} < {self.n_sensors}"
-
-        sensor_locations = torch.stack(
-            [torch.randperm(self.nc)[: self.n_sensors] for _ in range(self.n_samples)],
-            dim=0,
-        )
+        if self.reload_sensors:
+            printer(
+                f"Reloading sensor locations from {self.file_paths['sensor_locations']}"
+            )
+            check_path(self.file_paths["sensor_locations"], "to disable reload_sensors")
+            sensor_locations = torch.load(self.file_paths["sensor_locations"])
+            # Check shape
+            assert sensor_locations.shape == (self.n_samples, self.n_sensors), (
+                "Sensor locations shape mismatch:"
+                + f" Expected {self.n_samples, self.n_sensors}, "
+                + f"got {sensor_locations.shape}"
+            )
+        else:
+            sensor_locations = torch.stack(
+                [
+                    torch.randperm(self.nc)[: self.n_sensors]
+                    for _ in range(self.n_samples)
+                ],
+                dim=0,
+            )
 
         # Get the field at sensor locations
         LF_field_sensor = LF_field_sub.gather(1, sensor_locations)
@@ -374,9 +396,16 @@ class OpDataModule(L.LightningDataModule):
             self.val_set = torch.load(self.file_paths["datasets"]["val"])
             self.statistics = torch.load(self.file_paths["statistics"])
             self.test_config = torch.load(self.file_paths["test_config"])
+
+            # Load sensor locations irrespective of self.reload_sensors
+            self.sensor_locations = torch.load(self.file_paths["sensor_locations"])
+
         else:
             # Get the processed operator fields
             op_data_dict = self._process_operator_fields()
+
+            # Sensor locations
+            self.sensor_locations = op_data_dict.get("sensor_locations", None)
 
             # Split the data into training and validation sets
             train_data, val_data = self._split_data(op_data_dict)
@@ -404,6 +433,7 @@ class OpDataModule(L.LightningDataModule):
             torch.save(self.val_set, self.file_paths["datasets"]["val"])
             torch.save(self.statistics, self.file_paths["statistics"])
             torch.save(self.test_config, self.file_paths["test_config"])
+            torch.save(self.sensor_locations, self.file_paths["sensor_locations"])
 
     def train_dataloader(self):
         """Returns the training dataloader."""

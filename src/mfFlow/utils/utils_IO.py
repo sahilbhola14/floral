@@ -21,9 +21,11 @@ def make_dirs(dirname) -> None:
         os.makedirs(dirname)
 
 
-def check_path(path: str) -> None:
+def check_path(path: str, suggestion: str = None) -> None:
     """Check if a path exists, raise an error if it does not."""
-    assert osp.exists(path), f"Path {path} does not exist"
+    assert osp.exists(path), f"Path {path} does not exist" + (
+        f". Did you mean {suggestion}?" if suggestion else ""
+    )
 
 
 def get_checkpointer(path: str):
