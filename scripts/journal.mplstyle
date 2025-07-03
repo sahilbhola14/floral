@@ -1,34 +1,57 @@
 # journal.mplstyle
 
+# Fonts
 font.family: sans-serif
 # font.serif: Times New Roman, Times, Computer Modern Roman
-font.size: 12
-axes.labelsize: 10
-axes.titlesize: 10
-legend.fontsize: 9
-xtick.labelsize: 9
-ytick.labelsize: 9
+font.size: 20
 
-figure.figsize: 3.5, 2.5  # inches
-figure.dpi: 300
+# Axes
+axes.labelsize: 15
+axes.titlesize: 15
+axes.linewidth: 1.0
+axes.labelpad: 2.5  # spacing between label and axis
 
-lines.linewidth: 2
-lines.markersize: 2
-
-axes.linewidth: 0.3
-xtick.major.width: 0.2
-ytick.major.width: 0.2
-
+# Ticks
+xtick.labelsize: 10
+ytick.labelsize: 10
 xtick.direction: in
 ytick.direction: in
 xtick.top: True
 ytick.right: True
+xtick.major.width: 0.4
+ytick.major.width: 0.4
+xtick.minor.visible: True
+ytick.minor.visible: True
+xtick.minor.width: 0.3
+ytick.minor.width: 0.3
+xtick.major.size: 3
+ytick.major.size: 3
+xtick.minor.size: 1.5
+ytick.minor.size: 1.5
 
+# Lines and markers
+lines.linewidth: 1.5
+lines.markersize: 3
+
+# Legend
+legend.fontsize: 10
 legend.frameon: False
+legend.loc: best
 
+# Figure
+figure.figsize: 3.4, 2.5  # fits one-column journal layout
+figure.dpi: 600
+figure.autolayout: True
+
+# Savefig
+savefig.dpi: 600
 savefig.bbox: tight
-savefig.pad_inches: 0.02
+savefig.pad_inches: 0.01
 
-# Optional: Uncomment to use LaTeX (requires LaTeX installation)
-text.usetex: True
-text.latex.preamble: \usepackage{amsmath}
+# Grid
+grid.linewidth: 0.25
+grid.linestyle: :
+grid.alpha: 0.5
+
+# Colors (optional: grayscale or colorblind-friendly palettes)
+# axes.prop_cycle: cycler('color', ['#000000', '#444444', '#888888', '#BBBBBB'])
