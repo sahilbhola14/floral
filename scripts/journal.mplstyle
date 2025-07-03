@@ -30,7 +30,7 @@ xtick.minor.size: 1.5
 ytick.minor.size: 1.5
 
 # Lines and markers
-lines.linewidth: 1.5
+lines.linewidth: 2
 lines.markersize: 3
 
 # Legend
