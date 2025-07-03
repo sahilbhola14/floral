@@ -358,6 +358,7 @@ class OpDataModule(L.LightningDataModule):
             "HF_field": HF_field,
             "condition": condition,
             "domain": domain,
+            "n_samples": len(condition),
         }
 
         return test_config

@@ -1,6 +1,6 @@
 # Configutations for 1-D Correlation
 
-job_name: "test_job" # Unique identifier for each run
+job_name: "oneDCorr" # Unique identifier for each run
 mfFlow: True # True means residual operator is learned
 checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
@@ -33,7 +33,7 @@ train:
   devices: 1
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 5000
+  max_epochs: 1
   learning_rate: 5.0e-3
   weight_decay: 1.0e-4
 
@@ -44,9 +44,8 @@ flow:
   num_centers: 10 # Number of RBF centers for domain embedding
 
 generate:
-  n_evals: 2 # number of conditions to evaluate
-  minibatch_size: 1000 # number of domain points to process at a time (increase if memory is available)
-  n_gen: 1 # number of samples generated (for UQ purposes)
+  minibatch_size: 20 # number of domain points to process at a time (increase if memory is available)
+  n_gen: 2 # number of samples generated (for UQ purposes)
   nT: 100 # number of time steps for integration
 
 plot:

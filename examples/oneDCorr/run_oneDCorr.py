@@ -10,6 +10,7 @@ from mfFlow.utils import (
     get_trainer,
     init_weights,
     check_path,
+    Inference,
 )
 from mfFlow.flow import Flow
 from mfFlow.archs import RBFFiLM
@@ -161,3 +162,14 @@ if __name__ == "__main__":
         best_model_path = config.checkpoint_load_path
 
     # Inference
+    best_model = ResFlow.load_from_checkpoint(best_model_path, map_location="cpu")
+    best_model.to("cuda" if torch.cuda.is_available() else "cpu")
+    infer = Inference(
+        model=best_model,
+        test_config=data_module.test_config,
+        statistics=data_module.statistics,
+        job_name=config.job_name,
+        mfFlow=config.mfFlow,
+        generate_config=config.generate,
+    )
+    infer()
