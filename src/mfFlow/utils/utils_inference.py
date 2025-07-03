@@ -91,6 +91,7 @@ class Inference:
             "field": field,
             "residual": residual,
             "statistics": self.statistics,
+            "domain": self.test_config["domain"],
             "job_name": self.job_name,
             "test_config": self.test_config,
         }
