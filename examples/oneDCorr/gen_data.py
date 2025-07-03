@@ -1,28 +1,8 @@
 import numpy as np
 import argparse
 import matplotlib.pyplot as plt
-from matplotlib import rcParams
 
-rcParams.update(
-    {
-        "figure.figsize": (10, 6),
-        "axes.titlesize": 16,
-        "axes.labelsize": 14,
-        "xtick.labelsize": 12,
-        "ytick.labelsize": 12,
-        "legend.fontsize": 12,
-        "legend.frameon": True,
-        "legend.framealpha": 1,
-        "lines.linewidth": 2,
-        "lines.markersize": 6,
-        "grid.linestyle": "--",
-        "grid.alpha": 0.7,
-        "font.family": "serif",
-        "savefig.dpi": 300,
-        "savefig.bbox": "tight",
-        "axes.grid": True,
-    }
-)
+plt.style.use("../../scripts/journal.mplstyle")
 
 parser = argparse.ArgumentParser(
     prog="OneDCorrelation",
@@ -82,12 +62,12 @@ def plot_snapshot(
 ):
     """Plot a snapshot of the high and low fidelity solutions."""
     idx_plot = 0  # for reproducibility, always plot the first sample
-    plt.figure()
-    plt.plot(domain, hf_solution[idx_plot, :], label="High Fidelity")
-    plt.plot(domain, lf_solution[idx_plot, :], label="Low Fidelity")
-    plt.xlabel("x")
-    plt.ylabel("w(a)")
-    plt.legend()
+    plt.figure(figsize=(8, 4))
+    plt.plot(domain, lf_solution[idx_plot, :], label="Low-fidelity", color="blue")
+    plt.plot(domain, hf_solution[idx_plot, :], label="High-fidelity", color="k")
+    plt.xlabel("$x$")
+    plt.ylabel("$w(a)$")
+    plt.legend(fontsize=10, loc="upper right")
     plt.tight_layout()
     plt.savefig("snapshot.png")
 
