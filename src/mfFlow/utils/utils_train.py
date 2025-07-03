@@ -365,7 +365,15 @@ class OpDataModule(L.LightningDataModule):
 
     def setup(self, stage: str = None):
         if self.reload:
-            raise NotImplementedError("Reloading the dataset is not implemented yet")
+            # Load the datasets if reload is True
+            check_path(self.file_paths["datasets"]["train"])
+            check_path(self.file_paths["datasets"]["val"])
+            check_path(self.file_paths["statistics"])
+            check_path(self.file_paths["test_config"])
+            self.train_set = torch.load(self.file_paths["datasets"]["train"])
+            self.val_set = torch.load(self.file_paths["datasets"]["val"])
+            self.statistics = torch.load(self.file_paths["statistics"])
+            self.test_config = torch.load(self.file_paths["test_config"])
         else:
             # Get the processed operator fields
             op_data_dict = self._process_operator_fields()

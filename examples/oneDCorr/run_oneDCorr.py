@@ -23,6 +23,8 @@ args = parser.parse_args()
 config = OmegaConf.load(args.config)
 printer(f"Running oneDCorr with configuration: {args.config}")
 
+torch.set_float32_matmul_precision("medium")  # for tensor cores
+
 
 def get_data_module():
     """Get the data module for the oneDCorr problem."""
