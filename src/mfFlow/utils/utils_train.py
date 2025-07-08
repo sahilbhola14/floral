@@ -454,3 +454,449 @@ class OpDataModule(L.LightningDataModule):
             num_workers=self.num_workers,
             pin_memory=True,
         )
+
+
+class GPDataModule:
+    def __init__(
+        self,
+        nx: int,
+        nc: int,
+        nd: int,
+        low_fidelity_path: str,
+        high_fidelity_path: str,
+        n_samples: int,
+        n_sensors: int,
+        mfFlow: bool,
+        dataloader_config: dict,
+        test_data_path: str,
+    ):
+        """Base class for data modules in PyTorch Lightning.
+        Args:
+            nx (int): Dimensionality of the output features.
+            nc (int): Dimensionality of the input features.
+            nd (int): Dimensionality of the domain, for e.g., 2 for 2D data
+            low_fidelity_path (str): Path to the low fidelity data.
+            high_fidelity_path (str): Path to the high fidelity data.
+            mfFlow (bool): If True, use residual learning
+        """
+        super(GPDataModule, self).__init__()
+        raise NotImplementedError("GPDataModule is not implemented yet")
+        self.nx = nx  # Dimensionality of the output features
+        self.nc = nc  # Dimensionality of the input features
+        self.nd = nd  # Dimensionality of the domain (e.g., 2 for 2D data)
+        self.n_samples = n_samples  # Number of samples in the dataset
+        self.n_sensors = n_sensors  # Number of sensors in the output field
+        self.mfFlow = mfFlow  # If True, use residual learning
+        self.dataloader_config = dataloader_config  # Configuration for the dataloader
+        self.test_data_path = test_data_path  # Path for the test data
+        self.train_ratio = self.dataloader_config.get(
+            "train_ratio"
+        )  # Ratio of training data
+        self.reload = self.dataloader_config.get(
+            "reload"
+        )  # If True, reload the dataset
+
+        # if True, reload the sensors
+        # Note, if self.reload is True, self.reload_sensors will be ignored and
+        # the sensors will be reloaded
+        self.reload_sensors = self.dataloader_config.get("reload_sensors")
+
+        self.batch_size = self.dataloader_config.get(
+            "batch_size"
+        )  # Batch size for the dataloader
+        self.num_workers = self.dataloader_config.get(
+            "num_workers"
+        )  # Number of workers for the dataloader
+        self.normalize = self.dataloader_config.get("normalize")
+        self.LF_data = self._load_data(low_fidelity_path)  # Low fidelity data
+        self.HF_data = self._load_data(high_fidelity_path)  # High fidelity data
+
+        # Note: this is the same for GPDataModule and OpDataModule to ensure that same
+        # sensors are being used for comparing GP and Operator predictions.
+        self.file_paths = {
+            "datasets": {
+                "train": "trainset_mfFlow_GP.pt" if self.mfFlow else "trainset_GP.pt",
+                "val": "valset_mfFlow_GP.pt" if self.mfFlow else "valset_GP.pt",
+            },
+            "statistics": "statistics_mfFlow_GP.pt"
+            if self.mfFlow
+            else "statistics_GP.pt",
+            "test_config": "test_config_mfFlow_GP.pt"
+            if self.mfFlow
+            else "test_config_GP.pt",
+            "sensor_locations": "sensor_locations.pt",
+        }
+
+    def _extract_fields(self, data_dict: dict):
+        """Extract fields from the data dictionary."""
+        field = n2t(data_dict.get("field", None))
+        condition = n2t(data_dict.get("condition", None))
+        domain = n2t(data_dict.get("domain", None))
+        # Check shapes of the domain and conditions
+        # field shape will change afterwards
+        assert (
+            field.shape[1] == self.nc
+        ), f"Field shape mismatch: expected {self.nc}, got {field.shape[1]}"
+        assert (
+            condition.shape[1] == self.nc
+        ), f"Condition shape mismatch: expected {self.nc}, got {condition.shape[1]}"
+        assert (
+            domain.shape[1] == self.nd
+        ), f"Domain shape mismatch: expected {self.nd}, got {domain.shape[1]}"
+
+        return field, condition, domain
+
+    def _subselect_samples(self, field: torch.Tensor, condition: torch.Tensor):
+        """Sub-select a fixed number of samples from the data."""
+        n_samples_available = field.shape[0]
+        assert (
+            n_samples_available >= self.n_samples
+        ), f"Not enough samples available: {n_samples_available} < {self.n_samples}"
+        field_sub = field[: self.n_samples, :]
+        condition_sub = condition[: self.n_samples, :]
+        return field_sub, condition_sub
+
+    def _process_gaussian_process_fields(self):
+        """Process operator fields for the data module."""
+        # Extract fields from low fidelity data
+        LF_field, LF_condition, LF_domain = self._extract_fields(self.LF_data)
+        # Extract fields from high fidelity data
+        HF_field, HF_condition, HF_domain = self._extract_fields(self.HF_data)
+        # Assert statements to ensure the shapes are correct
+        assert (
+            LF_field.shape[0] == HF_field.shape[0]
+        ), "Low fidelity and high fidelity fields must have the same number of samples"
+
+        # Sub-select the samples
+        (
+            LF_field_sub,
+            LF_condition_sub,
+        ) = self._subselect_samples(LF_field, LF_condition)
+        (
+            HF_field_sub,
+            HF_condition_sub,
+        ) = self._subselect_samples(HF_field, HF_condition)
+
+        # Get the sensor locations
+        n_sensors_available = LF_field.shape[1]
+        assert (
+            n_sensors_available >= self.n_sensors
+        ), f"Not enough sensors available: {n_sensors_available} < {self.n_sensors}"
+        if self.reload_sensors:
+            printer(
+                f"Reloading sensor locations from {self.file_paths['sensor_locations']}"
+            )
+            check_path(self.file_paths["sensor_locations"], "to disable reload_sensors")
+            sensor_locations = torch.load(self.file_paths["sensor_locations"])
+            # Check shape
+            assert sensor_locations.shape == (self.n_samples, self.n_sensors), (
+                "Sensor locations shape mismatch:"
+                + f" Expected {self.n_samples, self.n_sensors}, "
+                + f"got {sensor_locations.shape}"
+            )
+        else:
+            sensor_locations = torch.stack(
+                [
+                    torch.randperm(self.nc)[: self.n_sensors]
+                    for _ in range(self.n_samples)
+                ],
+                dim=0,
+            )
+
+        # Get the field at sensor locations
+        LF_field_sensor = LF_field_sub.gather(1, sensor_locations)
+        HF_field_sensor = HF_field_sub.gather(1, sensor_locations)
+
+        # Flatten the fields to match the expected shape
+        LF_field_flat = LF_field_sensor.view(-1, self.nx)
+        HF_field_flat = HF_field_sensor.view(-1, self.nx)
+
+        # Process the domain
+        domain_op = HF_domain.unsqueeze(0).repeat(self.n_samples, 1, 1)
+        domain_sensor = domain_op.gather(
+            1, sensor_locations.unsqueeze(-1).repeat(1, 1, self.nd)
+        )
+        domain = domain_sensor.view(-1, self.nd)
+
+        # Process the conditions
+        condition = HF_condition_sub.view(-1, 1)
+
+        # Process the field
+        if self.mfFlow:
+            field = HF_field_flat - LF_field_flat
+        else:
+            field = HF_field_flat
+
+        # Input features
+        in_features = torch.cat([condition, domain], dim=1)
+        out_features = field
+
+        # Create the data dict
+        data_dict = {}
+        data_dict["in_features"] = in_features
+        data_dict["out_features"] = out_features
+        data_dict["field"] = field
+        data_dict["condition"] = condition
+        data_dict["domain"] = domain
+        data_dict["sensor_locations"] = sensor_locations
+        data_dict["LF_field"] = LF_field_sub
+        data_dict["HF_field"] = HF_field_sub
+        data_dict["HF_condition"] = HF_condition_sub
+        data_dict["LF_condition"] = LF_condition_sub
+        data_dict["HF_domain"] = HF_domain
+        data_dict["LF_domain"] = LF_domain
+
+        return data_dict
+
+    def _split_data(self, data_dict: dict):
+        """Split the data into training and validation sets."""
+        # Extract the input features
+        in_features = data_dict.get("in_features", None)
+        # Extract the output features
+        out_features = data_dict.get("out_features", None)
+
+        n_train = int(self.train_ratio * len(in_features))
+
+        in_features_train, in_features_val = (
+            in_features[:n_train],
+            in_features[n_train:],
+        )
+        out_features_train, out_features_val = (
+            out_features[:n_train],
+            out_features[n_train:],
+        )
+
+        train_data = {
+            "in_features": in_features_train,
+            "out_features": out_features_train,
+        }
+        val_data = {
+            "in_features": in_features_val,
+            "out_features": out_features_val,
+        }
+        return train_data, val_data
+
+    def _normalize_data(self, train_data: dict, val_data: dict):
+        # Normalize the Input Features
+        in_features_train = train_data["in_features"]
+        in_features_val = val_data["in_features"]
+
+        n_in = in_features_train.shape[1]
+
+        if self.normalize.condition:
+            condition_mean = in_features_train.mean(dim=0, keepdim=True)
+            condition_std = in_features_train.std(dim=0, keepdim=True)
+            in_features_train_norm = (
+                in_features_train - condition_mean
+            ) / condition_std
+            in_features_val_norm = (in_features_val - condition_mean) / condition_std
+        else:
+            condition_mean = torch.zeros(1, n_in)
+            condition_std = torch.ones(1, n_in)
+            in_features_train_norm = in_features_train
+            in_features_val_norm = in_features_val
+
+        # Normalize the output features
+        out_features_train = train_data["out_features"]
+        out_features_val = val_data["out_features"]
+
+        n_out = out_features_train.shape[1]
+
+        if self.normalize.field:
+            field_mean = out_features_train.mean(dim=0, keepdim=True)
+            field_std = out_features_train.std(dim=0, keepdim=True)
+            out_features_train_norm = (out_features_train - field_mean) / field_std
+            out_features_val_norm = (out_features_val - field_mean) / field_std
+        else:
+            field_mean = torch.zeros(1, n_out)
+            field_std = torch.ones(1, n_out)
+            out_features_train_norm = out_features_train
+            out_features_val_norm = out_features_val
+
+        # Check NaNs and Infs
+        assert not torch.isnan(
+            in_features_train_norm
+        ).any(), "NaN values found in in_features_train_norm"
+        assert not torch.isnan(
+            in_features_val_norm
+        ).any(), "NaN values found in in_features_val_norm"
+        assert not torch.isnan(
+            out_features_train_norm
+        ).any(), "NaN values found in out_features_train_norm"
+        assert not torch.isnan(
+            out_features_val_norm
+        ).any(), "NaN values found in out_features_val_norm"
+
+        # Data dict
+        train_data_norm = {
+            "out_features": out_features_train_norm,
+            "in_features": in_features_train_norm,
+        }
+        val_data_norm = {
+            "out_features": out_features_val_norm,
+            "in_features": in_features_val_norm,
+        }
+
+        # Statistics dict
+        self.statistics = {
+            "in_features": {"mean": condition_mean, "std": condition_std},
+            "out_features": {"mean": field_mean, "std": field_std},
+        }
+
+        return train_data_norm, val_data_norm
+
+    def _check_keys(self, data):
+        """Check if the data has the required keys."""
+        required_keys = ["field", "condition", "domain"]
+        for key in required_keys:
+            if key not in data:
+                raise KeyError(f"Data must contain the key '{key}'")
+
+    def _load_data(self, path: str):
+        """Load data from the specified path."""
+        check_path(path)
+        data = np.load(path, allow_pickle=True)
+
+        # check if the data has the required keys
+        self._check_keys(data)
+
+        return data
+
+    def _get_test_config(self):
+        """prepare the test config
+        Notes:
+        - Only condition is normalized as the fields are used for only comparison.
+        """
+        # Check if test config is avilable
+        check_path(self.test_data_path)
+        # Load the test data
+        test_data = np.load(self.test_data_path, allow_pickle=True)
+        # Check keys
+        req_keys = ["LF_field", "HF_field", "condition", "domain"]
+        assert all(
+            test_key in test_data for test_key in req_keys
+        ), f"Test data must contain the keys: {req_keys}"
+        LF_field = test_data.get("LF_field", None)
+        HF_field = test_data.get("HF_field", None)
+        condition = test_data.get("condition", None)
+        domain = test_data.get("domain", None)
+        # Check shapes
+        assert (
+            LF_field.shape[1] == self.nc
+        ), f"LF_field shape mismatch: expected {self.nc}, got {LF_field.shape[1]}"
+        assert (
+            HF_field.shape[1] == self.nc
+        ), f"HF_field shape mismatch: expected {self.nc}, got {HF_field.shape[1]}"
+        assert (
+            condition.shape[1] == self.nc
+        ), f"Condition shape mismatch: expected {self.nc}, got {condition.shape[1]}"
+        assert (
+            domain.shape[1] == self.nd
+        ), f"Domain shape mismatch: expected {self.nd}, got {domain.shape[1]}"
+
+        # Convert to tensors
+        LF_field = n2t(LF_field)
+        HF_field = n2t(HF_field)
+        condition = n2t(condition)
+        domain = n2t(domain)
+        domain_batch = domain.unsqueeze(0).repeat(len(condition), 1, 1)
+
+        # In-features
+        in_features = torch.cat(
+            [condition.view(-1, 1), domain_batch.view(-1, self.nd)], dim=1
+        )
+
+        # Normalize the in-features
+        in_features_mean = self.statistics["in_features"]["mean"]
+        in_features_std = self.statistics["in_features"]["std"]
+        in_features = (in_features - in_features_mean) / in_features_std
+
+        # Create config dict
+        test_config = {
+            "LF_field": LF_field,
+            "HF_field": HF_field,
+            "in_features": in_features,
+            "domain": domain,
+            "n_samples": len(condition),
+            "shape": (len(condition), condition.shape[1]),
+        }
+
+        return test_config
+
+    def setup(self, stage: str = None):
+        if self.reload:
+            raise NotImplementedError("Reloading is not implemented for GPDataModule.")
+            # Load the datasets if reload is True
+            check_path(self.file_paths["datasets"]["train"])
+            check_path(self.file_paths["datasets"]["val"])
+            check_path(self.file_paths["statistics"])
+            check_path(self.file_paths["test_config"])
+            self.train_set = torch.load(self.file_paths["datasets"]["train"])
+            self.val_set = torch.load(self.file_paths["datasets"]["val"])
+            self.statistics = torch.load(self.file_paths["statistics"])
+            self.test_config = torch.load(self.file_paths["test_config"])
+
+            # Load sensor locations irrespective of self.reload_sensors
+            self.sensor_locations = torch.load(self.file_paths["sensor_locations"])
+
+        else:
+            # Get the processed operator fields
+            gp_data_dict = self._process_gaussian_process_fields()
+
+            # Sensor locations
+            self.sensor_locations = gp_data_dict.get("sensor_locations", None)
+
+            # Split the data into training and validation sets
+            train_data, val_data = self._split_data(gp_data_dict)
+
+            # Normalize the data and setattr `statistics`
+            train_data_norm, val_data_norm = self._normalize_data(train_data, val_data)
+
+            # Prepare test configuration
+            self.test_config = self._get_test_config()
+
+            # Create datasets
+            self.train_set = TensorDataset(
+                train_data_norm["in_features"],
+                train_data_norm["out_features"],
+            )
+
+            self.val_set = TensorDataset(
+                val_data_norm["in_features"],
+                val_data_norm["out_features"],
+            )
+            # Save
+            torch.save(self.train_set, self.file_paths["datasets"]["train"])
+            torch.save(self.val_set, self.file_paths["datasets"]["val"])
+            torch.save(self.statistics, self.file_paths["statistics"])
+            torch.save(self.test_config, self.file_paths["test_config"])
+            torch.save(self.sensor_locations, self.file_paths["sensor_locations"])
+
+
+class RunningAverageMeter:
+    """Computes and stores the average and current value."""
+
+    def __init__(self, momentum: float = 0.9):
+        self.momentum = momentum
+        self._reset()
+
+    def _reset(self):
+        self.current_val = None
+        self.current_avg = None
+        self.val_history = []
+        self.avg_history = []
+        self.best_val = None
+
+    def update(self, val):
+        if self.current_val is None:
+            self.current_val = val
+            self.current_avg = val
+            self.best_val = self.current_val
+        else:
+            self.current_val = val
+            self.current_avg = (
+                self.momentum * self.current_avg + (1 - self.momentum) * val
+            )
+            self.best_val = min(self.best_val, self.current_val)
+        self.val_history.append(self.current_val)
+        self.avg_history.append(self.current_avg)
