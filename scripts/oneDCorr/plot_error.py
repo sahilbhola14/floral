@@ -1,10 +1,11 @@
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 
-plt.style.use("../journal.mplstyle")  # Or comment this line if not needed
+plt.style.use("../journal.mplstyle")  # Optional style
 
-# Load prediction data
+# Load data
 data = torch.load("oneDCorr_10_samples_results.pt")
 data_mfFlow = torch.load("oneDCorr_10_samples_results_mfFlow.pt")
 data_gp = torch.load("oneDCorr_10_samples_GP_results.pt")
@@ -17,36 +18,50 @@ field_gp_mfFlow = data_gp_mfFlow["field"]
 
 n_samples = len(field.get("Prediction"))
 
-# Containers for errors and uncertainty
-error_data = {"Method": [], "L2 Error": []}
-uncertainty_data = {"Method": [], "Mean Std": []}
+# Ordered list of methods
+method_order = ["ProNO", "ProMiNO", "GP", "MiGP"]
+
+# Containers for results
+error_rows = []
+uncertainty_rows = []
 
 for ii in range(n_samples):
     HF_field = field_mfFlow.get("HF_field")[ii]
 
-    # Predictive means
-    pred_promino = field_mfFlow.get("Prediction")[ii].mean(dim=0)
-    pred_prono = field.get("Prediction")[ii].mean(dim=0)
-    pred_gp = field_gp.get("Prediction")["mean"][ii]
-    pred_migp = field_gp_mfFlow.get("Prediction")["mean"][ii]
+    # Predictions and stds
+    predictions = {
+        "ProNO": field.get("Prediction")[ii],
+        "ProMiNO": field_mfFlow.get("Prediction")[ii],
+        "GP": field_gp.get("Prediction")["mean"][ii],
+        "MiGP": field_gp_mfFlow.get("Prediction")["mean"][ii],
+    }
+    stds = {
+        "ProNO": field.get("Prediction")[ii].std(dim=0).mean().item(),
+        "ProMiNO": field_mfFlow.get("Prediction")[ii].std(dim=0).mean().item(),
+        "GP": field_gp.get("Prediction")["std"][ii].mean().item(),
+        "MiGP": field_gp_mfFlow.get("Prediction")["std"][ii].mean().item(),
+    }
 
-    # Compute L2 Errors
-    error_data["Method"] += ["ProMiNO", "ProNO", "GP", "MiGP"]
-    error_data["L2 Error"] += [
-        torch.norm(pred_promino - HF_field).item(),
-        torch.norm(pred_prono - HF_field).item(),
-        torch.norm(pred_gp - HF_field).item(),
-        torch.norm(pred_migp - HF_field).item(),
-    ]
+    # Means
+    means = {
+        "ProNO": predictions["ProNO"].mean(dim=0),
+        "ProMiNO": predictions["ProMiNO"].mean(dim=0),
+        "GP": predictions["GP"],
+        "MiGP": predictions["MiGP"],
+    }
 
-    # Compute mean predictive std (averaged over domain)
-    std_promino = field_mfFlow.get("Prediction")[ii].std(dim=0).mean().item()
-    std_prono = field.get("Prediction")[ii].std(dim=0).mean().item()
-    std_gp = field_gp.get("Prediction")["std"][ii].mean().item()
-    std_migp = field_gp_mfFlow.get("Prediction")["std"][ii].mean().item()
+    for method in method_order:
+        l2 = torch.norm(means[method] - HF_field).item()
+        error_rows.append({"Method": method, "L2 Error": l2})
+        uncertainty_rows.append({"Method": method, "Mean Std": stds[method]})
 
-    uncertainty_data["Method"] += ["ProMiNO", "ProNO", "GP", "MiGP"]
-    uncertainty_data["Mean Std"] += [std_promino, std_prono, std_gp, std_migp]
+# Convert to DataFrames and set method as ordered category
+error_df = pd.DataFrame(error_rows)
+uncertainty_df = pd.DataFrame(uncertainty_rows)
+
+cat_type = pd.CategoricalDtype(categories=method_order, ordered=True)
+error_df["Method"] = error_df["Method"].astype(cat_type)
+uncertainty_df["Method"] = uncertainty_df["Method"].astype(cat_type)
 
 # --------------------
 # Plotting
@@ -55,14 +70,14 @@ fig, axs = plt.subplots(1, 2, figsize=(12, 5), sharex=True)
 
 # Violin plot for L2 Errors
 sns.violinplot(
-    data=error_data, x="Method", y="L2 Error", inner="box", palette="Set2", ax=axs[0]
+    data=error_df, x="Method", y="L2 Error", inner="box", palette="Set2", ax=axs[0]
 )
 sns.stripplot(
-    data=error_data,
+    data=error_df,
     x="Method",
     y="L2 Error",
     color="k",
-    size=4,
+    size=2,
     alpha=0.7,
     jitter=True,
     ax=axs[0],
@@ -72,7 +87,7 @@ axs[0].grid(True, linestyle="--", alpha=0.4)
 
 # Violin plot for Predictive Uncertainty
 sns.violinplot(
-    data=uncertainty_data,
+    data=uncertainty_df,
     x="Method",
     y="Mean Std",
     inner="box",
@@ -80,11 +95,11 @@ sns.violinplot(
     ax=axs[1],
 )
 sns.stripplot(
-    data=uncertainty_data,
+    data=uncertainty_df,
     x="Method",
     y="Mean Std",
     color="k",
-    size=4,
+    size=2,
     alpha=0.7,
     jitter=True,
     ax=axs[1],
@@ -95,4 +110,4 @@ axs[1].grid(True, linestyle="--", alpha=0.4)
 plt.suptitle("Comparison of Accuracy and Predictive Uncertainty", fontsize=14)
 plt.tight_layout()
 plt.savefig("oneDCorr_L2_and_Uncertainty_violin.png", dpi=300)
-plt.show()
+plt.close()
