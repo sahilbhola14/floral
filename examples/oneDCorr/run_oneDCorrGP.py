@@ -13,7 +13,7 @@ from mfFlow.utils import (
     printer,
     # init_weights,
     # get_path,
-    # GPDataModule,
+    GPDataModule,
     # RunningAverageMeter,
 )
 
@@ -34,12 +34,35 @@ printer(f"Running oneDCorr with configuration: {args.config}")
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
 
+def get_data_module():
+    """Get the data module for the oneDCorr problem."""
+    data_module = GPDataModule(
+        nx=config.data.nx,
+        nc=config.data.nc,
+        nd=config.data.nd,
+        low_fidelity_path=config.data.low_fidelity.path,
+        high_fidelity_path=config.data.high_fidelity.path,
+        n_samples=config.data.high_fidelity.n_samples,
+        n_sensors=config.data.high_fidelity.n_sensors,
+        mfFlow=config.mfFlow,
+        dataloader_config=config.dataloader,
+        test_data_path=config.data.test_data_path,
+    )
+
+    # Setup the data module
+    data_module.setup()
+
+    return data_module
+
+
 def get_datasets():
     path = config.data.high_fidelity.path
     data = np.load(path, allow_pickle=True)
     n_samples = config.data.high_fidelity.n_samples
+
     field = n2t(data.get("field")[:n_samples])
     condition = n2t(data.get("condition")[:n_samples])
+
     domain = n2t(data.get("domain"))
     domain_batch = domain.unsqueeze(0).repeat(n_samples, 1, 1)
     # In features
@@ -98,7 +121,7 @@ def train_GP(model, likelihood):
         loss = -mll(output, model.train_y)
         loss.backward()
         optimizer.step()
-        print(f"Iter {ii + 1}/100 - Loss: {loss.item(): .3f}")
+        print(f"Iter {ii + 1}/{config.train.max_epochs} - Loss: {loss.item(): .3f}")
 
 
 @torch.no_grad()
@@ -159,6 +182,7 @@ class GPModel(ExactGP):
 
 
 if __name__ == "__main__":
+    data_module = get_data_module()
     train_set, val_set, statistics = get_datasets()
     train_x, train_y = train_set.tensors
     likelihood = GaussianLikelihood()

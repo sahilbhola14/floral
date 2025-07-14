@@ -480,7 +480,6 @@ class GPDataModule:
             mfFlow (bool): If True, use residual learning
         """
         super(GPDataModule, self).__init__()
-        raise NotImplementedError("GPDataModule is not implemented yet")
         self.nx = nx  # Dimensionality of the output features
         self.nc = nc  # Dimensionality of the input features
         self.nd = nd  # Dimensionality of the domain (e.g., 2 for 2D data)
@@ -511,8 +510,6 @@ class GPDataModule:
         self.LF_data = self._load_data(low_fidelity_path)  # Low fidelity data
         self.HF_data = self._load_data(high_fidelity_path)  # High fidelity data
 
-        # Note: this is the same for GPDataModule and OpDataModule to ensure that same
-        # sensors are being used for comparing GP and Operator predictions.
         self.file_paths = {
             "datasets": {
                 "train": "trainset_mfFlow_GP.pt" if self.mfFlow else "trainset_GP.pt",
@@ -556,8 +553,8 @@ class GPDataModule:
         condition_sub = condition[: self.n_samples, :]
         return field_sub, condition_sub
 
-    def _process_gaussian_process_fields(self):
-        """Process operator fields for the data module."""
+    def _process_gp_fields(self):
+        """Process gaussian process fields for the data module."""
         # Extract fields from low fidelity data
         LF_field, LF_condition, LF_domain = self._extract_fields(self.LF_data)
         # Extract fields from high fidelity data
@@ -576,7 +573,6 @@ class GPDataModule:
             HF_field_sub,
             HF_condition_sub,
         ) = self._subselect_samples(HF_field, HF_condition)
-
         # Get the sensor locations
         n_sensors_available = LF_field.shape[1]
         assert (
@@ -603,6 +599,11 @@ class GPDataModule:
                 dim=0,
             )
 
+        # TODO: This for debugging purposes, remove later
+        sensor_locations = (
+            torch.arange(HF_field.shape[1]).unsqueeze(0).repeat(self.n_samples, 1)
+        )
+
         # Get the field at sensor locations
         LF_field_sensor = LF_field_sub.gather(1, sensor_locations)
         HF_field_sensor = HF_field_sub.gather(1, sensor_locations)
@@ -619,22 +620,21 @@ class GPDataModule:
         domain = domain_sensor.view(-1, self.nd)
 
         # Process the conditions
-        condition = HF_condition_sub.view(-1, 1)
-
+        condition = HF_condition_sub.gather(1, sensor_locations).ravel().unsqueeze(1)
         # Process the field
         if self.mfFlow:
             field = HF_field_flat - LF_field_flat
         else:
             field = HF_field_flat
-
-        # Input features
+        # Create the in_features (condition + domain)
         in_features = torch.cat([condition, domain], dim=1)
+        # Create the output features (field)
         out_features = field
 
         # Create the data dict
         data_dict = {}
-        data_dict["in_features"] = in_features
-        data_dict["out_features"] = out_features
+        data_dict["in_features"] = in_features  # input features to the GP
+        data_dict["out_features"] = out_features  # output features from the GP
         data_dict["field"] = field
         data_dict["condition"] = condition
         data_dict["domain"] = domain
@@ -650,13 +650,14 @@ class GPDataModule:
 
     def _split_data(self, data_dict: dict):
         """Split the data into training and validation sets."""
-        # Extract the input features
+        # Extract the in_features
         in_features = data_dict.get("in_features", None)
-        # Extract the output features
+        # Extract the out_features
         out_features = data_dict.get("out_features", None)
 
         n_train = int(self.train_ratio * len(in_features))
 
+        # split
         in_features_train, in_features_val = (
             in_features[:n_train],
             in_features[n_train:],
@@ -677,39 +678,39 @@ class GPDataModule:
         return train_data, val_data
 
     def _normalize_data(self, train_data: dict, val_data: dict):
-        # Normalize the Input Features
+        # In features
         in_features_train = train_data["in_features"]
         in_features_val = val_data["in_features"]
-
-        n_in = in_features_train.shape[1]
-
         if self.normalize.condition:
-            condition_mean = in_features_train.mean(dim=0, keepdim=True)
-            condition_std = in_features_train.std(dim=0, keepdim=True)
+            in_features_mean = in_features_train.mean(dim=0, keepdim=True)
+            in_features_std = in_features_train.std(dim=0, keepdim=True)
             in_features_train_norm = (
-                in_features_train - condition_mean
-            ) / condition_std
-            in_features_val_norm = (in_features_val - condition_mean) / condition_std
+                in_features_train - in_features_mean
+            ) / in_features_std
+            in_features_val_norm = (
+                in_features_val - in_features_mean
+            ) / in_features_std
         else:
-            condition_mean = torch.zeros(1, n_in)
-            condition_std = torch.ones(1, n_in)
+            in_features_mean = torch.zeros(1, self.nc + self.nd)
+            in_features_std = torch.ones(1, self.nc + self.nd)
             in_features_train_norm = in_features_train
             in_features_val_norm = in_features_val
 
-        # Normalize the output features
+        # Out features
         out_features_train = train_data["out_features"]
         out_features_val = val_data["out_features"]
-
-        n_out = out_features_train.shape[1]
-
         if self.normalize.field:
-            field_mean = out_features_train.mean(dim=0, keepdim=True)
-            field_std = out_features_train.std(dim=0, keepdim=True)
-            out_features_train_norm = (out_features_train - field_mean) / field_std
-            out_features_val_norm = (out_features_val - field_mean) / field_std
+            out_features_mean = out_features_train.mean(dim=0, keepdim=True)
+            out_features_std = out_features_train.std(dim=0, keepdim=True)
+            out_features_train_norm = (
+                out_features_train - out_features_mean
+            ) / out_features_std
+            out_features_val_norm = (
+                out_features_val - out_features_mean
+            ) / out_features_std
         else:
-            field_mean = torch.zeros(1, n_out)
-            field_std = torch.ones(1, n_out)
+            out_features_mean = torch.zeros(1, self.nx)
+            out_features_std = torch.ones(1, self.nx)
             out_features_train_norm = out_features_train
             out_features_val_norm = out_features_val
 
@@ -726,21 +727,20 @@ class GPDataModule:
         assert not torch.isnan(
             out_features_val_norm
         ).any(), "NaN values found in out_features_val_norm"
-
         # Data dict
         train_data_norm = {
-            "out_features": out_features_train_norm,
             "in_features": in_features_train_norm,
+            "out_features": out_features_train_norm,
         }
         val_data_norm = {
-            "out_features": out_features_val_norm,
             "in_features": in_features_val_norm,
+            "out_features": out_features_val_norm,
         }
 
         # Statistics dict
         self.statistics = {
-            "in_features": {"mean": condition_mean, "std": condition_std},
-            "out_features": {"mean": field_mean, "std": field_std},
+            "in_features": {"mean": in_features_mean, "std": in_features_std},
+            "out_features": {"mean": out_features_mean, "std": out_features_std},
         }
 
         return train_data_norm, val_data_norm
@@ -799,33 +799,29 @@ class GPDataModule:
         HF_field = n2t(HF_field)
         condition = n2t(condition)
         domain = n2t(domain)
-        domain_batch = domain.unsqueeze(0).repeat(len(condition), 1, 1)
 
-        # In-features
-        in_features = torch.cat(
-            [condition.view(-1, 1), domain_batch.view(-1, self.nd)], dim=1
-        )
-
-        # Normalize the in-features
+        # Normalize the in_features (condition + domain)
+        domain_batch = domain.unsqueeze(0).repeat(len(condition), 1, 1).view(-1, 1)
+        condition_batch = condition.view(-1, 1)
+        in_features = torch.cat([condition_batch, domain_batch], dim=1)
         in_features_mean = self.statistics["in_features"]["mean"]
         in_features_std = self.statistics["in_features"]["std"]
         in_features = (in_features - in_features_mean) / in_features_std
 
         # Create config dict
         test_config = {
-            "LF_field": LF_field,
-            "HF_field": HF_field,
             "in_features": in_features,
+            "HF_field": HF_field,
+            "condition": condition,
             "domain": domain,
             "n_samples": len(condition),
-            "shape": (len(condition), condition.shape[1]),
         }
 
         return test_config
 
     def setup(self, stage: str = None):
         if self.reload:
-            raise NotImplementedError("Reloading is not implemented for GPDataModule.")
+            raise NotImplementedError("Under construction. Please wait...")
             # Load the datasets if reload is True
             check_path(self.file_paths["datasets"]["train"])
             check_path(self.file_paths["datasets"]["val"])
@@ -841,7 +837,7 @@ class GPDataModule:
 
         else:
             # Get the processed operator fields
-            gp_data_dict = self._process_gaussian_process_fields()
+            gp_data_dict = self._process_gp_fields()
 
             # Sensor locations
             self.sensor_locations = gp_data_dict.get("sensor_locations", None)
