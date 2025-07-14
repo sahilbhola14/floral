@@ -26,15 +26,15 @@ dataloader:
   num_workers: 6 # Number of workers
   normalize:
     field: True # Normalize the field for training
-    condition: False # Normalize the conditon for trianing
+    condition: True # Normalize the conditon for trianing
 
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
-  accelerator: 'gpu'
-  devices: 3
+  accelerator: 'cpu'
+  devices: 1
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 3000
+  max_epochs: 200
   learning_rate: 5.0e-3
   weight_decay: 1.0e-4
 
