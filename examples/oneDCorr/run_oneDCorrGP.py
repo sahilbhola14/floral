@@ -1,27 +1,17 @@
 import numpy as np
 import torch
-
-# import torch.nn as nn
 import argparse
 import gpytorch
-
-# import pytorch_lightning as L
-# from tqdm import tqdm
+from tqdm import tqdm
 from omegaconf import OmegaConf
 from mfFlow.utils import (
     n2t,
     printer,
-    # init_weights,
-    # get_path,
     GPDataModule,
-    # RunningAverageMeter,
+    InferenceGP,
 )
 
-# from mfFlow.GP import GPRegressionModel
-from gpytorch.models import ExactGP
-from gpytorch.means import ConstantMean
-from gpytorch.kernels import RBFKernel, ScaleKernel
-from gpytorch.likelihoods import GaussianLikelihood
+from mfFlow.GP import GPRegressionModel
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with Gaussian Processes")
 parser.add_argument(
@@ -112,16 +102,28 @@ def get_datasets():
     return train_set, val_set, statistics
 
 
-def train_GP(model, likelihood):
+def train_GP(model):
+    # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=config.train.learning_rate)
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-    for ii in range(config.train.max_epochs):
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
+    pbar = tqdm(
+        range(config.train.max_epochs),
+        desc="Training GP Model",
+        unit="epoch",
+        ncols=100,
+    )
+    for epoch in pbar:
+        # Zero the gradients
         optimizer.zero_grad()
-        output = model(model.train_x)
-        loss = -mll(output, model.train_y)
-        loss.backward()
+        # Train step
+        train_loss = model.train_step(mll)
+        # Backpropagation
+        train_loss.backward()
+        # Update the parameters
         optimizer.step()
-        print(f"Iter {ii + 1}/{config.train.max_epochs} - Loss: {loss.item(): .3f}")
+        # Valication step
+        val_loss = model.val_step(mll)
+        pbar.set_postfix({"train_loss": train_loss.item(), "val_loss": val_loss.item()})
 
 
 @torch.no_grad()
@@ -167,25 +169,21 @@ def infer_GP(model, likelihood, statistics):
     torch.save(results, "test.pt")
 
 
-class GPModel(ExactGP):
-    def __init__(self, train_x, train_y, likelihood):
-        self.train_x = train_x
-        self.train_y = train_y.squeeze()
-        super(GPModel, self).__init__(self.train_x, self.train_y, likelihood)
-        self.mean = ConstantMean()
-        self.covar_module = ScaleKernel(RBFKernel())
-
-    def forward(self, x):
-        mean_x = self.mean(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-
 if __name__ == "__main__":
     data_module = get_data_module()
-    train_set, val_set, statistics = get_datasets()
-    train_x, train_y = train_set.tensors
-    likelihood = GaussianLikelihood()
-    model = GPModel(train_x, train_y, likelihood)
-    train_GP(model, likelihood)
-    infer_GP(model, likelihood, statistics)
+    # gp regression model
+    model = GPRegressionModel(
+        train_set=data_module.train_set,
+        val_set=data_module.val_set,
+    )
+    # train the model
+    train_GP(model)
+    # infer the model
+    infer = InferenceGP(
+        model=model,
+        test_config=data_module.test_config,
+        statistics=data_module.statistics,
+        job_name=config.job_name,
+        mfFlow=config.mfFlow,
+    )
+    infer()

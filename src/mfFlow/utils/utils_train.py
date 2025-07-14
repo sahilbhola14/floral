@@ -811,6 +811,7 @@ class GPDataModule:
         # Create config dict
         test_config = {
             "in_features": in_features,
+            "LF_field": LF_field,
             "HF_field": HF_field,
             "condition": condition,
             "domain": domain,

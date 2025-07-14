@@ -19,7 +19,9 @@ class GPRegressionModel(ExactGP):
         # Gaussian Likelihood
         likelihood = GaussianLikelihood()
         # Initialize the GP model with a constant mean and RBF kernel
-        super(GPRegressionModel, self).__init__(self.train_x, self.train_y, likelihood)
+        super(GPRegressionModel, self).__init__(
+            self.train_x, self.train_y.view(-1), likelihood
+        )
         # Set the likelihood
         self.likelihood = likelihood
         # Mean model

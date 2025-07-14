@@ -1,7 +1,9 @@
 import torch
 import pytorch_lightning as L
+import gpytorch
 from mfFlow.utils import printer
 from tqdm import tqdm
+from gpytorch.models import ExactGP
 
 
 class Inference:
@@ -136,3 +138,91 @@ class Inference:
         assert pred.shape == (self.n_gen, len(d_eval))
 
         return pred
+
+
+class InferenceGP:
+    """Inference clas for Gaussian Process"""
+
+    def __init__(
+        self,
+        model: ExactGP,
+        test_config: dict,
+        statistics: dict,
+        job_name: str,
+        mfFlow: bool,
+    ):
+        # Initialize the model with the best_model_path
+        self.model = model
+        # Set the model to evaluation mode
+        self.model.eval()
+        # Set the likelhood to evaluation mode
+        self.model.likelihood.eval()
+        # Store the test configuration, statistics, job name, and number of samples
+        self.test_config = test_config  # Configuration for the inference task
+        self.statistics = statistics  # Statistics of the data
+        self.job_name = job_name  # Name of the inference job
+        self.mfFlow = mfFlow  # Flag for multi-flow processing
+
+    @torch.no_grad()
+    def __call__(self):
+        """Perform the inference task"""
+        field = {"LF_field": [], "HF_field": [], "Prediction": {"mean": [], "std": []}}
+        residual = {"True": [], "Prediction": {"mean": [], "std": []}}
+        # Input featurs
+        in_features = self.test_config["in_features"]
+        # Fields
+        LF_field = self.test_config["LF_field"]
+        HF_field = self.test_config["HF_field"]
+        # Prediction
+        with gpytorch.settings.fast_pred_var():
+            pred = self.model.likelihood(self.model(in_features))
+            pred_mean = pred.mean
+            pred_std = pred.stddev
+        # Denormalize the prediction
+        out_features_mean = self.statistics["out_features"]["mean"]
+        out_features_std = self.statistics["out_features"]["std"]
+
+        pred_mean = pred_mean.unsqueeze(-1) * out_features_std + out_features_mean
+        pred_std = pred_std.unsqueeze(-1) * out_features_std
+
+        # reshape
+        pred_mean = pred_mean.reshape(LF_field.shape)
+        pred_std = pred_std.reshape(LF_field.shape)
+
+        # Compute the final prediction
+        if self.mfFlow:
+            pred_residual = pred_mean
+            pred_field = pred_residual + LF_field
+        else:
+            pred_field = pred_mean
+            pred_residual = pred_mean - LF_field
+        true_residual = HF_field - LF_field
+
+        # Update the results to the dictionary
+        field["LF_field"] = LF_field
+        field["HF_field"] = HF_field
+        field["Prediction"]["mean"] = pred_field
+        field["Prediction"]["std"] = pred_std
+        residual["True"] = true_residual
+        residual["Prediction"]["mean"] = pred_residual
+        residual["Prediction"]["std"] = pred_std
+
+        # Save the results
+        results = {
+            "field": field,
+            "residual": residual,
+            "statistics": self.statistics,
+            "domain": self.test_config["domain"],
+            "job_name": self.job_name,
+            "test_config": self.test_config,
+        }
+
+        # Save the results to a file
+        path = self.job_name + "_GP_results"
+        save_path = path + "_mfFlow" if self.mfFlow else path
+        save_path += ".pt"
+        printer("Saving results to {}".format(save_path))
+        torch.save(
+            results,
+            save_path,
+        )

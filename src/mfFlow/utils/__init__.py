@@ -10,7 +10,7 @@ from .utils_train import (
     GPDataModule,
     RunningAverageMeter,
 )
-from .utils_inference import Inference
+from .utils_inference import Inference, InferenceGP
 
 __all__ = [
     "printer",
@@ -25,5 +25,6 @@ __all__ = [
     "OpDataModule",  # Data Module for training Nerual Operator
     "GPDataModule",  # Data Module for training Gaussian Process
     "Inference",  # Inference Module for Nerual Operator
+    "InferenceGP",  # Inference Module for Nerual Operator
     "RunningAverageMeter",  # Running Average Meter for training
 ]
