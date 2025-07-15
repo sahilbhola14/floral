@@ -31,7 +31,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 3
+  devices: 1
   strategy: 'ddp'
   precision: 'bf16-mixed'
   max_epochs: 5000
