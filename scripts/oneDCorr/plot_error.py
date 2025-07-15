@@ -19,7 +19,7 @@ field_gp_mfFlow = data_gp_mfFlow["field"]
 n_samples = len(field.get("Prediction"))
 
 # Ordered list of methods
-method_order = ["ProNO", "ProMiNO", "GP", "MiGP"]
+method_order = ["FLORA", "FLOREN", "GP", "REGP"]
 
 # Containers for results
 error_rows = []
@@ -30,24 +30,24 @@ for ii in range(n_samples):
 
     # Predictions and stds
     predictions = {
-        "ProNO": field.get("Prediction")[ii],
-        "ProMiNO": field_mfFlow.get("Prediction")[ii],
+        "FLORA": field.get("Prediction")[ii],
+        "FLOREN": field_mfFlow.get("Prediction")[ii],
         "GP": field_gp.get("Prediction")["mean"][ii],
-        "MiGP": field_gp_mfFlow.get("Prediction")["mean"][ii],
+        "REGP": field_gp_mfFlow.get("Prediction")["mean"][ii],
     }
     stds = {
-        "ProNO": field.get("Prediction")[ii].std(dim=0).mean().item(),
-        "ProMiNO": field_mfFlow.get("Prediction")[ii].std(dim=0).mean().item(),
+        "FLORA": field.get("Prediction")[ii].std(dim=0).mean().item(),
+        "FLOREN": field_mfFlow.get("Prediction")[ii].std(dim=0).mean().item(),
         "GP": field_gp.get("Prediction")["std"][ii].mean().item(),
-        "MiGP": field_gp_mfFlow.get("Prediction")["std"][ii].mean().item(),
+        "REGP": field_gp_mfFlow.get("Prediction")["std"][ii].mean().item(),
     }
 
     # Means
     means = {
-        "ProNO": predictions["ProNO"].mean(dim=0),
-        "ProMiNO": predictions["ProMiNO"].mean(dim=0),
+        "FLORA": predictions["FLORA"].mean(dim=0),
+        "FLOREN": predictions["FLOREN"].mean(dim=0),
         "GP": predictions["GP"],
-        "MiGP": predictions["MiGP"],
+        "REGP": predictions["REGP"],
     }
 
     for method in method_order:
@@ -82,7 +82,7 @@ sns.stripplot(
     jitter=True,
     ax=axs[0],
 )
-axs[0].set_title("L2 Error (Prediction Accuracy)")
+# axs[0].set_title("L2 Error (Prediction Accuracy)")
 axs[0].grid(True, linestyle="--", alpha=0.4)
 
 # Violin plot for Predictive Uncertainty
@@ -104,10 +104,10 @@ sns.stripplot(
     jitter=True,
     ax=axs[1],
 )
-axs[1].set_title("Predictive Uncertainty (Mean Std)")
+# axs[1].set_title("Predictive Uncertainty (Mean Std)")
 axs[1].grid(True, linestyle="--", alpha=0.4)
 
-plt.suptitle("Comparison of Accuracy and Predictive Uncertainty", fontsize=14)
+# plt.suptitle("Comparison of Accuracy and Predictive Uncertainty", fontsize=14)
 plt.tight_layout()
 plt.savefig("oneDCorr_L2_and_Uncertainty_violin.png", dpi=300)
 plt.close()

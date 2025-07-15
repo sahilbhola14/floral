@@ -1,11 +1,12 @@
 import torch
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 plt.style.use("../journal.mplstyle")
 
+# Load data
 data = torch.load("oneDCorr_10_samples_results.pt")
 data_mfFlow = torch.load("oneDCorr_10_samples_results_mfFlow.pt")
-
 data_gp = torch.load("oneDCorr_10_samples_GP_results.pt")
 data_gp_mfFlow = torch.load("oneDCorr_10_samples_GP_results_mfFlow.pt")
 
@@ -15,90 +16,137 @@ field_gp = data_gp["field"]
 field_gp_mfFlow = data_gp_mfFlow["field"]
 
 domain = data_mfFlow["domain"].ravel()
+ii = 6  # Select sample index
 
-fig, ax = plt.subplots(2, 3, figsize=(15, 10), sharex=True, sharey=True)
-ax = ax.flatten()
-for ii in range(6):
-    LF_field_mfFlow = field_mfFlow.get("LF_field")[ii]
-    HF_field_mfFlow = field_mfFlow.get("HF_field")[ii]
-    # With ProMiNO
-    Prediction_mfFlow = field_mfFlow.get("Prediction")[ii]
-    mean_Prediction_mfFlow = Prediction_mfFlow.mean(dim=0)
-    std_Prediction_mfFlow = Prediction_mfFlow.std(dim=0)
-    # Without ProMiNO
-    Prediction = field.get("Prediction")[ii]
-    mean_Prediction = Prediction.mean(dim=0)
-    std_Prediction = Prediction.std(dim=0)
+# Extract relevant data
+LF_field = field_mfFlow.get("LF_field")[ii]
+HF_field = field_mfFlow.get("HF_field")[ii]
 
-    # Prediction GP
-    Prediction_gp = field_gp.get("Prediction")
-    mean_Prediction_gp = Prediction_gp.get("mean")[ii]
-    std_Prediction_gp = Prediction_gp.get("std")[ii]
+Prediction_prono = field.get("Prediction")[ii]
+mean_prono = Prediction_prono.mean(dim=0)
+std_prono = Prediction_prono.std(dim=0)
 
-    # Prediction GP with Residual Learning
-    Prediction_gp_mfFlow = field_gp_mfFlow.get("Prediction")
-    mean_Prediction_gp_mfFlow = Prediction_gp_mfFlow.get("mean")[ii]
-    std_Prediction_gp_mfFlow = Prediction_gp_mfFlow.get("std")[ii]
+Prediction_promino = field_mfFlow.get("Prediction")[ii]
+mean_promino = Prediction_promino.mean(dim=0)
+std_promino = Prediction_promino.std(dim=0)
 
-    ax[ii].plot(domain, LF_field_mfFlow, label="Low-fidelity", color="grey", alpha=0.5)
-    ax[ii].plot(domain, HF_field_mfFlow, label="High-fidelity", color="k")
+Prediction_gp = field_gp.get("Prediction")
+mean_gp = Prediction_gp["mean"][ii]
+std_gp = Prediction_gp["std"][ii]
 
-    ax[ii].plot(
-        domain, mean_Prediction_mfFlow, label="ProMiNO", color="red", linestyle="--"
-    )
-    ax[ii].plot(domain, mean_Prediction, label="ProNO", color="green", linestyle="--")
-    ax[ii].plot(domain, mean_Prediction_gp, label="GP", color="orange", linestyle="--")
-    ax[ii].plot(
-        domain,
-        mean_Prediction_gp_mfFlow,
-        label="MiGP",
-        color="purple",
-        linestyle="--",
-    )
+Prediction_migp = field_gp_mfFlow.get("Prediction")
+mean_migp = Prediction_migp["mean"][ii]
+std_migp = Prediction_migp["std"][ii]
 
-    ax[ii].fill_between(
-        domain,
-        mean_Prediction_mfFlow - std_Prediction_mfFlow,
-        mean_Prediction_mfFlow + std_Prediction_mfFlow,
-        color="red",
-        alpha=0.2,
-        label="__nolenged__",
-        linestyle="--",
-    )
+# Set up 1x2 figure
+fig, axs = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
 
-    ax[ii].fill_between(
-        domain,
-        mean_Prediction - std_Prediction,
-        mean_Prediction + std_Prediction,
-        color="green",
-        alpha=0.2,
-        label="__nolenged__",
-        linestyle="--",
-    )
+# --- Left subplot: LF vs HF ---
+axs[0].plot(domain, LF_field, label="Low-fidelity", color="grey", alpha=0.6)
+axs[0].plot(domain, HF_field, label="High-fidelity", color="k")
+# axs[0].set_title("Low vs High Fidelity")
+axs[0].set_xlabel(r"$x$")
+axs[0].set_ylabel(r"$w(a)$")
+axs[0].legend()
 
-    ax[ii].fill_between(
-        domain,
-        mean_Prediction_gp - std_Prediction_gp,
-        mean_Prediction_gp + std_Prediction_gp,
-        color="orange",
-        alpha=0.2,
-        label="__nolenged__",
-        linestyle="--",
-    )
+# --- Right subplot: Methods ---
+ax_main = axs[1]
+ax_main.plot(domain, HF_field, label="High-fidelity", color="k")
 
-    ax[ii].fill_between(
-        domain,
-        mean_Prediction_gp_mfFlow - std_Prediction_gp_mfFlow,
-        mean_Prediction_gp_mfFlow + std_Prediction_gp_mfFlow,
-        color="purple",
-        alpha=0.2,
-        label="__nolenged__",
-        linestyle="--",
-    )
+ax_main.plot(domain, mean_prono, label="FLORA", color="green", linestyle="--")
+ax_main.fill_between(
+    domain, mean_prono - std_prono, mean_prono + std_prono, color="green", alpha=0.2
+)
 
-    ax[ii].set_xlabel(r"$x$")
-    ax[ii].set_ylabel(r"$w(a)$")
-    if ii == 0:
-        ax[ii].legend(ncol=2)
+ax_main.plot(domain, mean_promino, label="FLOREN", color="red", linestyle="--")
+ax_main.fill_between(
+    domain,
+    mean_promino - std_promino,
+    mean_promino + std_promino,
+    color="red",
+    alpha=0.2,
+)
+
+ax_main.plot(domain, mean_gp, label="GP", color="orange", linestyle="--")
+ax_main.fill_between(
+    domain, mean_gp - std_gp, mean_gp + std_gp, color="orange", alpha=0.2
+)
+
+ax_main.plot(domain, mean_migp, label="REGP", color="blue", linestyle="--")
+ax_main.fill_between(
+    domain, mean_migp - std_migp, mean_migp + std_migp, color="blue", alpha=0.2
+)
+
+# ax_main.set_title("Method Comparison")
+ax_main.set_xlabel(r"$x$")
+ax_main.legend(ncol=2)
+
+# --- Inset Zoom-in on Right Plot ---
+
+# Create inset axes
+# axins = inset_axes(ax_main, width="30%", height="50%", loc="best", borderpad=3)
+# axins = inset_axes(ax_main, width="30%", height="50%", loc="center", borderpad=3)
+axins = inset_axes(
+    ax_main,
+    width="20%",  # or float (absolute units)
+    height="40%",
+    bbox_to_anchor=(
+        0.32,
+        0.0000,
+        1,
+        1,
+    ),  # (x0, y0, width, height) in axes coords of ax_main
+    bbox_transform=ax_main.transAxes,
+    borderpad=1.5,
+    loc="lower left"  # loc here positions the bbox_to_anchor box relative to loc,
+    # but you can just keep loc='center' to place bbox_to_anchor exactly
+)
+
+# Define zoom range (you can change this to a region of interest)
+x1, x2 = 0.8, 1.0
+y1, y2 = -0.5, 1.5
+# y1, y2 = (
+#     HF_field[(domain > x1) & (domain < x2)].min(),
+#     HF_field[(domain > x1) & (domain < x2)].max(),
+# )
+y_margin = 0.05 * (y2 - y1)
+y1 -= y_margin
+y2 += y_margin
+
+# Same plots inside the inset
+axins.plot(domain, HF_field, color="k")
+axins.plot(domain, mean_prono, color="green", linestyle="--")
+axins.fill_between(
+    domain, mean_prono - std_prono, mean_prono + std_prono, color="green", alpha=0.2
+)
+
+axins.plot(domain, mean_promino, color="red", linestyle="--")
+axins.fill_between(
+    domain,
+    mean_promino - std_promino,
+    mean_promino + std_promino,
+    color="red",
+    alpha=0.2,
+)
+
+axins.plot(domain, mean_gp, color="orange", linestyle="--")
+axins.fill_between(
+    domain, mean_gp - std_gp, mean_gp + std_gp, color="orange", alpha=0.2
+)
+
+axins.plot(domain, mean_migp, color="blue", linestyle="--")
+axins.fill_between(
+    domain, mean_migp - std_migp, mean_migp + std_migp, color="blue", alpha=0.2
+)
+
+axins.set_xlim(x1, x2)
+axins.set_ylim(y1, y2)
+axins.tick_params(labelsize=8)
+
+# Connect inset to main plot
+mark_inset(ax_main, axins, loc1=2, loc2=4, fc="none", ec="0.5", lw=1)
+
+# Final layout
 plt.tight_layout()
-plt.savefig("oneDCorr_results_mfFlow.png")
+plt.savefig("oneDCorr_comparison.png", dpi=300)
+plt.close()
