@@ -63,7 +63,9 @@ def plot_snapshot(
     """Plot a snapshot of the high and low fidelity solutions."""
     idx_plot = 0  # for reproducibility, always plot the first sample
     plt.figure(figsize=(8, 4))
-    plt.plot(domain, lf_solution[idx_plot, :], label="Low-fidelity", color="blue")
+    plt.plot(
+        domain, lf_solution[idx_plot, :], label="Low-fidelity", color="grey", alpha=0.6
+    )
     plt.plot(domain, hf_solution[idx_plot, :], label="High-fidelity", color="k")
     plt.xlabel("$x$")
     plt.ylabel("$w(a)$")
