@@ -71,29 +71,29 @@ class ResFlow(Flow, L.LightningModule):
 
         # state embedding
         self.state_embedding = nn.Sequential(
-            nn.Linear(self.nx + 2 * self.time_emb_freq, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(32, self.latent_dim),
-        )
-
-        # condition embedding
-        self.condition_embedding = nn.Sequential(
-            nn.Linear(self.nc + 2 * self.time_emb_freq, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(32, self.latent_dim),
-        )
-
-        # skip connections
-        self.skip = nn.Sequential(
-            nn.Linear(self.latent_dim, 64),
+            nn.Linear(self.nx + 2 * self.time_emb_freq, 64),
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(64, self.latent_dim),
+        )
+
+        # condition embedding
+        self.condition_embedding = nn.Sequential(
+            nn.Linear(self.nc + 2 * self.time_emb_freq, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, self.latent_dim),
+        )
+
+        # skip connections
+        self.skip = nn.Sequential(
+            nn.Linear(self.latent_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, self.latent_dim),
         )
 
         # domain embedding
