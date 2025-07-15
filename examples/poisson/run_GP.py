@@ -49,63 +49,6 @@ def get_data_module():
     return data_module
 
 
-def get_datasets():
-    path = config.data.high_fidelity.path
-    data = np.load(path, allow_pickle=True)
-    n_samples = config.data.high_fidelity.n_samples
-
-    field = n2t(data.get("field")[:n_samples])
-    condition = n2t(data.get("condition")[:n_samples])
-
-    domain = n2t(data.get("domain"))
-    domain_batch = domain.unsqueeze(0).repeat(n_samples, 1, 1)
-    # In features
-    in_features = torch.cat(
-        [condition.view(-1, 1), domain_batch.view(-1, 1)], dim=-1
-    ).float()
-    # Out features
-    out_features = field.view(-1, 1).float()
-
-    # Split
-    n_train = int(len(in_features) * config.dataloader.train_ratio)
-    in_features_train, in_features_val = torch.split(
-        in_features, [n_train, len(in_features) - n_train]
-    )
-    out_features_train, out_features_val = torch.split(
-        out_features, [n_train, len(out_features) - n_train]
-    )
-
-    # Normalize
-    in_features_train_mean = in_features_train.mean(dim=0, keepdim=True)
-    in_features_train_std = in_features_train.std(dim=0, keepdim=True)
-    out_features_train_mean = out_features_train.mean(dim=0, keepdim=True)
-    out_features_train_std = out_features_train.std(dim=0, keepdim=True)
-    in_features_train = (
-        in_features_train - in_features_train_mean
-    ) / in_features_train_std
-    out_features_train = (
-        out_features_train - out_features_train_mean
-    ) / out_features_train_std
-    in_features_val = (in_features_val - in_features_train_mean) / in_features_train_std
-    out_features_val = (
-        out_features_val - out_features_train_mean
-    ) / out_features_train_std
-
-    # Statistics
-    statistics = {
-        "in_features_train_mean": in_features_train_mean,
-        "in_features_train_std": in_features_train_std,
-        "out_features_train_mean": out_features_train_mean,
-        "out_features_train_std": out_features_train_std,
-    }
-
-    # Create datasets
-    train_set = torch.utils.data.TensorDataset(in_features_train, out_features_train)
-    val_set = torch.utils.data.TensorDataset(in_features_val, out_features_val)
-
-    return train_set, val_set, statistics
-
-
 def train_GP(model):
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=config.train.learning_rate)
