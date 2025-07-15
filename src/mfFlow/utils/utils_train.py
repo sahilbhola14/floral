@@ -599,11 +599,6 @@ class GPDataModule:
                 dim=0,
             )
 
-        # TODO: This for debugging purposes, remove later
-        sensor_locations = (
-            torch.arange(HF_field.shape[1]).unsqueeze(0).repeat(self.n_samples, 1)
-        )
-
         # Get the field at sensor locations
         LF_field_sensor = LF_field_sub.gather(1, sensor_locations)
         HF_field_sensor = HF_field_sub.gather(1, sensor_locations)
