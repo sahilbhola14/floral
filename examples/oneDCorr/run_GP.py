@@ -1,3 +1,7 @@
+# examples/oneDCorr/run_GP.py
+"""
+Gaussian Process Regression for One-dimensional correlation benchmark.
+"""
 import numpy as np
 import torch
 import argparse

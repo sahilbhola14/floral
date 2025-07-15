@@ -1,3 +1,8 @@
+# examples/oneDCorr/run_FLOREN.py
+"""
+Flow-Matching Residual Embedded Nerual Opeartor for One-dimensional correlation
+benchmark.
+"""
 import torch
 import torch.nn as nn
 import argparse
