@@ -177,10 +177,12 @@ cython_debug/
 undodir/
 
 # data
-.pt
+*.pt
 *.png
 *.npy
 *.npz
 *.pt
+*.tar.gz
+*.tar
 experiments/
 logs/
