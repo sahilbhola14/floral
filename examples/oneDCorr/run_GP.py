@@ -25,6 +25,8 @@ printer(f"Running oneDCorr with configuration: {args.config}")
 
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
+device = torch.device("cuda" if torch.cuda_is_available() else "cpu")
+
 
 def get_data_module():
     """Get the data module for the oneDCorr problem."""
@@ -75,9 +77,8 @@ if __name__ == "__main__":
     data_module = get_data_module()
     # gp regression model
     model = GPRegressionModel(
-        train_set=data_module.train_set,
-        val_set=data_module.val_set,
-    )
+        train_set=data_module.train_set, val_set=data_module.val_set, device=device
+    ).to(device)
     # train the model
     train_GP(model)
     # infer the model
