@@ -9,13 +9,17 @@ from gpytorch.distributions import MultivariateNormal
 class GPRegressionModel(ExactGP):
     """Gaussian Process model for regression tasks."""
 
-    def __init__(self, train_set, val_set):
+    def __init__(self, train_set, val_set, device):
 
         self.train_set = train_set
         self.val_set = val_set
+        self.device = device
         # Extract training and validation data
         self.train_x, self.train_y = train_set.tensors
         self.val_x, self.val_y = val_set.tensors
+        # Move to device
+        self.train_x, self.train_y = self.train_x.to(device), self.train_y.to(device)
+        self.val_x, self.val_y = self.val_x.to(device), self.val_y.to(device)
         # Gaussian Likelihood
         likelihood = GaussianLikelihood()
         # Initialize the GP model with a constant mean and RBF kernel
@@ -23,7 +27,7 @@ class GPRegressionModel(ExactGP):
             self.train_x, self.train_y.view(-1), likelihood
         )
         # Set the likelihood
-        self.likelihood = likelihood
+        self.likelihood = likelihood.to(self.device)
         # Mean model
         self.mean = ConstantMean()
         # Covariance function
