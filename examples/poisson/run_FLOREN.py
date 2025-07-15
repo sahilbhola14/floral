@@ -1,4 +1,7 @@
-# examples/poisson/run_poisson.py
+# examples/poisson/run_FLOREN.py
+"""
+Flow-Matching Residual Embedded Nerual Opeartor for Poisson equation
+"""
 import torch
 import torch.nn as nn
 import argparse
