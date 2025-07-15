@@ -136,7 +136,12 @@ def plot_snapshot(
 
 
 def generate(args):
-    """Generate data for the Poisson equation example."""
+    """Generate data for the Poisson equation example.
+    Notes:
+        - For low fidelity, hf_features is used when saving because the lf_features
+        are obtained by interpolation from the high fidelity features. We basicallly
+        need the features interpolated to the high fidelity domain for training.
+    """
     N = args.m_high * 10
     total_samples = args.n_samples + args.n_test_samples
     space = GRF(1, length_scale=0.05, N=N, interp="cubic")
@@ -177,7 +182,7 @@ def generate(args):
 
     low_data = {
         "field": lf_solution[: args.n_samples],
-        "condition": lf_features[: args.n_samples],
+        "condition": hf_features[: args.n_samples],
         "domain": hf_domain.reshape(-1, 1),
         "resolution": args.m_low,
     }
