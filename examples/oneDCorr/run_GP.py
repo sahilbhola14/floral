@@ -25,7 +25,7 @@ printer(f"Running oneDCorr with configuration: {args.config}")
 
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
-device = torch.device("cuda" if torch.cuda_is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_data_module():
@@ -88,5 +88,6 @@ if __name__ == "__main__":
         statistics=data_module.statistics,
         job_name=config.job_name,
         mfFlow=config.mfFlow,
+        device=device,
     )
     infer()
