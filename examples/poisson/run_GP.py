@@ -71,7 +71,10 @@ if __name__ == "__main__":
     data_module = get_data_module()
     # gp regression model
     model = build_gp(
-        train_set=data_module.train_set, val_set=data_module.val_set, device=device
+        train_set=data_module.train_set,
+        val_set=data_module.val_set,
+        device=device,
+        gp_type="deep_kernel",
     ).to(device)
 
     # train the model
