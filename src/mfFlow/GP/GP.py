@@ -1,7 +1,7 @@
 import torch
 from gpytorch.models import ExactGP
 from gpytorch.means import ConstantMean
-from gpytorch.kernels import ScaleKernel, RBFKernel
+from gpytorch.kernels import ScaleKernel, RBFKernel, MaternKernel, PeriodicKernel
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.distributions import MultivariateNormal
 from gpytorch.constraints import GreaterThan, Interval
@@ -24,11 +24,25 @@ class GPRegressionModel(ExactGP):
         super().__init__(self.train_x, self.train_y.view(-1), likelihood)
         self.likelihood = likelihood.to(device)
 
-        # Mean and kernel with constraints
+        # Mean function
         self.mean_module = ConstantMean()
-        base_kernel = RBFKernel()
-        base_kernel.register_constraint("raw_lengthscale", Interval(0.05, 5.0))
-        self.covar_module = ScaleKernel(base_kernel)
+
+        # Composite kernel: RBF + Matern + Periodic
+        input_dim = self.train_x.shape[-1]
+
+        rbf = RBFKernel(ard_num_dims=input_dim)
+        rbf.register_constraint("raw_lengthscale", Interval(0.05, 5.0))
+
+        matern = MaternKernel(nu=1.5, ard_num_dims=input_dim)
+        matern.register_constraint("raw_lengthscale", Interval(0.05, 5.0))
+
+        periodic = PeriodicKernel()
+        periodic.register_constraint("raw_lengthscale", Interval(0.05, 5.0))
+
+        base_kernel = rbf + matern + periodic
+
+        self.covar_module = ScaleKernel(base_kernel).to(device)
+        self.covar_module.outputscale = 1.0  # optional: initialize
 
         # Move to device
         self.to(device)
