@@ -25,6 +25,8 @@ printer(f"Running Poisson with configuration: {args.config}")
 
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def get_data_module():
     """Get the data module for the Poisson problem."""
@@ -58,26 +60,20 @@ def train_GP(model):
         ncols=100,
     )
     for epoch in pbar:
-        # Zero the gradients
-        optimizer.zero_grad()
         # Train step
-        train_loss = model.train_step(mll)
-        # Backpropagation
-        train_loss.backward()
-        # Update the parameters
-        optimizer.step()
+        train_loss = model.train_step(mll, optimizer)
         # Valication step
         val_loss = model.val_step(mll)
-        pbar.set_postfix({"train_loss": train_loss.item(), "val_loss": val_loss.item()})
+        pbar.set_postfix({"train_loss": train_loss, "val_loss": val_loss})
 
 
 if __name__ == "__main__":
     data_module = get_data_module()
     # gp regression model
     model = GPRegressionModel(
-        train_set=data_module.train_set,
-        val_set=data_module.val_set,
-    )
+        train_set=data_module.train_set, val_set=data_module.val_set, device=device
+    ).to(device)
+
     # train the model
     train_GP(model)
     # infer the model
@@ -87,5 +83,6 @@ if __name__ == "__main__":
         statistics=data_module.statistics,
         job_name=config.job_name,
         mfFlow=config.mfFlow,
+        device=device,
     )
     infer()
