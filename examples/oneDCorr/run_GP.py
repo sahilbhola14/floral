@@ -60,17 +60,11 @@ def train_GP(model):
         ncols=100,
     )
     for epoch in pbar:
-        # Zero the gradients
-        optimizer.zero_grad()
         # Train step
-        train_loss = model.train_step(mll)
-        # Backpropagation
-        train_loss.backward()
-        # Update the parameters
-        optimizer.step()
+        train_loss = model.train_step(mll, optimizer)
         # Valication step
         val_loss = model.val_step(mll)
-        pbar.set_postfix({"train_loss": train_loss.item(), "val_loss": val_loss.item()})
+        pbar.set_postfix({"train_loss": train_loss, "val_loss": val_loss})
 
 
 if __name__ == "__main__":
