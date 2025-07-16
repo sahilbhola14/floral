@@ -150,6 +150,7 @@ class InferenceGP:
         statistics: dict,
         job_name: str,
         mfFlow: bool,
+        device: torch.device,
     ):
         # Initialize the model with the best_model_path
         self.model = model
@@ -162,6 +163,7 @@ class InferenceGP:
         self.statistics = statistics  # Statistics of the data
         self.job_name = job_name  # Name of the inference job
         self.mfFlow = mfFlow  # Flag for multi-flow processing
+        self.device = device
 
     @torch.no_grad()
     def __call__(self):
@@ -169,7 +171,7 @@ class InferenceGP:
         field = {"LF_field": [], "HF_field": [], "Prediction": {"mean": [], "std": []}}
         residual = {"True": [], "Prediction": {"mean": [], "std": []}}
         # Input featurs
-        in_features = self.test_config["in_features"]
+        in_features = self.test_config["in_features"].to(self.device)
         # Fields
         LF_field = self.test_config["LF_field"]
         HF_field = self.test_config["HF_field"]
@@ -178,6 +180,9 @@ class InferenceGP:
             pred = self.model.likelihood(self.model(in_features))
             pred_mean = pred.mean
             pred_std = pred.stddev
+        # Move to cpu
+        pred_mean = pred_mean.to("cpu")
+        pred_std = pred_std.to("cpu")
         # Denormalize the prediction
         out_features_mean = self.statistics["out_features"]["mean"]
         out_features_std = self.statistics["out_features"]["std"]
