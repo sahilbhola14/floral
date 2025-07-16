@@ -55,6 +55,11 @@ class VanillaGP(ExactGP):
         # Move to device
         self.to(device)
 
+    def _compute_loss(self, mll, x, y):
+        assert y.ndim == 1, "Targets should be 1D."
+        output = self.forward(x)
+        return -mll(output, y)
+
     def forward(self, x):
         """Forward pass of the GP model."""
         mean_x = self.mean_module(x)
@@ -114,6 +119,11 @@ class DeepKernelGP(ExactGP):
 
         # Move to device
         self.to(device)
+
+    def _compute_loss(self, mll, x, y):
+        assert y.ndim == 1, "Targets should be 1D."
+        output = self.forward(x)
+        return -mll(output, y)
 
     def forward(self, x):
         """Forward pass of the GP model."""
