@@ -1,3 +1,3 @@
-from .GP import GPRegressionModel
+from .GP import build_gp
 
-__all__ = ["GPRegressionModel"]
+__all__ = ["build_gp"]
