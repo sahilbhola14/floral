@@ -5,11 +5,21 @@ import pandas as pd
 
 plt.style.use("../journal.mplstyle")  # Optional style
 
+# Begin user input
+n_samples = 10
+n_sensors = 100
+# End user input
+
 # Load data
-data = torch.load("oneDCorr_10_samples_results.pt")
-data_mfFlow = torch.load("oneDCorr_10_samples_results_mfFlow.pt")
-data_gp = torch.load("oneDCorr_10_samples_GP_results.pt")
-data_gp_mfFlow = torch.load("oneDCorr_10_samples_GP_results_mfFlow.pt")
+data = torch.load(f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results.pt")
+data_mfFlow = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt"
+)
+data_gp = torch.load(f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt")
+data_gp_mfFlow = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt"
+)
+
 
 field = data["field"]
 field_mfFlow = data_mfFlow["field"]
