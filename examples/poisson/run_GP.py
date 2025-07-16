@@ -13,7 +13,7 @@ from mfFlow.utils import (
     InferenceGP,
 )
 
-from mfFlow.GP import GPRegressionModel
+from mfFlow.GP import build_gp
 
 parser = argparse.ArgumentParser(description="Run Poisson with Gaussian Processes")
 parser.add_argument(
@@ -70,7 +70,7 @@ def train_GP(model):
 if __name__ == "__main__":
     data_module = get_data_module()
     # gp regression model
-    model = GPRegressionModel(
+    model = build_gp(
         train_set=data_module.train_set, val_set=data_module.val_set, device=device
     ).to(device)
 
