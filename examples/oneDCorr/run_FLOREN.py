@@ -22,7 +22,10 @@ from mfFlow.archs import RBFFiLM
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
-    "--config", type=str, default="config.yml", help="Path to the configuration file."
+    "--config",
+    type=str,
+    default="config_FLOREN.yml",
+    help="Path to the configuration file.",
 )
 args = parser.parse_args()
 config = OmegaConf.load(args.config)

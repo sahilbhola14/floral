@@ -17,7 +17,10 @@ from mfFlow.GP import build_gp
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with Gaussian Processes")
 parser.add_argument(
-    "--config", type=str, default="config.yml", help="Path to the configuration file."
+    "--config",
+    type=str,
+    default="config_GP.yml",
+    help="Path to the configuration file.",
 )
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
@@ -74,7 +77,7 @@ if __name__ == "__main__":
         train_set=data_module.train_set,
         val_set=data_module.val_set,
         device=device,
-        gp_type="enhanced_deep_kernel",
+        gp_type="vanilla",
     ).to(device)
     # train the model
     train_GP(model)

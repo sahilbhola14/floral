@@ -1,7 +1,7 @@
 # Configutations for 1-D Correlation
 
-job_name: "poisson_2000_samples_10_sensors" # Unique identifier for each run
-mfFlow: True # True means residual operator is learned
+job_name: "poisson_2000_samples_1_sensors" # Unique identifier for each run
+mfFlow: False # True means residual operator is learned
 checkpoint_save_path: "./experiments/poisson/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "poisson" # Logger folder
@@ -15,7 +15,7 @@ data:
   high_fidelity:
     path: "./high_fidelity.npz"
     n_samples: 2000 #Number of samples of the data set to use
-    n_sensors: 10 # Number of sensors in the output domain
+    n_sensors: 1 # Number of sensors in the output domain
   test_data_path: "./test_data.npz"
 
 dataloader:
@@ -31,7 +31,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 1
+  devices: 3
   strategy: 'ddp'
   precision: 'bf16-mixed'
   max_epochs: 5000

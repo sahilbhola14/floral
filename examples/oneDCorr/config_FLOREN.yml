@@ -34,7 +34,7 @@ train:
   devices: 3
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 200
+  max_epochs: 5000
   learning_rate: 5.0e-3
   weight_decay: 1.0e-4
 
