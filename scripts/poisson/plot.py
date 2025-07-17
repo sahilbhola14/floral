@@ -5,8 +5,9 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 plt.style.use("../journal.mplstyle")
 
 # Begin user input
-n_samples = 10
-n_sensors = 100
+n_samples = 2000
+n_sensors = 1
+plot_idx = 5  # Select sample index
 # End user input
 
 # Load data
@@ -25,27 +26,26 @@ field_gp = data_gp["field"]
 field_gp_mfFlow = data_gp_mfFlow["field"]
 
 domain = data_mfFlow["domain"].ravel()
-ii = 2  # Select sample index
 
 # Extract relevant data
-LF_field = field_mfFlow.get("LF_field")[ii]
-HF_field = field_mfFlow.get("HF_field")[ii]
+LF_field = field_mfFlow.get("LF_field")[plot_idx]
+HF_field = field_mfFlow.get("HF_field")[plot_idx]
 
-Prediction_prono = field.get("Prediction")[ii]
+Prediction_prono = field.get("Prediction")[plot_idx]
 mean_prono = Prediction_prono.mean(dim=0)
 std_prono = Prediction_prono.std(dim=0)
 
-Prediction_promino = field_mfFlow.get("Prediction")[ii]
+Prediction_promino = field_mfFlow.get("Prediction")[plot_idx]
 mean_promino = Prediction_promino.mean(dim=0)
 std_promino = Prediction_promino.std(dim=0)
 
 Prediction_gp = field_gp.get("Prediction")
-mean_gp = Prediction_gp["mean"][ii]
-std_gp = Prediction_gp["std"][ii]
+mean_gp = Prediction_gp["mean"][plot_idx]
+std_gp = Prediction_gp["std"][plot_idx]
 
 Prediction_migp = field_gp_mfFlow.get("Prediction")
-mean_migp = Prediction_migp["mean"][ii]
-std_migp = Prediction_migp["std"][ii]
+mean_migp = Prediction_migp["mean"][plot_idx]
+std_migp = Prediction_migp["std"][plot_idx]
 
 # Set up 1x2 figure
 fig, axs = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
