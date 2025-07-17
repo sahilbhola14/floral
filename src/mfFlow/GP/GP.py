@@ -296,21 +296,21 @@ class EnhancedDeepKernelGP(ExactGP):
                     lengthscale_prior=GammaPrior(5.0, 0.2),
                 )
             )
+            # NOTE: Matern and Linear kernels run into numerical stability issues.
+            # # Matern kernel for less smooth patterns
+            # matern_kernel = ScaleKernel(
+            #     MaternKernel(
+            #         nu=1.5,
+            #         ard_num_dims=self.feature_dim,
+            #         lengthscale_prior=GammaPrior(1.0, 0.2),
+            #     )
+            # )
 
-            # Matern kernel for less smooth patterns
-            matern_kernel = ScaleKernel(
-                MaternKernel(
-                    nu=1.5,
-                    ard_num_dims=self.feature_dim,
-                    lengthscale_prior=GammaPrior(1.0, 0.2),
-                )
-            )
-
-            # Linear kernel for trends
-            linear_kernel = ScaleKernel(LinearKernel())
+            # # Linear kernel for trends
+            # linear_kernel = ScaleKernel(LinearKernel())
 
             # Combine kernels
-            return rbf_short + rbf_medium + rbf_long + matern_kernel + linear_kernel
+            return rbf_short + rbf_medium + rbf_long
 
     def _compute_loss(self, mll, x, y):
         assert y.ndim == 1, "Targets should be 1D."
