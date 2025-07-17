@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Flower_icon_5.svg/1024px-Flower_icon_5.svg.png" alt="FLOREN Logo" width="150"/>
-</p>
-
 <h1 align="center">FLOREN 🌸</h1>
 <h3 align="center">Flow-matching Residual Embedded Neural Operator</h3>
 
