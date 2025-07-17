@@ -7,7 +7,7 @@ plt.style.use("../journal.mplstyle")
 # Begin user input
 n_samples = 2000
 n_sensors = 1
-plot_idx = 5  # Select sample index
+plot_idx = 2  # Select sample index
 # End user input
 
 # Load data
@@ -97,8 +97,8 @@ ax_main.legend(ncol=2)
 # axins = inset_axes(ax_main, width="30%", height="50%", loc="center", borderpad=3)
 axins = inset_axes(
     ax_main,
-    width="20%",  # or float (absolute units)
-    height="40%",
+    width="40%",  # or float (absolute units)
+    height="20%",
     bbox_to_anchor=(
         0.32,
         0.0000,
@@ -113,7 +113,7 @@ axins = inset_axes(
 
 # Define zoom range (you can change this to a region of interest)
 x1, x2 = 0.7, 0.9
-y1, y2 = -0.8, -0.4
+y1, y2 = -1.1, -0.4
 # y1, y2 = (
 #     HF_field[(domain > x1) & (domain < x2)].min(),
 #     HF_field[(domain > x1) & (domain < x2)].max(),
