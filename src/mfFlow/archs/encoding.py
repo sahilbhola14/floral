@@ -89,6 +89,7 @@ class FiLM(nn.Module):
             num_channels (int): Number of channels in the output tensor, which is
                                 modulated.
         """
+        super(FiLM, self).__init__()
         self.emb_dim = emb_dim
         self.num_channels = num_channels
         self.scale = nn.Linear(self.emb_dim, self.num_channels)
