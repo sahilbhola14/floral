@@ -106,11 +106,11 @@ class FiLM(nn.Module):
         assert (
             emb.shape[-1] == self.emb_dim
         ), f"Embedding dimension mismatch: {emb.shape[-1]} != {self.emb_dim}"
-        assert emb.ndim() == 2, "Embedding tensor must be 2D (batch_size, emb_dim)"
+        assert emb.ndim == 2, "Embedding tensor must be 2D (batch_size, emb_dim)"
         assert (
             x.shape[1] == self.num_channels
         ), f"Number of channels mismatch: {x.shape[1]} != {self.num_channels}"
-        assert x.ndim() == 4, "Input tensor must be 4D (batch_size, num_channels, H, W)"
+        assert x.ndim == 4, "Input tensor must be 4D (batch_size, num_channels, H, W)"
         scale = self.scale(emb).view(-1, self.num_channels, 1, 1)
         shift = self.shift(emb).view(-1, self.num_channels, 1, 1)
         return x * (1 + scale) + shift
