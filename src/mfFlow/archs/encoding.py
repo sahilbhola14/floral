@@ -75,30 +75,41 @@ class RBFFiLM(nn.Module):
 
 
 class FiLM(nn.Module):
-    """FiLM"""
+    """Vanilla Feature Layer Modulation (FiLM) layer
 
-    def __init__(self, in_dim: int, out_dim: int, n_freq: int):
-        super(FiLM, self).__init__()
-        self.in_dim = in_dim
-        self.n_freq = n_freq
-        self.out_dim = out_dim
-        self.gamma = MLP(
-            self.in_dim * self.n_freq * 2,
-            [64, 64],
-            self.out_dim,
-            activations=[nn.ReLU(), nn.ReLU(), None],
-        )
-        self.beta = MLP(
-            self.in_dim * self.n_freq * 2,
-            [64, 64],
-            1,
-            activations=[nn.ReLU(), nn.ReLU(), None],
-        )
+    Give an embedding vector of size (batch_size, emb_dim), this layer modulates a
+    tensor of size (batch_size, num_channels, H, W) by scaling and shifting it.
 
-    def forward(self, x: torch.Tensor, mod: torch.Tensor):
-        """forward pass"""
-        f = 2 * torch.arange(1, self.n_freq + 1, device=x.device) * torch.pi
-        mod = torch.cat([(f * mod).sin(), (f * mod).cos()], dim=-1)
-        gamma = self.gamma(mod)
-        beta = self.beta(mod)
-        return x @ gamma.T + beta.T
+    """
+
+    def __init__(self, emb_dim: int, num_channels: int):
+        """
+        Args:
+            emb_dim (int): Dimension of the embedding vector
+            num_channels (int): Number of channels in the output tensor, which is
+                                modulated.
+        """
+        self.emb_dim = emb_dim
+        self.num_channels = num_channels
+        self.scale = nn.Linear(self.emb_dim, self.num_channels)
+        self.shift = nn.Linear(self.emb_dim, self.num_channels)
+
+    def forward(self, x: torch.Tensor, emb: torch.Tensor):
+        """forward pass of the FiLM layer
+        Args:
+            x (torch.Tensor): Input tensor of shape (batch_size, num_channels, H, W)
+                            that will be modulated.
+            emb (torch.Tensor): Embedding tensor of shape (batch_size, emb_dim) that
+                                will be used to modulate the input tensor.
+        """
+        assert (
+            emb.shape[-1] == self.emb_dim
+        ), f"Embedding dimension mismatch: {emb.shape[-1]} != {self.emb_dim}"
+        assert emb.ndim() == 2, "Embedding tensor must be 2D (batch_size, emb_dim)"
+        assert (
+            x.shape[1] == self.num_channels
+        ), f"Number of channels mismatch: {x.shape[1]} != {self.num_channels}"
+        assert x.ndim() == 4, "Input tensor must be 4D (batch_size, num_channels, H, W)"
+        scale = self.scale(emb).view(-1, self.num_channels, 1, 1)
+        shift = self.shift(emb).view(-1, self.num_channels, 1, 1)
+        return x * (1 + scale) + shift
