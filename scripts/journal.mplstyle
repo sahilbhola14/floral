@@ -55,5 +55,8 @@ grid.linewidth: 0.25
 grid.linestyle: :
 grid.alpha: 0.5
 
+# Set Colormap
+image.cmap: inferno  # or 'plasma', 'inferno', 'magma', etc.
+
 # Colors (optional: grayscale or colorblind-friendly palettes)
 # axes.prop_cycle: cycler('color', ['#000000', '#444444', '#888888', '#BBBBBB'])
