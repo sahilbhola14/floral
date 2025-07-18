@@ -213,7 +213,6 @@ class OpDataModule(L.LightningDataModule):
             field = HF_field_flat - LF_field_flat
         else:
             field = HF_field_flat
-
         # Create the data dict
         data_dict = {}
         data_dict["field"] = field
@@ -261,11 +260,18 @@ class OpDataModule(L.LightningDataModule):
         if self.normalize.field:
             field_mean = field_train.mean(dim=0, keepdim=True)
             field_std = field_train.std(dim=0, keepdim=True)
+
+            # Avoid division by small values
+            field_std = torch.where(
+                field_std < 1e-10, torch.ones_like(field_std), field_std
+            )
+
             field_train_norm = (field_train - field_mean) / field_std
             field_val_norm = (field_val - field_mean) / field_std
         else:
             field_mean = torch.zeros(1, self.nx)
             field_std = torch.ones(1, self.nx)
+
             field_train_norm = field_train
             field_val_norm = field_val
         # Normalize the conditions
@@ -274,6 +280,12 @@ class OpDataModule(L.LightningDataModule):
         if self.normalize.condition:
             condition_mean = condition_train.mean(dim=0, keepdim=True)
             condition_std = condition_train.std(dim=0, keepdim=True)
+
+            # Avoid division by small values
+            condition_std = torch.where(
+                condition_std < 1e-10, torch.ones_like(condition_std), condition_std
+            )
+
             condition_train_norm = (condition_train - condition_mean) / condition_std
             condition_val_norm = (condition_val - condition_mean) / condition_std
         else:
