@@ -140,7 +140,7 @@ def generate():
         "resolution": args.m_high,
     }
 
-    test_config = {
+    test_data = {
         "LF_field": lf_solution[args.n_samples :],
         "HF_field": hf_solution[args.n_samples :],
         "condition": features[args.n_samples :],
@@ -154,7 +154,7 @@ def generate():
     # save
     np.savez("high_fidelity.npz", **high_data)
     np.savez("low_fidelity.npz", **low_data)
-    np.savez("test_config.npz", **test_config)
+    np.savez("test_data.npz", **test_data)
 
 
 if __name__ == "__main__":
