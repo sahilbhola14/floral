@@ -20,7 +20,7 @@ FLOREN is a novel method for learning neural operators by combining **flow match
 
 ```bash
 git clone https://github.com/your-username/FLOREN.git
-cd FLOREN
+cd floren
 conda env create -f environment.yml
 conda activate floren
 ./build.sh

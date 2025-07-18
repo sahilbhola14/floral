@@ -1,15 +1,19 @@
-name: mfFlow
+name: floren
 channels:
+  - pytorch
   - conda-forge
   - defaults
   - anaconda
 dependencies:
-  - tqdm
-  - numpy
-  - torch
-  - matplotlib
+  - python=3.11.13
+  - tqdm=4.67.1
+  - numpy=2.3.1
+  - matplotlib=3.10.3
+  - omegaconf=2.3.0
+  - twine=6.1.0
+  - build
   - pip
   - pip:
-    - omegaconf
-    - build
-    - twine
+    - torch==2.6.0
+    - gpytorch==1.14
+    - tensorboard==2.20.0
