@@ -27,7 +27,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=2000,
+        default=4000,
         help="Number of samples to generate",
     )
 
