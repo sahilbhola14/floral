@@ -11,6 +11,7 @@ dependencies:
   - omegaconf=2.3.0
   - twine=6.1.0
   - build=0.10.0
+  - lightning=2.5.2
   - pip
   - pip:
     - torch==2.6.0
