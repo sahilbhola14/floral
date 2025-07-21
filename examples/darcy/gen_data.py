@@ -574,8 +574,9 @@ def generate(args):
     # Test data
 
     test_data = {
-        "LF_field": P_low[args.n_samples :].reshape(args.n_test_samples, -1),
+        "LF_field": P_recon[args.n_samples :].reshape(args.n_test_samples, -1),
         "HF_field": P_high[args.n_samples :].reshape(args.n_test_samples, -1),
+        "LF_solved": P_low[args.n_samples :].reshape(args.n_test_samples, -1),
         "condition": K_high[args.n_samples :].reshape(args.n_test_samples, -1),
         "domain": domain,
         "resolution": args.m_high,
