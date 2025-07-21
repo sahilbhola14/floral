@@ -23,7 +23,7 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "-nt", "--n_test_samples", type=int, default=200, help="Number of samples to test"
+    "-nt", "--n_test_samples", type=int, default=100, help="Number of samples to test"
 )
 parser.add_argument(
     "-mh",
@@ -33,7 +33,7 @@ parser.add_argument(
     help="Number of discretization points for high fidelity",
 )
 parser.add_argument(
-    "--k_range", type=list, default=[8, 10], help="Range of k values to sample from"
+    "--k_range", type=list, default=[2, 10], help="Range of k values to sample from"
 )
 args = parser.parse_args()
 
@@ -50,7 +50,7 @@ def eval_high_fidelity_model(a: np.ndarray, domain: np.ndarray):
     """
     x, y = domain[:, 0], domain[:, 1]
     # original
-    # hf_solution = np.cos(a) * np.cos(domain[:, 1]) ** 2
+    # hf_solution = np.cos(a) * np.cos(y) ** 2
 
     # modified
     hf_solution = (
@@ -76,7 +76,7 @@ def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
     """
     x, y = domain[:, 0], domain[:, 1]
     # original
-    # lf_solution = np.cos(a) * np.cos(domain[:, 1]) + domain[:, 0]
+    # lf_solution = np.cos(a) * np.cos(y) + x
 
     # modified
     lf_solution = (
@@ -94,15 +94,12 @@ def sample_input_function(n_samples: int, domain: np.ndarray):
     k = np.random.uniform(args.k_range[0], args.k_range[1], n_samples).reshape(-1, 1)
     x, y = domain[:, 0], domain[:, 1]
     # original
-    # a = k * domain[:, 0] ** 2 - 4.0
+    # a = k * x ** 2 - 4.0
     # modfied
     a = (
-        k
-        * (
-            x**2
-            + 0.5 * np.sin(3 * x**2) * np.cos(2 * y**2)
-            + 0.1 * np.sin(10 * x * y)
-        )
+        np.sin(k * x**2) * np.cos(k * y**2)
+        + 0.3 * np.sin(0.5 * k**2 * x * y)
+        + 0.2 * np.tanh(0.3 * k * (x + y))
         - 4.0
     )
     return a
@@ -219,6 +216,10 @@ def generate():
     lf_solution = eval_low_fidelity_model(
         features, domain
     )  # evaluate low fidelity model
+
+    # check nan
+    assert not np.isnan(hf_solution).any(), "High fidelity solution contains NaN"
+    assert not np.isnan(lf_solution).any(), "Low fidelity solution contains NaN"
 
     # plot joint distribution
     plot_joint(lf_solution, hf_solution)
