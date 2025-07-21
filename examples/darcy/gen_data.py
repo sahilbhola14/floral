@@ -433,6 +433,7 @@ def plot_snapshot(
         vmin=vmin_K,
         vmax=vmax_K,
         aspect="auto",
+        interpolation="bilinear",
     )
     axs[0, 1].imshow(
         K_low_plot,
@@ -441,6 +442,7 @@ def plot_snapshot(
         vmin=vmin_K,
         vmax=vmax_K,
         aspect="auto",
+        interpolation="bilinear",
     )
     axs[0, 2].imshow(
         K_recon_plot,
@@ -449,6 +451,7 @@ def plot_snapshot(
         vmin=vmin_K,
         vmax=vmax_K,
         aspect="auto",
+        interpolation="bilinear",
     )
 
     # pressure fields
@@ -459,6 +462,7 @@ def plot_snapshot(
         vmin=vmin_P,
         vmax=vmax_P,
         aspect="auto",
+        interpolation="bilinear",
     )
     axs[1, 1].imshow(
         P_low_plot,
@@ -467,6 +471,7 @@ def plot_snapshot(
         vmin=vmin_P,
         vmax=vmax_P,
         aspect="auto",
+        interpolation="bilinear",
     )
     axs[1, 2].imshow(
         P_recon_plot,
@@ -475,6 +480,7 @@ def plot_snapshot(
         vmin=vmin_P,
         vmax=vmax_P,
         aspect="auto",
+        interpolation="bilinear",
     )
 
     # Add colorbar for row 0 (K - permeability)
