@@ -1,4 +1,4 @@
-# Configutations for Darcy Flow
+# Configutations for Dary Flow
 
 job_name: "Darcy_100_samples_500_sensors" # Unique identifier for each run
 mfFlow: False # True means residual operator is learned
@@ -34,7 +34,7 @@ train:
   devices: 1
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 5
+  max_epochs: 200
   learning_rate: 5.0e-3
   weight_decay: 1.0e-4
 
