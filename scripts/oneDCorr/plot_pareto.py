@@ -38,7 +38,7 @@ method_order = ["FLORA", "FLOREN", "GP", "REGP"]
 # Containers for results
 error_rows = []
 uncertainty_rows = []
-
+print(f"Computing stats for {n_samples} samples...")
 for ii in range(n_samples):
     HF_field = field_mfFlow.get("HF_field")[ii]
 
