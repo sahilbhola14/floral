@@ -134,7 +134,9 @@ def plot_snapshot(
     vmin = min(hf_solution_plot.min(), lf_solution_plot.min())
     vmax = max(hf_solution_plot.max(), lf_solution_plot.max())
 
-    fig, axs = plt.subplots(1, 3, figsize=(12, 5), layout="constrained")
+    fig, axs = plt.subplots(
+        1, 3, figsize=(12, 5), layout="constrained", sharex=True, sharey=True
+    )
 
     # --- Plot features with horizontal colorbar ---
     im0 = axs[0].imshow(
@@ -192,53 +194,11 @@ def plot_snapshot(
     cb1.set_label(r"$w(a)$")
 
     for ax in axs:
-        ax.label_outer()
         ax.set_xlabel(r"$x$")
         ax.set_ylabel(r"$y$")
+        ax.label_outer()
     plt.savefig("snapshot.png", dpi=300, bbox_inches="tight")
     plt.close()
-
-    # fig, axs = plt.subplots(1, 2, figsize=(12, 6), layout="constrained")
-    # vmin = min(hf_solution.min(), lf_solution.min())
-    # vmax = max(hf_solution.max(), lf_solution.max())
-    # axs[0].imshow(
-    #     hf_solution[idx_plot],
-    #     extent=(
-    #         domain[:, 0].min(),
-    #         domain[:, 0].max(),
-    #         domain[:, 1].min(),
-    #         domain[:, 1].max(),
-    #     ),
-    #     origin="lower",
-    #     aspect="auto",
-    #     vmin=vmin,
-    #     vmax=vmax,
-    #     interpolation="bilinear",
-    # )
-    # axs[0].set_title("High-fidelity")
-
-    # a2 = axs[1].imshow(
-    #     lf_solution[idx_plot],
-    #     extent=(
-    #         domain[:, 0].min(),
-    #         domain[:, 0].max(),
-    #         domain[:, 1].min(),
-    #         domain[:, 1].max(),
-    #     ),
-    #     origin="lower",
-    #     aspect="auto",
-    #     vmin=vmin,
-    #     vmax=vmax,
-    #     interpolation="bilinear",
-    # )
-    # fig.colorbar(a2, ax=axs[1], orientation="vertical", fraction=0.046, pad=0.04)
-    # axs[1].set_title("Low-fidelity")
-
-    # for ax in axs:
-    #     ax.label_outer()
-    #     ax.set_xlabel(r"$x$")
-    #     ax.set_ylabel(r"$y$")
-    # plt.savefig("snapshot.png", dpi=300, bbox_inches="tight")
 
 
 def plot_joint(lf_solution, hf_solution):
