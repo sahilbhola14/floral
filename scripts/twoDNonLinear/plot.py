@@ -11,10 +11,10 @@ import matplotlib.pyplot as plt
 plt.style.use("../journal.mplstyle")
 
 # Begin user input
-n_samples = 1000
-n_sensors = 10
-plot_idx = 6  # Select sample index
-plot_error = True  # Whether to plot error or not
+n_samples = 2000
+n_sensors = 1
+plot_idx = 2  # Select sample index
+plot_error = False  # Whether to plot error or not
 # End user input
 
 # Load data
