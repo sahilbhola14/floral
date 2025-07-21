@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(
     description="generate synthetic data for 1d model with correlation with the input",
 )
 parser.add_argument(
-    "-n", "--n_samples", type=int, default=2000, help="Number of samples to generate"
+    "-n", "--n_samples", type=int, default=3000, help="Number of samples to generate"
 )
 
 parser.add_argument(
@@ -47,19 +47,18 @@ def eval_high_fidelity_model(a: np.ndarray, domain: np.ndarray):
     Returns:
         np.ndarray: High fidelity solution, shape (n_samples, n_eval_points).
     """
+    x, y = domain[:, 0], domain[:, 1]
     # original
     # hf_solution = np.cos(a) * np.cos(domain[:, 1]) ** 2
 
-    # high frequency oscillations
-    hf_solution = np.cos(a) * np.cos(domain[:, 1]) ** 2 + 0.1 * np.sin(
-        20 * domain[:, 0]
-    )
-
-    # local sharp bump
+    # modified
     hf_solution = (
-        (1 + 0.5 * np.sin(3 * domain[:, 0])) * np.cos(a) * np.cos(domain[:, 1]) ** 2
-        + 0.1 * np.sin(20 * domain[:, 0])
-        + 0.05 * np.exp(-100 * (domain[:, 0] - 0.75) ** 2)
+        (1 + 0.5 * np.sin(3 * x) + 0.3 * np.sin(6 * y)) * np.cos(a) * np.cos(y) ** 2
+        + 0.1 * np.sin(25 * (x + y))  # diagonal high-freq oscillation
+        + 0.05
+        * np.exp(-150 * ((x - 0.75) ** 2 + (y - 0.25) ** 2))  # sharp Gaussian bump
+        + 0.03 * np.heaviside(np.sin(5 * y - 2 * x), 1.0)  # discontinuous stripe
+        + 0.02 * np.sign(np.sin(3 * x) * np.cos(2 * y))  # piecewise smooth oscillation
     )
 
     assert hf_solution.shape == a.shape
@@ -74,14 +73,21 @@ def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
     Returns:
         np.ndarray: Low fidelity solution, shape (n_samples, n_eval_points).
     """
+    x, y = domain[:, 0], domain[:, 1]
     # original
     # lf_solution = np.cos(a) * np.cos(domain[:, 1]) + domain[:, 0]
 
+    # modified
     lf_solution = (
-        np.cos(a) * np.cos(domain[:, 1])
-        + 0.5 * domain[:, 0]
-        + 0.05 * np.sin(10 * domain[:, 0]) * np.cos(5 * domain[:, 1])
+        np.cos(a) * np.cos(y)
+        + 0.5 * x
+        + 0.05 * np.sin(5 * x + 2 * y) * np.cos(3 * y)
+        - 0.02
+        * np.exp(
+            -30 * ((x - 0.25) ** 2 + (y - 0.75) ** 2)
+        )  # bump in different location
     )
+
     assert lf_solution.shape == a.shape
     return lf_solution
 
@@ -89,7 +95,20 @@ def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
 def sample_input_function(n_samples: int, domain: np.ndarray):
     """sample the input function"""
     k = np.random.uniform(args.k_range[0], args.k_range[1], n_samples).reshape(-1, 1)
-    return k * domain[:, 0] ** 2 - 4.0
+    x, y = domain[:, 0], domain[:, 1]
+    # original
+    # a = k * domain[:, 0] ** 2 - 4.0
+    # modfied
+    a = (
+        k
+        * (
+            x**2
+            + 0.5 * np.sin(3 * x**2) * np.cos(2 * y**3)
+            + 0.2 * np.sin(10 * x * y)
+        )
+        - 4.0
+    )
+    return a
 
 
 def plot_snapshot(
