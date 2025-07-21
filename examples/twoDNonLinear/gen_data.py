@@ -9,6 +9,7 @@ import numpy as np
 import argparse
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.stats import pearsonr
 
 # from scipy import interpolate
 plt.style.use("../../scripts/journal.mplstyle")
@@ -53,12 +54,12 @@ def eval_high_fidelity_model(a: np.ndarray, domain: np.ndarray):
 
     # modified
     hf_solution = (
-        (1 + 0.5 * np.sin(3 * x) + 0.3 * np.sin(6 * y)) * np.cos(a) * np.cos(y) ** 2
-        + 0.1 * np.sin(25 * (x + y))  # diagonal high-freq oscillation
+        (1 + 0.2 * np.sin(4 * x) + 0.3 * np.cos(5 * y)) * np.sin(3 * a + x - y)
+        + 0.1 * np.sin(30 * (a + x**2 - y**2))  # input-warped high freq
         + 0.05
-        * np.exp(-150 * ((x - 0.75) ** 2 + (y - 0.25) ** 2))  # sharp Gaussian bump
-        + 0.03 * np.heaviside(np.sin(5 * y - 2 * x), 1.0)  # discontinuous stripe
-        + 0.02 * np.sign(np.sin(3 * x) * np.cos(2 * y))  # piecewise smooth oscillation
+        * np.exp(-150 * ((a + 2.0) ** 2 + (x - 0.75) ** 2))  # sharp non-symmetric bump
+        + 0.05 * np.sign(np.sin(5 * a - 4 * x + 2 * y))  # nonlinear discontinuity
+        + 0.03 * np.heaviside(np.sin(6 * x * y + a), 1.0)  # location-specific jumps
     )
 
     assert hf_solution.shape == a.shape
@@ -79,13 +80,9 @@ def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
 
     # modified
     lf_solution = (
-        np.cos(a) * np.cos(y)
-        + 0.5 * x
-        + 0.05 * np.sin(5 * x + 2 * y) * np.cos(3 * y)
-        - 0.02
-        * np.exp(
-            -30 * ((x - 0.25) ** 2 + (y - 0.75) ** 2)
-        )  # bump in different location
+        np.sin(3 * a + x - y)
+        + 0.05 * np.sin(6 * x + 3 * y)
+        - 0.02 * np.exp(-20 * ((x - 0.25) ** 2 + (y - 0.8) ** 2))
     )
 
     assert lf_solution.shape == a.shape
@@ -103,8 +100,8 @@ def sample_input_function(n_samples: int, domain: np.ndarray):
         k
         * (
             x**2
-            + 0.5 * np.sin(3 * x**2) * np.cos(2 * y**3)
-            + 0.2 * np.sin(10 * x * y)
+            + 0.5 * np.sin(3 * x**2) * np.cos(2 * y**2)
+            + 0.1 * np.sin(10 * x * y)
         )
         - 4.0
     )
@@ -140,6 +137,7 @@ def plot_snapshot(
         aspect="auto",
         vmin=vmin,
         vmax=vmax,
+        interpolation="bilinear",
     )
     axs[0].set_title("High-fidelity")
 
@@ -155,6 +153,7 @@ def plot_snapshot(
         aspect="auto",
         vmin=vmin,
         vmax=vmax,
+        interpolation="bilinear",
     )
     fig.colorbar(a2, ax=axs[1], orientation="vertical", fraction=0.046, pad=0.04)
     axs[1].set_title("Low-fidelity")
@@ -168,15 +167,38 @@ def plot_snapshot(
 
 def plot_joint(lf_solution, hf_solution):
     """Plot joint distribution of high and low fidelity solutions"""
-    sns.jointplot(
-        x=lf_solution.flatten(),
-        y=hf_solution.flatten(),
-        kind="hex",
+
+    # Flatten data
+    x = lf_solution.flatten()
+    y = hf_solution.flatten()
+
+    # Compute Pearson correlation
+    r, _ = pearsonr(x, y)
+
+    # Create the plot
+    g = sns.jointplot(
+        x=x,
+        y=y,
+        kind="hex",  # You can also use "scatter" or "reg"
         color="blue",
         marginal_kws=dict(bins=50, fill=True),
     )
-    plt.xlabel("Low-fidelity Solution")
-    plt.ylabel("High-fidelity Solution")
+
+    # Add y = x line (diagonal)
+    g.ax_joint.plot([x.min(), x.max()], [x.min(), x.max()], "r--", lw=2)
+
+    # Annotate correlation
+    g.ax_joint.text(
+        0.05,
+        0.95,
+        f"$r = {r: .2f}$",
+        transform=g.ax_joint.transAxes,
+        fontsize=12,
+        verticalalignment="top",
+    )
+
+    # Labels and layout
+    g.set_axis_labels("Low-fidelity Solution", "High-fidelity Solution")
     plt.tight_layout()
     plt.savefig("joint_distribution.png", dpi=300, bbox_inches="tight")
 
