@@ -70,13 +70,6 @@ means = {
     "REGP": mean_regp,
 }
 
-errors = {
-    "FLORA": HF_field - mean_flora,
-    "FLOREN": HF_field - mean_floren,
-    "GP": HF_field - mean_gp,
-    "REGP": HF_field - mean_regp,
-}
-
 stds = {
     "FLORA": std_flora,
     "FLOREN": std_floren,
