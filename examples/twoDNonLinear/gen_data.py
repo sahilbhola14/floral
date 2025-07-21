@@ -152,7 +152,7 @@ def plot_snapshot(
         interpolation="bilinear",
     )
     axs[0].set_title("Input")
-    cb0 = fig.colorbar(im0, ax=axs[0], orientation="vertical", pad=0.1, shrink=0.5)
+    cb0 = fig.colorbar(im0, ax=axs[0], orientation="vertical", pad=0.01, shrink=0.5)
     cb0.set_label(r"$a(k)$")
 
     # --- Plot high-fidelity solution ---
@@ -190,7 +190,7 @@ def plot_snapshot(
     axs[2].set_title("Low-fidelity")
 
     # --- Shared vertical colorbar for hf and lf ---
-    cb1 = fig.colorbar(im2, ax=axs[1:], orientation="vertical", shrink=0.5, pad=0.1)
+    cb1 = fig.colorbar(im2, ax=axs[1:], orientation="vertical", shrink=0.5, pad=0.01)
     cb1.set_label(r"$w(a)$")
 
     for ax in axs:
