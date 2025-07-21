@@ -808,8 +808,11 @@ class GPDataModule:
         domain = n2t(domain)
 
         # Normalize the in_features (condition + domain)
-        domain_batch = domain.unsqueeze(0).repeat(len(condition), 1, 1).view(-1, 1)
+        domain_batch = (
+            domain.unsqueeze(0).repeat(len(condition), 1, 1).view(-1, self.nd)
+        )
         condition_batch = condition.view(-1, 1)
+        assert len(domain_batch) == len(condition_batch), "Incorrect shape."
         in_features = torch.cat([condition_batch, domain_batch], dim=1)
         in_features_mean = self.statistics["in_features"]["mean"]
         in_features_std = self.statistics["in_features"]["std"]
