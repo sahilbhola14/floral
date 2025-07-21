@@ -176,10 +176,18 @@ class InferenceGP:
         LF_field = self.test_config["LF_field"]
         HF_field = self.test_config["HF_field"]
         # Prediction
+        batch_size = 2000
+        pred_mean = []
+        pred_std = []
         with gpytorch.settings.fast_pred_var():
-            pred = self.model.likelihood(self.model(in_features))
-            pred_mean = pred.mean
-            pred_std = pred.stddev
+            for ii in range(0, in_features.size(0), batch_size):
+                in_features_batch = in_features[ii : ii + batch_size]
+                pred = self.model.likelihood(self.model(in_features_batch))
+                pred_mean.append(pred.mean)
+                pred_std.append(pred.stddev)
+        # Concatenate the predictions
+        pred_mean = torch.cat(pred_mean, dim=0)
+        pred_std = torch.cat(pred_std, dim=0)
         # Move to cpu
         pred_mean = pred_mean.to("cpu")
         pred_std = pred_std.to("cpu")
