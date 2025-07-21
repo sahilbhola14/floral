@@ -1,7 +1,7 @@
 # Configutations for 1-D Correlation
 
 job_name: "oneDCorr_10_samples_100_sensors" # Unique identifier for each run
-mfFlow: False # True means residual operator is learned
+mfFlow: True # True means residual operator is learned
 checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "oneDCorr" # Logger folder
