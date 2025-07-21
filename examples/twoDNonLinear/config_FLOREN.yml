@@ -21,7 +21,7 @@ data:
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   reload_sensors: False # If True, "sensor_location.pt" file will be used. If 'reload' is True, then it will reload anyways.
-  batch_size: 256 # batch size
+  batch_size: 1024 # batch size
   train_ratio: 0.7 # percentage of {n_samples} to train
   num_workers: 6 # Number of workers
   normalize:
