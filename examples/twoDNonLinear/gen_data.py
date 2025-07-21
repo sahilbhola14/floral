@@ -126,27 +126,19 @@ def plot_snapshot(
     hf_solution = hf_solution.reshape(-1, args.m_high, args.m_high)
     lf_solution = lf_solution.reshape(-1, args.m_high, args.m_high)
 
-    fig, axs = plt.subplots(1, 2, figsize=(12, 6), layout="constrained")
-    vmin = min(hf_solution.min(), lf_solution.min())
-    vmax = max(hf_solution.max(), lf_solution.max())
-    axs[0].imshow(
-        hf_solution[idx_plot],
-        extent=(
-            domain[:, 0].min(),
-            domain[:, 0].max(),
-            domain[:, 1].min(),
-            domain[:, 1].max(),
-        ),
-        origin="lower",
-        aspect="auto",
-        vmin=vmin,
-        vmax=vmax,
-        interpolation="bilinear",
-    )
-    axs[0].set_title("High-fidelity")
+    # plot field
+    features_plot = features[idx_plot]
+    hf_solution_plot = hf_solution[idx_plot]
+    lf_solution_plot = lf_solution[idx_plot]
 
-    a2 = axs[1].imshow(
-        lf_solution[idx_plot],
+    vmin = min(hf_solution_plot.min(), lf_solution_plot.min())
+    vmax = max(hf_solution_plot.max(), lf_solution_plot.max())
+
+    fig, axs = plt.subplots(1, 3, figsize=(12, 5), layout="constrained")
+
+    # --- Plot features with horizontal colorbar ---
+    im0 = axs[0].imshow(
+        features_plot,
         extent=(
             domain[:, 0].min(),
             domain[:, 0].max(),
@@ -154,19 +146,99 @@ def plot_snapshot(
             domain[:, 1].max(),
         ),
         origin="lower",
-        aspect="auto",
+        aspect="equal",
+        interpolation="bilinear",
+    )
+    axs[0].set_title("Input")
+    cb0 = fig.colorbar(im0, ax=axs[0], orientation="vertical", pad=0.1, shrink=0.6)
+    cb0.set_label(r"$a(k)$")
+
+    # --- Plot high-fidelity solution ---
+    axs[1].imshow(
+        hf_solution_plot,
+        extent=(
+            domain[:, 0].min(),
+            domain[:, 0].max(),
+            domain[:, 1].min(),
+            domain[:, 1].max(),
+        ),
+        origin="lower",
+        aspect="equal",
         vmin=vmin,
         vmax=vmax,
         interpolation="bilinear",
     )
-    fig.colorbar(a2, ax=axs[1], orientation="vertical", fraction=0.046, pad=0.04)
-    axs[1].set_title("Low-fidelity")
+    axs[1].set_title("High-fidelity")
+
+    # --- Plot low-fidelity solution ---
+    im2 = axs[2].imshow(
+        lf_solution_plot,
+        extent=(
+            domain[:, 0].min(),
+            domain[:, 0].max(),
+            domain[:, 1].min(),
+            domain[:, 1].max(),
+        ),
+        origin="lower",
+        aspect="equal",
+        vmin=vmin,
+        vmax=vmax,
+        interpolation="bilinear",
+    )
+    axs[2].set_title("Low-fidelity")
+
+    # --- Shared vertical colorbar for hf and lf ---
+    cb1 = fig.colorbar(im2, ax=axs[1:], orientation="vertical", shrink=0.6, pad=0.05)
+    cb1.set_label(r"$w(a)$")
 
     for ax in axs:
         ax.label_outer()
         ax.set_xlabel(r"$x$")
         ax.set_ylabel(r"$y$")
     plt.savefig("snapshot.png", dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # fig, axs = plt.subplots(1, 2, figsize=(12, 6), layout="constrained")
+    # vmin = min(hf_solution.min(), lf_solution.min())
+    # vmax = max(hf_solution.max(), lf_solution.max())
+    # axs[0].imshow(
+    #     hf_solution[idx_plot],
+    #     extent=(
+    #         domain[:, 0].min(),
+    #         domain[:, 0].max(),
+    #         domain[:, 1].min(),
+    #         domain[:, 1].max(),
+    #     ),
+    #     origin="lower",
+    #     aspect="auto",
+    #     vmin=vmin,
+    #     vmax=vmax,
+    #     interpolation="bilinear",
+    # )
+    # axs[0].set_title("High-fidelity")
+
+    # a2 = axs[1].imshow(
+    #     lf_solution[idx_plot],
+    #     extent=(
+    #         domain[:, 0].min(),
+    #         domain[:, 0].max(),
+    #         domain[:, 1].min(),
+    #         domain[:, 1].max(),
+    #     ),
+    #     origin="lower",
+    #     aspect="auto",
+    #     vmin=vmin,
+    #     vmax=vmax,
+    #     interpolation="bilinear",
+    # )
+    # fig.colorbar(a2, ax=axs[1], orientation="vertical", fraction=0.046, pad=0.04)
+    # axs[1].set_title("Low-fidelity")
+
+    # for ax in axs:
+    #     ax.label_outer()
+    #     ax.set_xlabel(r"$x$")
+    #     ax.set_ylabel(r"$y$")
+    # plt.savefig("snapshot.png", dpi=300, bbox_inches="tight")
 
 
 def plot_joint(lf_solution, hf_solution):
