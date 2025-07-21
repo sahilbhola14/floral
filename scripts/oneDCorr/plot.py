@@ -31,21 +31,21 @@ domain = data_mfFlow["domain"].ravel()
 LF_field = field_mfFlow.get("LF_field")[plot_idx]
 HF_field = field_mfFlow.get("HF_field")[plot_idx]
 
-Prediction_prono = field.get("Prediction")[plot_idx]
-mean_prono = Prediction_prono.mean(dim=0)
-std_prono = Prediction_prono.std(dim=0)
+Prediction_flora = field.get("Prediction")[plot_idx]
+mean_flora = Prediction_flora.mean(dim=0)
+std_flora = Prediction_flora.std(dim=0)
 
-Prediction_promino = field_mfFlow.get("Prediction")[plot_idx]
-mean_promino = Prediction_promino.mean(dim=0)
-std_promino = Prediction_promino.std(dim=0)
+Prediction_floren = field_mfFlow.get("Prediction")[plot_idx]
+mean_floren = Prediction_floren.mean(dim=0)
+std_floren = Prediction_floren.std(dim=0)
 
 Prediction_gp = field_gp.get("Prediction")
 mean_gp = Prediction_gp["mean"][plot_idx]
 std_gp = Prediction_gp["std"][plot_idx]
 
-Prediction_migp = field_gp_mfFlow.get("Prediction")
-mean_migp = Prediction_migp["mean"][plot_idx]
-std_migp = Prediction_migp["std"][plot_idx]
+Prediction_regp = field_gp_mfFlow.get("Prediction")
+mean_regp = Prediction_regp["mean"][plot_idx]
+std_regp = Prediction_regp["std"][plot_idx]
 
 # Set up 1x2 figure
 fig, axs = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
@@ -62,16 +62,16 @@ axs[0].legend()
 ax_main = axs[1]
 ax_main.plot(domain, HF_field, label="High-fidelity", color="k")
 
-ax_main.plot(domain, mean_prono, label="FLORA", color="green", linestyle="--")
+ax_main.plot(domain, mean_flora, label="FLORA", color="green", linestyle="--")
 ax_main.fill_between(
-    domain, mean_prono - std_prono, mean_prono + std_prono, color="green", alpha=0.2
+    domain, mean_flora - std_flora, mean_flora + std_flora, color="green", alpha=0.2
 )
 
-ax_main.plot(domain, mean_promino, label="FLOREN", color="red", linestyle="--")
+ax_main.plot(domain, mean_floren, label="FLOREN", color="red", linestyle="--")
 ax_main.fill_between(
     domain,
-    mean_promino - std_promino,
-    mean_promino + std_promino,
+    mean_floren - std_floren,
+    mean_floren + std_floren,
     color="red",
     alpha=0.2,
 )
@@ -81,9 +81,9 @@ ax_main.fill_between(
     domain, mean_gp - std_gp, mean_gp + std_gp, color="orange", alpha=0.2
 )
 
-ax_main.plot(domain, mean_migp, label="REGP", color="blue", linestyle="--")
+ax_main.plot(domain, mean_regp, label="REGP", color="blue", linestyle="--")
 ax_main.fill_between(
-    domain, mean_migp - std_migp, mean_migp + std_migp, color="blue", alpha=0.2
+    domain, mean_regp - std_regp, mean_regp + std_regp, color="blue", alpha=0.2
 )
 
 # ax_main.set_title("Method Comparison")
@@ -124,16 +124,16 @@ y2 += y_margin
 
 # Same plots inside the inset
 axins.plot(domain, HF_field, color="k")
-axins.plot(domain, mean_prono, color="green", linestyle="--")
+axins.plot(domain, mean_flora, color="green", linestyle="--")
 axins.fill_between(
-    domain, mean_prono - std_prono, mean_prono + std_prono, color="green", alpha=0.2
+    domain, mean_flora - std_flora, mean_flora + std_flora, color="green", alpha=0.2
 )
 
-axins.plot(domain, mean_promino, color="red", linestyle="--")
+axins.plot(domain, mean_floren, color="red", linestyle="--")
 axins.fill_between(
     domain,
-    mean_promino - std_promino,
-    mean_promino + std_promino,
+    mean_floren - std_floren,
+    mean_floren + std_floren,
     color="red",
     alpha=0.2,
 )
@@ -143,9 +143,9 @@ axins.fill_between(
     domain, mean_gp - std_gp, mean_gp + std_gp, color="orange", alpha=0.2
 )
 
-axins.plot(domain, mean_migp, color="blue", linestyle="--")
+axins.plot(domain, mean_regp, color="blue", linestyle="--")
 axins.fill_between(
-    domain, mean_migp - std_migp, mean_migp + std_migp, color="blue", alpha=0.2
+    domain, mean_regp - std_regp, mean_regp + std_regp, color="blue", alpha=0.2
 )
 
 axins.set_xlim(x1, x2)
