@@ -1,13 +1,14 @@
 # examples/twoDNonLinear/gen_data.py
 """
 Implementation of the 2D model with non-linear correlation as described in the paper.
-Reference: Thakur, A., Tripura, T. and Chakraborty, S., 2022.
+Modified from Thakur, A., Tripura, T. and Chakraborty, S., 2022.
 Multi-fidelity wavelet neural operator with application to uncertainty quantification.
 arXiv preprint arXiv:2208.05606.
 """
 import numpy as np
 import argparse
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 # from scipy import interpolate
 plt.style.use("../../scripts/journal.mplstyle")
@@ -39,19 +40,56 @@ print(f"Generating {args.n_samples} samples")
 
 
 def eval_high_fidelity_model(a: np.ndarray, domain: np.ndarray):
-    """Evaluate the high fidelity model at a given point x with parameters a."""
-    return np.cos(a) * np.cos(domain[:, 1]) ** 2
+    """Evaluate the high fidelity model at a given point x with parameters a.
+    Args:
+        a (np.ndarray): Input feature, shape (n_samples, n_eval_points).
+        domain (np.ndarray): Domain points, shape (n_eval_points, 2).
+    Returns:
+        np.ndarray: High fidelity solution, shape (n_samples, n_eval_points).
+    """
+    # original
+    # hf_solution = np.cos(a) * np.cos(domain[:, 1]) ** 2
+
+    # high frequency oscillations
+    hf_solution = np.cos(a) * np.cos(domain[:, 1]) ** 2 + 0.1 * np.sin(
+        20 * domain[:, 0]
+    )
+
+    # local sharp bump
+    hf_solution = (
+        (1 + 0.5 * np.sin(3 * domain[:, 0])) * np.cos(a) * np.cos(domain[:, 1]) ** 2
+        + 0.1 * np.sin(20 * domain[:, 0])
+        + 0.05 * np.exp(-100 * (domain[:, 0] - 0.75) ** 2)
+    )
+
+    assert hf_solution.shape == a.shape
+    return hf_solution
 
 
 def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
-    """Evaluate the low fidelity model at a given point x with parameters a."""
-    return np.cos(a) * np.cos(domain[:, 1]) + domain[:, 0]
+    """Evaluate the low fidelity model at a given point x with parameters a.
+    Args:
+        a (np.ndarray): Input feature, shape (n_samples, n_eval_points).
+        domain (np.ndarray): Domain points, shape (n_eval_points, 2).
+    Returns:
+        np.ndarray: Low fidelity solution, shape (n_samples, n_eval_points).
+    """
+    # original
+    # lf_solution = np.cos(a) * np.cos(domain[:, 1]) + domain[:, 0]
+
+    lf_solution = (
+        np.cos(a) * np.cos(domain[:, 1])
+        + 0.5 * domain[:, 0]
+        + 0.05 * np.sin(10 * domain[:, 0]) * np.cos(5 * domain[:, 1])
+    )
+    assert lf_solution.shape == a.shape
+    return lf_solution
 
 
 def sample_input_function(n_samples: int, domain: np.ndarray):
     """sample the input function"""
     k = np.random.uniform(args.k_range[0], args.k_range[1], n_samples).reshape(-1, 1)
-    return k * domain[:, 0] - 4.0
+    return k * domain[:, 0] ** 2 - 4.0
 
 
 def plot_snapshot(
@@ -109,6 +147,21 @@ def plot_snapshot(
     plt.savefig("snapshot.png", dpi=300, bbox_inches="tight")
 
 
+def plot_joint(lf_solution, hf_solution):
+    """Plot joint distribution of high and low fidelity solutions"""
+    sns.jointplot(
+        x=lf_solution.flatten(),
+        y=hf_solution.flatten(),
+        kind="hex",
+        color="blue",
+        marginal_kws=dict(bins=50, fill=True),
+    )
+    plt.xlabel("Low-fidelity Solution")
+    plt.ylabel("High-fidelity Solution")
+    plt.tight_layout()
+    plt.savefig("joint_distribution.png", dpi=300, bbox_inches="tight")
+
+
 def generate():
     """generate the data"""
     x = np.linspace(0, 1, args.m_high)
@@ -125,6 +178,9 @@ def generate():
     lf_solution = eval_low_fidelity_model(
         features, domain
     )  # evaluate low fidelity model
+
+    # plot joint distribution
+    plot_joint(lf_solution, hf_solution)
 
     high_data = {
         "field": hf_solution[: args.n_samples],  # only high fidelity for training,
