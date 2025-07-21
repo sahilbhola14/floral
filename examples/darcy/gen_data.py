@@ -413,94 +413,82 @@ def plot_snapshot(
 
     # Extract the plot data
     K_high_plot = K_high[idx_plot]
-    K_low_plot = K_low[idx_plot]
-    K_recon_plot = K_recon[idx_plot]
+    # K_low_plot = K_low[idx_plot]
+    # K_recon_plot = K_recon[idx_plot]
     P_high_plot = P_high[idx_plot]
     P_low_plot = P_low[idx_plot]
     P_recon_plot = P_recon[idx_plot]
-    labels = ["High-fidelity", "Low-fidelity", "Reconstructed low-fidelity"]
 
-    vmin_K = min(K_high_plot.min(), K_low_plot.min(), K_recon_plot.min())
-    vmax_K = max(K_high_plot.max(), K_low_plot.max(), K_recon_plot.max())
+    # vmin_K = min(K_high_plot.min(), K_low_plot.min(), K_recon_plot.min())
+    # vmax_K = max(K_high_plot.max(), K_low_plot.max(), K_recon_plot.max())
     vmin_P = min(P_high_plot.min(), P_low_plot.min(), P_recon_plot.min())
     vmax_P = max(P_high_plot.max(), P_low_plot.max(), P_recon_plot.max())
 
-    # permeability fields
-    ax_K = axs[0, 0].imshow(
+    fig, axs = plt.subplots(
+        1, 4, figsize=(16, 4), dpi=300, layout="constrained", sharex=True, sharey=True
+    )
+
+    # --- Plot features with colorbars ---
+    im0 = axs[0].imshow(
         K_high_plot,
         extent=(0, 1, 0, 1),
         origin="lower",
-        vmin=vmin_K,
-        vmax=vmax_K,
-        aspect="auto",
+        aspect="equal",
         interpolation="bilinear",
     )
-    axs[0, 1].imshow(
-        K_low_plot,
-        extent=(0, 1, 0, 1),
-        origin="lower",
-        vmin=vmin_K,
-        vmax=vmax_K,
-        aspect="auto",
-        interpolation="bilinear",
+    axs[0].set_title(r"Permeability, $K$")
+    cb0 = fig.colorbar(
+        im0, ax=axs[0], orientation="vertical", pad=0.01, shrink=0.5, aspect=10
     )
-    axs[0, 2].imshow(
-        K_recon_plot,
-        extent=(0, 1, 0, 1),
-        origin="lower",
-        vmin=vmin_K,
-        vmax=vmax_K,
-        aspect="auto",
-        interpolation="bilinear",
-    )
+    cb0.set_label(r"$K$")
 
-    # pressure fields
-    ax_P = axs[1, 0].imshow(
+    # --- Plot high-fidelity pressure field ---
+    axs[1].imshow(
         P_high_plot,
         extent=(0, 1, 0, 1),
         origin="lower",
+        aspect="equal",
+        interpolation="bilinear",
         vmin=vmin_P,
         vmax=vmax_P,
-        aspect="auto",
-        interpolation="bilinear",
     )
-    axs[1, 1].imshow(
+    axs[1].set_title(r"High-fidelity")
+
+    # # --- Plot low-fidelity pressure field ---
+    axs[2].imshow(
         P_low_plot,
         extent=(0, 1, 0, 1),
         origin="lower",
+        aspect="equal",
+        interpolation="nearest",
         vmin=vmin_P,
         vmax=vmax_P,
-        aspect="auto",
-        interpolation="bilinear",
     )
-    axs[1, 2].imshow(
+    axs[2].set_title(r"Low-fidelity")
+
+    # --- Plot reconstructed low-fidelity pressure field ---
+    im3 = axs[3].imshow(
         P_recon_plot,
         extent=(0, 1, 0, 1),
         origin="lower",
+        aspect="equal",
+        interpolation="bilinear",
         vmin=vmin_P,
         vmax=vmax_P,
-        aspect="auto",
-        interpolation="bilinear",
     )
+    axs[3].set_title(r"Reconstruction from low-fidelity")
 
-    # Add colorbar for row 0 (K - permeability)
-    cbar_ax_K = fig.add_axes([1, 0.56, 0.015, 0.34])  # [left, bottom, width, height]
-    cbar_K = fig.colorbar(ax_K, cax=cbar_ax_K)
-    cbar_K.set_label(r"$K$ (permeability)")
-
-    # Add colorbar for row 1 (P - pressure)
-    cbar_ax_P = fig.add_axes([1, 0.11, 0.015, 0.34])  # adjust to match lower row
-    cbar_P = fig.colorbar(ax_P, cax=cbar_ax_P)
-    cbar_P.set_label(r"$P$ (pressure)")
+    # --- Add colorbars for pressure plots ---
+    cb1 = fig.colorbar(
+        im3, ax=axs[1:], orientation="vertical", pad=0.01, shrink=0.5, aspect=10
+    )
+    cb1.set_label(r"Pressure, $P(K)$")
 
     for ii, ax in enumerate(axs.flatten()):
         # plot outer labels
         ax.set_xlabel(r"$x$")
         ax.set_ylabel(r"$y$")
         ax.label_outer()
-        # add title
-        if ii // 3 == 0:
-            ax.set_title(labels[ii])
 
     plt.savefig("snapshot.png")
     plt.close()
