@@ -28,6 +28,11 @@ field_gp_mfFlow = data_gp_mfFlow["field"]
 
 n_samples = len(field.get("Prediction"))
 
+# check that all fields have the same number of samples
+assert n_samples == len(field_mfFlow.get("Prediction"))
+assert n_samples == len(field_gp.get("Prediction")["mean"])
+assert n_samples == len(field_gp_mfFlow.get("Prediction")["mean"])
+
 # Ordered list of methods
 method_order = ["FLORA", "FLOREN", "GP", "REGP"]
 
