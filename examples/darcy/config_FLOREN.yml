@@ -1,7 +1,7 @@
 # Configutations for Darcy Flow
 
 job_name: "Darcy_100_samples_500_sensors" # Unique identifier for each run
-mfFlow: False # True means residual operator is learned
+mfFlow: True # True means residual operator is learned
 checkpoint_save_path: "./experiments/Darcy/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "Darcy" # Logger folder
@@ -30,8 +30,8 @@ dataloader:
 
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
-  accelerator: 'cpu'
-  devices: 1
+  accelerator: 'gpu'
+  devices: 4
   strategy: 'ddp'
   precision: 'bf16-mixed'
   max_epochs: 5
