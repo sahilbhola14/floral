@@ -33,7 +33,7 @@ parser.add_argument(
     help="Number of discretization points for high fidelity",
 )
 parser.add_argument(
-    "--k_range", type=list, default=[2, 10], help="Range of k values to sample from"
+    "--k_range", type=list, default=[-2, 2], help="Range of k values to sample from"
 )
 args = parser.parse_args()
 
@@ -97,11 +97,18 @@ def sample_input_function(n_samples: int, domain: np.ndarray):
     # a = k * x ** 2 - 4.0
     # modfied
     a = (
-        np.sin(k * x**2) * np.cos(k * y**2)
-        + 0.3 * np.sin(0.5 * k**2 * x * y)
-        + 0.2 * np.tanh(0.3 * k * (x + y))
-        - 4.0
+        (
+            np.sin(k * x**2) * np.cos(k * y**2)
+            + 0.3 * np.sin(0.5 * k**2 * x * y)
+            + 0.2 * np.tanh(0.3 * k * (x + y))
+            - 4.0
+        )
+        + 0.15 * k**2 * x**3 * y
+        - 0.1 * k * x * y**3
     )
+
+    a += 0.25 * (x**2 - y**2) * np.cos(k * x * y)
+
     return a
 
 
