@@ -48,19 +48,19 @@ def eval_high_fidelity_model(a: np.ndarray, domain: np.ndarray):
     Returns:
         np.ndarray: High fidelity solution, shape (n_samples, n_eval_points).
     """
-    x, y = domain[:, 0], domain[:, 1]
+    y = domain[:, 1]
     # original
-    # hf_solution = np.cos(a) * np.cos(y) ** 2
+    hf_solution = np.cos(a) * np.cos(y) ** 2
 
     # modified
-    hf_solution = (
-        (1 + 0.2 * np.sin(4 * x) + 0.3 * np.cos(5 * y)) * np.sin(3 * a + x - y)
-        + 0.1 * np.sin(30 * (a + x**2 - y**2))  # input-warped high freq
-        + 0.05
-        * np.exp(-150 * ((a + 2.0) ** 2 + (x - 0.75) ** 2))  # sharp non-symmetric bump
-        + 0.05 * np.sign(np.sin(5 * a - 4 * x + 2 * y))  # nonlinear discontinuity
-        + 0.03 * np.heaviside(np.sin(6 * x * y + a), 1.0)  # location-specific jumps
-    )
+    # hf_solution = (
+    #     (1 + 0.2 * np.sin(4 * x) + 0.3 * np.cos(5 * y)) * np.sin(3 * a + x - y)
+    #     + 0.1 * np.sin(30 * (a + x**2 - y**2))  # input-warped high freq
+    #     + 0.05
+    #     * np.exp(-150 * ((a + 2.0) ** 2 + (x - 0.75) ** 2))  # non-symmetric bump
+    #     + 0.05 * np.sign(np.sin(5 * a - 4 * x + 2 * y))  # nonlinear discontinuity
+    #     + 0.03 * np.heaviside(np.sin(6 * x * y + a), 1.0)  # location-specific jumps
+    # )
 
     assert hf_solution.shape == a.shape
     return hf_solution
@@ -76,14 +76,14 @@ def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
     """
     x, y = domain[:, 0], domain[:, 1]
     # original
-    # lf_solution = np.cos(a) * np.cos(y) + x
+    lf_solution = np.cos(a) * np.cos(y) + x
 
     # modified
-    lf_solution = (
-        np.sin(3 * a + x - y)
-        + 0.05 * np.sin(6 * x + 3 * y)
-        - 0.02 * np.exp(-20 * ((x - 0.25) ** 2 + (y - 0.8) ** 2))
-    )
+    # lf_solution = (
+    #     np.sin(3 * a + x - y)
+    #     + 0.05 * np.sin(6 * x + 3 * y)
+    #     - 0.02 * np.exp(-20 * ((x - 0.25) ** 2 + (y - 0.8) ** 2))
+    # )
 
     assert lf_solution.shape == a.shape
     return lf_solution
@@ -92,22 +92,48 @@ def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
 def sample_input_function(n_samples: int, domain: np.ndarray):
     """sample the input function"""
     k = np.random.uniform(args.k_range[0], args.k_range[1], n_samples).reshape(-1, 1)
-    x, y = domain[:, 0], domain[:, 1]
+    x = domain[:, 0]
     # original
-    # a = k * x ** 2 - 4.0
-    # modfied
-    a = (
-        (
-            np.sin(k * x**2) * np.cos(k * y**2)
-            + 0.3 * np.sin(0.5 * k**2 * x * y)
-            + 0.2 * np.tanh(0.3 * k * (x + y))
-            - 4.0
-        )
-        + 0.15 * k**2 * x**3 * y
-        - 0.1 * k * x * y**3
-    )
+    a = k * x - 4.0
 
-    a += 0.25 * (x**2 - y**2) * np.cos(k * x * y)
+    # modified (1)
+    # a = k * x * y - 4.0
+
+    # modfied
+    # a = (
+    #     (
+    #         np.sin(k * x**2) * np.cos(k * y**2)
+    #         + 0.3 * np.sin(0.5 * k**2 * x * y)
+    #         + 0.2 * np.tanh(0.3 * k * (x + y))
+    #         - 4.0
+    #     )
+    #     + 0.15 * k**2 * x**3 * y
+    #     - 0.1 * k * x * y**3
+    # )
+
+    # a += 0.25 * (x**2 - y**2) * np.cos(k * x * y)
+
+    idx_plot = np.random.choice(len(a), 10, replace=False)
+    fig, ax = plt.subplots(
+        2, 5, figsize=(10, 4), layout="constrained", sharex=True, sharey=True, dpi=300
+    )
+    for i, ax_ in enumerate(ax.flat):
+        ax_.imshow(
+            a[idx_plot[i]].reshape(args.m_high, args.m_high),
+            extent=(
+                domain[:, 0].min(),
+                domain[:, 0].max(),
+                domain[:, 1].min(),
+                domain[:, 1].max(),
+            ),
+            origin="lower",
+            aspect="equal",
+            interpolation="bilinear",
+        )
+        ax_.set_xlabel(r"$x$")
+        ax_.set_ylabel(r"$y$")
+        ax_.label_outer()
+    plt.savefig("input_function_samples.png", dpi=300)
 
     return a
 
