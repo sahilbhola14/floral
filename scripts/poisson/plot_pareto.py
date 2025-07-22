@@ -33,7 +33,7 @@ assert n_samples == len(field_gp.get("Prediction")["mean"])
 assert n_samples == len(field_gp_mfFlow.get("Prediction")["mean"])
 
 # Ordered list of methods
-method_order = ["FLORA", "FLOREN", "GP", "REGP"]
+method_order = ["FLORA", "FLOREN", "GP", "REGP", "Low-fidelity"]
 
 # Containers for results
 error_rows = []
@@ -48,12 +48,14 @@ for ii in range(n_samples):
         "FLOREN": field_mfFlow.get("Prediction")[ii],
         "GP": field_gp.get("Prediction")["mean"][ii],
         "REGP": field_gp_mfFlow.get("Prediction")["mean"][ii],
+        "Low-fidelity": field.get("LF_field")[ii],
     }
     stds = {
         "FLORA": field.get("Prediction")[ii].std(dim=0).mean().item(),
         "FLOREN": field_mfFlow.get("Prediction")[ii].std(dim=0).mean().item(),
         "GP": field_gp.get("Prediction")["std"][ii].mean().item(),
         "REGP": field_gp_mfFlow.get("Prediction")["std"][ii].mean().item(),
+        "Low-fidelity": 0.0,
     }
 
     # Means
@@ -62,6 +64,7 @@ for ii in range(n_samples):
         "FLOREN": predictions["FLOREN"].mean(dim=0),
         "GP": predictions["GP"],
         "REGP": predictions["REGP"],
+        "Low-fidelity": predictions["Low-fidelity"],
     }
 
     for method in method_order:
@@ -101,10 +104,10 @@ ax = sns.scatterplot(
     edgecolor="black",
 )
 
-ax.legend(title="")
+ax.legend(title="", loc="lower right")
 
 # Annotate each point with method name
-label_offset_x = 0.01
+label_offset_x = 0.012
 label_offset_y = 0.005
 
 for _, row in summary_df.iterrows():
@@ -122,6 +125,7 @@ plt.ylabel("L2 Error")
 plt.grid(True, linestyle="--", alpha=0.5)
 plt.xlim(right=0.6)
 # plt.ylim(bottom=0.0, top=12)
+plt.yscale("log")
 plt.tight_layout()
 plt.savefig("L2_vs_Uncertainty.png", dpi=300)
 plt.close()
