@@ -1,0 +1,28 @@
+#hyper parameters sweep config for wandb
+method: bayes # Options: "bayes", "random", "grid"
+
+metric:
+  name: val_loss
+  goal: minimize
+
+parameters:
+  learning_rate: # learning rate for the optimizer
+    distribution: log_uniform_values
+    min: 1.0e-4
+    max: 1.0e-2
+  batch_size: # batch size
+    values: [16, 32, 64, 256]
+  max_epochs: # max epochs (limited for testing)
+    value: 5
+  optimizer: # optimizer
+    values: ["Adam", "SGD", "AdamW"]
+  weight_decay: # weight decay for scheduler
+    distribution: log_uniform_values
+    min: 1.0e-6
+    max: 1.0e-2
+  latent_dim: # latent dim for flow model
+    values: [5, 10, 15, 20, 30]
+  num_centers: # number of centers for RBF encoding
+    values: [10, 20, 30, 35, 40]
+  time_emb_freq: # time embedding freqency
+    values: [2, 4, 6]
