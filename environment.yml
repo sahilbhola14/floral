@@ -19,3 +19,4 @@ dependencies:
     - gpytorch==1.14
     - tensorboard==2.20.0
     - torchdiffeq==0.2.5
+    - wandb==0.21.0
