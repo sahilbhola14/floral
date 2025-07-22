@@ -12,102 +12,170 @@ plt.style.use("../journal.mplstyle")
 
 # Begin user input
 n_samples = 1000
-n_sensors = 10
-plot_idx = 6  # Select sample index
+n_sensors = 50
+# plot_idx = 2  # Select sample index (found automatically)
+plot_error = True  # Whether to plot error or not
 # End user input
 
+
+def find_best_idx(true, prediction):
+    """
+    Find the index with smallest error between true and predicted values.
+    """
+    assert (
+        true.shape == prediction.shape
+    ), "True and prediction must have the same shape."
+    error = (true - prediction).abs().mean(dim=1)
+    return error.argmin().item()
+
+
+print(f"Plotting fields for {n_samples} samples and {n_sensors} sensors...")
+
 # Load data
-# data = torch.load(f"Darcy_{n_samples}_samples_{n_sensors}_sensors_results.pt")
-# data_mfFlow = torch.load(
-#     f"Darcy_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt"
-# )
+data = torch.load(f"Darcy_{n_samples}_samples_{n_sensors}_sensors_results.pt")
+data_mfFlow = torch.load(
+    f"Darcy_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt"
+)
 data_gp = torch.load(f"Darcy_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt")
 data_gp_mfFlow = torch.load(
     f"Darcy_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt"
 )
 
-# field = data["field"]
-# field_mfFlow = data_mfFlow["field"]
+field = data["field"]
+field_mfFlow = data_mfFlow["field"]
 field_gp = data_gp["field"]
 field_gp_mfFlow = data_gp_mfFlow["field"]
 
-# domain = data_mfFlow["domain"].ravel()
+domain = data_mfFlow["domain"].ravel()
+
+# Find the best idx
+plot_idx = find_best_idx(
+    true=field.get("HF_field"), prediction=field_mfFlow.get("Prediction").mean(1)
+)
 
 # Extract relevant data
-# LF_field = field_mfFlow.get("LF_field")[plot_idx]
-# HF_field = field_mfFlow.get("HF_field")[plot_idx]
+LF_field = field_gp.get("LF_field")[plot_idx]
+HF_field = field_gp.get("HF_field")[plot_idx]
 
-# Prediction_prono = field.get("Prediction")[plot_idx]
-# mean_prono = Prediction_prono.mean(dim=0)
-# std_prono = Prediction_prono.std(dim=0)
+Prediction_flora = field.get("Prediction")[plot_idx]
+mean_flora = Prediction_flora.mean(dim=0)
+std_flora = Prediction_flora.std(dim=0)
 
-# Prediction_promino = field_mfFlow.get("Prediction")[plot_idx]
-# mean_promino = Prediction_promino.mean(dim=0)
-# std_promino = Prediction_promino.std(dim=0)
+Prediction_floren = field_mfFlow.get("Prediction")[plot_idx]
+mean_floren = Prediction_floren.mean(dim=0)
+std_floren = Prediction_floren.std(dim=0)
 
 Prediction_gp = field_gp.get("Prediction")
 mean_gp = Prediction_gp["mean"][plot_idx]
 std_gp = Prediction_gp["std"][plot_idx]
 
-Prediction_migp = field_gp_mfFlow.get("Prediction")
-mean_migp = Prediction_migp["mean"][plot_idx]
-std_migp = Prediction_migp["std"][plot_idx]
+Prediction_regp = field_gp_mfFlow.get("Prediction")
+mean_regp = Prediction_regp["mean"][plot_idx]
+std_regp = Prediction_regp["std"][plot_idx]
 
-image_dim = int(math.sqrt(mean_migp.shape[-1]))
-assert image_dim * image_dim == mean_migp.shape[-1]
+image_dim = int(math.sqrt(mean_regp.shape[-1]))
+assert image_dim * image_dim == mean_regp.shape[-1]
 
-mean_vmin = min(mean_gp.min(), mean_migp.min())
-mean_vmax = max(mean_gp.max(), mean_migp.max())
 
-std_vmin = min(std_gp.log10().min(), std_migp.log10().min())
-std_vmax = max(std_gp.log10().max(), std_migp.log10().max())
-# std_vmin, std_vmax = 0, 1
+# Ordered list of methods
+method_order = ["FLORA", "FLOREN", "GP", "REGP"]
 
-# Set up 1x2 figure
+# container fo results
+means = {
+    "FLORA": mean_flora,
+    "FLOREN": mean_floren,
+    "GP": mean_gp,
+    "REGP": mean_regp,
+}
+
+stds = {
+    "FLORA": std_flora,
+    "FLOREN": std_floren,
+    "GP": std_gp,
+    "REGP": std_regp,
+}
+
+# plots
+# range of values for mean and std
+mean_vmin, mean_vmax = float("inf"), float("-inf")
+std_vmin, std_vmax = float("inf"), float("-inf")
+for ii, method in enumerate(method_order):
+    if plot_error:
+        mean_vmin = min(mean_vmin, (HF_field - means[method]).min())
+        mean_vmax = max(mean_vmax, (HF_field - means[method]).max())
+        # mean_vmin, mean_vmax = (
+        #     -0.1,
+        #     0.1,
+        # )  # manually set for error plots to visualization
+        std_vmin = min(std_vmin, stds[method].log10().min())
+        std_vmax = max(std_vmax, stds[method].log10().max())
+    else:
+        mean_vmin = min(mean_vmin, means[method].min())
+        mean_vmax = max(mean_vmax, means[method].max())
+        std_vmin = min(std_vmin, stds[method].log10().min())
+        std_vmax = max(std_vmax, stds[method].log10().max())
+
+fig, axs = plt.subplots(
+    1, 2, figsize=(10, 5), dpi=300, constrained_layout=True, sharex=True, sharey=True
+)
+axs[0].imshow(
+    HF_field.view(image_dim, image_dim),
+    origin="lower",
+    vmin=mean_vmin,
+    vmax=mean_vmax,
+    interpolation="bilinear",
+)
+axs[0].set_title("High-fidelity")
+axs[1].imshow(
+    LF_field.view(image_dim, image_dim),
+    origin="lower",
+    vmin=mean_vmin,
+    vmax=mean_vmax,
+    interpolation="bilinear",
+)
+axs[1].set_title("Low-fidelity")
+plt.savefig("Darcy_HF_LF_fields.png")
+
 fig, axs = plt.subplots(
     2, 4, figsize=(12, 5), sharey=True, sharex=True, constrained_layout=True, dpi=300
 )
 
-# --- GP (Without Multi-fidelity) ---
-ax_mean = axs[0, 2].imshow(
-    mean_gp.view(image_dim, image_dim),
-    extent=(0, 1, 0, 1),
-    origin="lower",
-    aspect="equal",
-    vmin=mean_vmin,
-    vmax=mean_vmax,
-)
-ax_std = axs[1, 2].imshow(
-    std_gp.view(image_dim, image_dim).log10(),
-    extent=(0, 1, 0, 1),
-    origin="lower",
-    aspect="equal",
-    vmin=std_vmin,
-    vmax=std_vmax,
-)
-
-# --- GP (With Multi-fidelity) ---
-axs[0, 3].imshow(
-    mean_migp.view(image_dim, image_dim),
-    extent=(0, 1, 0, 1),
-    origin="lower",
-    aspect="equal",
-    vmin=mean_vmin,
-    vmax=mean_vmax,
-)
-axs[1, 3].imshow(
-    std_migp.view(image_dim, image_dim).log10(),
-    extent=(0, 1, 0, 1),
-    origin="lower",
-    aspect="equal",
-    vmin=std_vmin,
-    vmax=std_vmax,
-)
+for ii, method in enumerate(method_order):
+    # plot mean
+    plot_mean = (
+        (HF_field - means[method]).view(image_dim, image_dim)
+        if plot_error
+        else means[method].view(image_dim, image_dim)
+    )
+    ax_mean = axs[0, ii].imshow(
+        plot_mean,
+        extent=(0, 1, 0, 1),
+        origin="lower",
+        aspect="equal",
+        vmin=mean_vmin,
+        vmax=mean_vmax,
+        interpolation="bilinear",
+    )
+    # plot std
+    plot_std = stds[method].view(image_dim, image_dim).log10()
+    ax_std = axs[1, ii].imshow(
+        plot_std,
+        extent=(0, 1, 0, 1),
+        origin="lower",
+        aspect="equal",
+        vmin=std_vmin,
+        vmax=std_vmax,
+        interpolation="bilinear",
+    )
+    # set titles
+    axs[0, ii].set_title(method)
 
 # Add colorbar for row 0 (mean)
 cbar_ax_mean = fig.add_axes([1, 0.56, 0.015, 0.34])  # [left, bottom, width, height]
 cbar_mean = fig.colorbar(ax_mean, cax=cbar_ax_mean)
-cbar_mean.set_label(r"$w(a) - \hat{w}(a)$")
+cbar_mean.set_label(r"$P(K) - \hat{P}(K)$") if plot_error else cbar_mean.set_label(
+    r"$\hat{P}(K)$"
+)
 
 # Add colorbar for row 1 (std)
 cbar_ax_std = fig.add_axes([1, 0.11, 0.015, 0.34])  # adjust to match lower row
@@ -122,11 +190,3 @@ for ii, ax in enumerate(axs.flatten()):
 
 plt.savefig("Darcy_comparison.png")
 plt.close()
-# ---
-# ---
-
-
-# # Final layout
-# plt.tight_layout()
-# plt.savefig("Darcy_comparison.png", dpi=300)
-# plt.close()
