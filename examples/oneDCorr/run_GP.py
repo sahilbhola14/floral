@@ -26,6 +26,10 @@ args = parser.parse_args()
 config = OmegaConf.load(args.config)
 printer(f"Running oneDCorr with configuration: {args.config}")
 printer(f"Using mfFlow: {config.mfFlow} and job name: {config.job_name}")
+printer(
+    f"Number of samples: {config.data.high_fidelity.n_samples} "
+    f"sensors: {config.data.high_fidelity.n_sensors}"
+)
 
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
