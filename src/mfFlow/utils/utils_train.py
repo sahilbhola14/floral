@@ -20,15 +20,16 @@ def n2t(array: np.ndarray) -> torch.Tensor:
 
 def get_trainer(checkpointer, logger_name: str, train_config: dict):
     """Get a PyTorch Lightning Trainer with the specified configuration."""
+    assert isinstance(train_config, dict), "train_config must be a dictionary."
     # get the logger
     logger = get_logger(logger_name)
     # trainer
     trainer = L.Trainer(
         logger=logger,
-        max_epochs=train_config.max_epochs,
-        devices=train_config.devices,
-        accelerator=train_config.accelerator,
-        strategy=train_config.strategy,
+        max_epochs=train_config["max_epochs"],
+        devices=train_config["devices"],
+        accelerator=train_config["accelerator"],
+        strategy=train_config["strategy"],
         callbacks=[checkpointer],
     )
 
@@ -79,6 +80,9 @@ class OpDataModule(L.LightningDataModule):
         self.n_sensors = n_sensors  # Number of sensors in the output field
         self.mfFlow = mfFlow  # If True, use residual learning
         self.dataloader_config = dataloader_config  # Configuration for the dataloader
+        assert isinstance(
+            self.dataloader_config, dict
+        ), "dataloader_config must be a dictionary."
         self.test_data_path = test_data_path  # Path for the test data
         self.train_ratio = self.dataloader_config.get(
             "train_ratio"
@@ -92,9 +96,9 @@ class OpDataModule(L.LightningDataModule):
         # the sensors will be reloaded
         self.reload_sensors = self.dataloader_config.get("reload_sensors")
 
-        self.batch_size = self.dataloader_config.get(
+        self.batch_size = self.dataloader_config[
             "batch_size"
-        )  # Batch size for the dataloader
+        ]  # Batch size for the dataloader
         self.num_workers = self.dataloader_config.get(
             "num_workers"
         )  # Number of workers for the dataloader
