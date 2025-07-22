@@ -1,14 +1,59 @@
 import torch
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint
+from mfFlow.utils import printer
 
 
 class Flow(ABC):
     """Base class for flow models."""
 
-    def configure_optimizers(self):
+    def __init__(self, hp_config):
+        """Initialize the flow model."""
+        self.hp_config = dict(hp_config)
+        self.stepper_config = {
+            "learning_rate": self.hp_config.get("learning_rate", 1e-3),
+            "optimizer": self.hp_config.get("optimizer", "adam").lower().strip(),
+            "weight_decay": self.hp_config.get("weight_decay", 1e-4),
+        }
+
+    def configure_optimizers(self, verbose=False):
         """optimizer configuration"""
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2, weight_decay=1e-4)
+        learning_rate = self.stepper_config["learning_rate"]
+        weight_decay = self.stepper_config["weight_decay"]
+
+        if self.stepper_config["optimizer"] == "adam":
+            optimizer = torch.optim.Adam(
+                self.parameters(), lr=learning_rate, weight_decay=weight_decay
+            )
+            if verbose:
+                printer(
+                    f"Using Adam optimizer with lr={learning_rate}"
+                    f" and weight_decay={weight_decay}"
+                )
+        elif self.stepper_config["optimizer"] == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(), lr=learning_rate, weight_decay=weight_decay
+            )
+            if verbose:
+                printer(
+                    f"Using AdamW optimizer with lr={learning_rate}"
+                    f" and weight_decay={weight_decay}"
+                )
+        elif self.stepper_config["optimizer"] == "sgd":
+            optimizer = torch.optim.SGD(
+                self.parameters(), lr=learning_rate, weight_decay=weight_decay
+            )
+            if verbose:
+                printer(
+                    f"Using SGD optimizer with lr={learning_rate}"
+                    f" and weight_decay={weight_decay}"
+                )
+        else:
+            raise ValueError(
+                "Unsupported optimizer:" f"{self.stepper_config['optimizer']}"
+            )
+
+        # build the learning rate scheduler
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
         stepper = {
             "optimizer": optimizer,
