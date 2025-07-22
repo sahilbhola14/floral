@@ -3,7 +3,7 @@ import os.path as osp
 import torch
 import json
 
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities import rank_zero_only
 from pytorch_lightning.callbacks import ModelCheckpoint
 from datetime import datetime
@@ -41,9 +41,15 @@ def get_checkpointer(path: str):
 
 
 def get_logger(name: str):
-    """Get a TensorBoard logger with a unique version based on the current time."""
+    """Get a logger with a unique version based on the current time."""
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    logger = TensorBoardLogger("logs", name=name, version=f"{current_time}")
+    # Use WandbLogger for better integration with Weights & Biases
+    logger = WandbLogger(
+        name=f"experiment-{current_time}",  # this appears in wandb dashboard
+        project=name,
+        log_model=True,  # optional: logs model checkpoints as artifacts
+    )
+
     return logger
 
 
