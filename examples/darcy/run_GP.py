@@ -25,6 +25,7 @@ parser.add_argument(
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
 printer(f"Running Darcy with configuration: {args.config}")
+printer(f"Using mfFlow: {config.mfFlow} and job name: {config.job_name}")
 
 torch.set_float32_matmul_precision("medium")  # for tensor cores
 
