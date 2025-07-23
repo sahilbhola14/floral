@@ -72,6 +72,7 @@ def build_data_module(
         n_samples=config.data.high_fidelity.n_samples,
         n_sensors=config.data.high_fidelity.n_sensors,
         mfFlow=config.mfFlow,
+        sensing_strategy=config.data.sensing_strategy,
         dataloader_config=dataloader_config,
         test_data_path=config.data.test_data_path,
     )

@@ -11,7 +11,7 @@ data:
   nx: 1 # Output field dimensionality
   nc: 100 # Input field dimensionality
   nd: 1 # Domain dimensionality
-  sensing_strategy: "random" # Options: "random", "grid"
+  sensing_strategy: "stratified" # Options: "random", "uniform", "stratified"
   low_fidelity:
     path: "./low_fidelity.npz"
   high_fidelity:

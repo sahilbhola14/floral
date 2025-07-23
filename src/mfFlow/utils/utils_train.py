@@ -60,6 +60,7 @@ class OpDataModule(L.LightningDataModule):
         n_samples: int,
         n_sensors: int,
         mfFlow: bool,
+        sensing_strategy: str,
         dataloader_config: dict,
         test_data_path: str,
     ):
@@ -71,6 +72,9 @@ class OpDataModule(L.LightningDataModule):
             low_fidelity_path (str): Path to the low fidelity data.
             high_fidelity_path (str): Path to the high fidelity data.
             mfFlow (bool): If True, use residual learning
+            sensing_strategy (str): Strategy for selecting sensor locations.
+            dataloader_config (dict): Configuration for the dataloader.
+            test_data_path (str): Path for the test data.
         """
         super(OpDataModule, self).__init__()
         self.nx = nx  # Dimensionality of the output features
@@ -79,6 +83,9 @@ class OpDataModule(L.LightningDataModule):
         self.n_samples = n_samples  # Number of samples in the dataset
         self.n_sensors = n_sensors  # Number of sensors in the output field
         self.mfFlow = mfFlow  # If True, use residual learning
+        self.sensing_strategy = (
+            sensing_strategy.lower().strip()
+        )  # Strategy for selecting sensor locations
         self.dataloader_config = dataloader_config  # Configuration for the dataloader
         assert isinstance(
             self.dataloader_config, dict
@@ -145,6 +152,72 @@ class OpDataModule(L.LightningDataModule):
         condition_sub = condition[: self.n_samples, :]
         return field_sub, condition_sub
 
+    def _get_sensor_locations(self):
+        """Get the sensor locations based on the sensing strategy.
+        Returns:
+            sensor_locations (torch.Tensor): Tensor of shape (n_samples, n_sensors)
+        """
+        if self.reload_sensors:
+            printer(
+                f"Reloading sensor locations from {self.file_paths['sensor_locations']}"
+            )
+            check_path(self.file_paths["sensor_locations"], "to disable reload_sensors")
+            sensor_locations = torch.load(self.file_paths["sensor_locations"])
+            # Check shape
+            assert sensor_locations.shape == (self.n_samples, self.n_sensors), (
+                "Sensor locations shape mismatch:"
+                + f" Expected {self.n_samples, self.n_sensors}, "
+                + f"got {sensor_locations.shape}"
+            )
+        else:
+            sensing_strategies = ["random", "uniform", "stratified"]
+            assert self.sensing_strategy in sensing_strategies, (
+                f"Invalid sensing strategy: {self.sensing_strategy}."
+                f"Choose from {','.join(sensing_strategies)} "
+            )
+
+            if self.sensing_strategy == "random":
+                # randomly select sensors from the available sensors
+                sensor_locations = torch.stack(
+                    [
+                        torch.randperm(self.nc)[: self.n_sensors]
+                        for _ in range(self.n_samples)
+                    ],
+                    dim=0,
+                )
+            elif self.sensing_strategy == "uniform":
+                # Uniformly select sensors across the available sensors
+                sensor_locations = torch.linspace(
+                    0, self.nc - 1, self.n_sensors, dtype=torch.long
+                ).repeat(self.n_samples, 1)
+
+            elif self.sensing_strategy == "stratified":
+                # Divide the domain into equal parts and select sensors from each part
+                bins = torch.linspace(0, self.nc, self.n_sensors + 1, dtype=torch.long)
+                sensor_locations = torch.stack(
+                    [
+                        torch.stack(
+                            [
+                                torch.randint(bins[i], bins[i + 1], (1,))
+                                for i in range(self.n_sensors)
+                            ]
+                        ).squeeze()
+                        for _ in range(self.n_samples)
+                    ]
+                )
+            else:
+                raise ValueError(f"Invalid sensing strategy: {self.sensing_strategy}")
+
+        assert sensor_locations.shape == (
+            self.n_samples,
+            self.n_sensors,
+        ), "invalid sensor selection"
+        assert (
+            sensor_locations.max() < self.nc
+        ), f"sensor out of bounds: {sensor_locations.max()} >= {self.nc}"
+
+        return sensor_locations
+
     def _process_operator_fields(self):
         """Process operator fields for the data module."""
         # Extract fields from low fidelity data
@@ -171,26 +244,8 @@ class OpDataModule(L.LightningDataModule):
         assert (
             n_sensors_available >= self.n_sensors
         ), f"Not enough sensors available: {n_sensors_available} < {self.n_sensors}"
-        if self.reload_sensors:
-            printer(
-                f"Reloading sensor locations from {self.file_paths['sensor_locations']}"
-            )
-            check_path(self.file_paths["sensor_locations"], "to disable reload_sensors")
-            sensor_locations = torch.load(self.file_paths["sensor_locations"])
-            # Check shape
-            assert sensor_locations.shape == (self.n_samples, self.n_sensors), (
-                "Sensor locations shape mismatch:"
-                + f" Expected {self.n_samples, self.n_sensors}, "
-                + f"got {sensor_locations.shape}"
-            )
-        else:
-            sensor_locations = torch.stack(
-                [
-                    torch.randperm(self.nc)[: self.n_sensors]
-                    for _ in range(self.n_samples)
-                ],
-                dim=0,
-            )
+
+        sensor_locations = self._get_sensor_locations()
 
         # Get the field at sensor locations
         LF_field_sensor = LF_field_sub.gather(1, sensor_locations)

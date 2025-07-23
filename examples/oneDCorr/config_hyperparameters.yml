@@ -1,7 +1,7 @@
 FLOREN:
   learning_rate: 0.008758979294246311
   batch_size: 16
-  max_epochs: 2000
+  max_epochs: 2
   optimizer: "AdamW"
   weight_decay: 0.00000599675766059995
   latent_dim: 15
