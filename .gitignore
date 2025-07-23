@@ -186,3 +186,4 @@ undodir/
 *.tar
 experiments/
 logs/
+wandb/
