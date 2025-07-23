@@ -1,7 +1,8 @@
 # Configutations for 2-D Non Linear Correlation
 
-job_name: "twoDNonLinear_10_samples_2500_sensors" # Unique identifier for each run
+job_name: "twoDNonLinear_1000_samples_100_sensors" # Unique identifier for each run
 mfFlow: True # True means residual operator is learned
+tune_hyperparameters: True # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/twoDNonLinear/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "twoDNonLinear" # Logger folder
@@ -10,18 +11,18 @@ data:
   nx: 1 # Output field dimensionality
   nc: 2500 # Input field dimensionality
   nd: 2 # Domain dimensionality
+  sensing_strategy: "random" # Options: "random", "uniform", "stratified"
   low_fidelity:
     path: "./low_fidelity.npz"
   high_fidelity:
     path: "./high_fidelity.npz"
-    n_samples: 10 #Number of samples of the data set to use
-    n_sensors: 2500 # Number of sensors in the output domain
+    n_samples: 1000 #Number of samples of the data set to use
+    n_sensors: 100 # Number of sensors in the output domain
   test_data_path: "./test_data.npz"
 
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   reload_sensors: False # If True, "sensor_location.pt" file will be used. If 'reload' is True, then it will reload anyways.
-  batch_size: 1024 # batch size
   train_ratio: 0.7 # percentage of {n_samples} to train
   num_workers: 6 # Number of workers
   normalize:
@@ -34,15 +35,9 @@ train:
   devices: 4
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 5000
-  learning_rate: 5.0e-3
-  weight_decay: 1.0e-4
 
 flow:
-  time_emb_freq: 4 # time embedding
   sig_min: 1.0e-5 # gaussian std for the data
-  latent_dim: 35 # latent for the embedding (state and condition)
-  num_centers: 10 # Number of RBF centers for domain embedding
 
 generate:
   minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)

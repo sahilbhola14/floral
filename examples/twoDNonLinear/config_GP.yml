@@ -1,6 +1,6 @@
 # Configutations for 2-D Correlation Non Linear Correlation
 
-job_name: "twoDNonLinear_10_samples_2500_sensors" # Unique identifier for each run
+job_name: "twoDNonLinear_1000_samples_100_sensors" # Unique identifier for each run
 mfFlow: True # True means residual operator is learned
 checkpoint_save_path: "./experiments/twoDNonLinear/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
