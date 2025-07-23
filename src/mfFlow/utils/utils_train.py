@@ -193,21 +193,34 @@ class OpDataModule(L.LightningDataModule):
 
             elif self.sensing_strategy == "stratified":
                 # Divide the domain into equal parts and select sensors from each part
-                bins = torch.linspace(0, self.nc, self.n_sensors + 1, dtype=torch.long)
+                n_bins = 3  # divide the domain into n_bins parts
+                bins = torch.linspace(0, self.nc, n_bins + 1, dtype=torch.long)
+                sensors_per_bin = self.n_sensors // n_bins
+                remainder = self.n_sensors % n_bins
+
+                sensors_per_bin_list = [sensors_per_bin] * n_bins
+                sensors_per_bin_list[:remainder] = [
+                    x + 1 for x in sensors_per_bin_list[:remainder]
+                ]
+
                 sensor_locations = torch.stack(
                     [
-                        torch.stack(
+                        torch.hstack(
                             [
-                                torch.randint(bins[i], bins[i + 1], (1,))
-                                for i in range(self.n_sensors)
+                                torch.randint(
+                                    bins[ii].item(),
+                                    bins[ii + 1].item(),
+                                    (sensors_per_bin_list[ii],),
+                                )
+                                for ii in range(n_bins)
                             ]
-                        ).squeeze()
-                        for _ in range(self.n_samples)
+                        )
+                        for jj in range(self.n_samples)
                     ]
                 )
+
             else:
                 raise ValueError(f"Invalid sensing strategy: {self.sensing_strategy}")
-
         assert sensor_locations.shape == (
             self.n_samples,
             self.n_sensors,
