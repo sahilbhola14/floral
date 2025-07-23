@@ -121,6 +121,33 @@ def build_trainer(
     return trainer
 
 
+class ConditionEmbedding(nn.Module):
+    """Class for condition embedding."""
+
+    def __init__(self, nc: int, latent_dim, time_emb_freq: int):
+        """Initialize the condition embedding module.
+        Args:
+            nc (int): Dimensionality of the condition field.
+            latent_dim (int): Dimension of the latent space (output dimension).
+            time_emb_freq (int): Frequency of the time embedding.
+        """
+        super(ConditionEmbedding, self).__init__()
+        self.nc = nc
+        self.latent_dim = latent_dim
+        self.time_emb_freq = time_emb_freq
+
+        self.condition_embedding = nn.Sequential(
+            nn.Linear(self.nc + 2 * self.time_emb_freq, 32),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(32, self.latent_dim),
+        )
+
+    def forward(self, x):
+        return self.condition_embedding(x)
+
+
 class ResFlow(Flow, L.LightningModule):
     """Class for the residual flow model."""
 
@@ -164,12 +191,8 @@ class ResFlow(Flow, L.LightningModule):
         )
 
         # condition embedding
-        self.condition_embedding = nn.Sequential(
-            nn.Linear(self.nc + 2 * self.time_emb_freq, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(32, self.latent_dim),
+        self.condition_embedding = ConditionEmbedding(
+            nc=self.nc, latent_dim=self.latent_dim, time_emb_freq=self.time_emb_freq
         )
 
         # skip connections
