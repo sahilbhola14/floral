@@ -55,8 +55,9 @@ def build_data_module(
     config: dict, hp_config: wandb.sdk.wandb_config.Config | dict = None
 ):
     """Get the data module for the oneDCorr problem.
-    config (dict): Configuration dictionary containing data parameters.
-    hp_config (dict): Hyperparameter configuration dictionary.
+    Args:
+        config (dict): Configuration dictionary containing data parameters.
+        hp_config (dict): Hyperparameter configuration dictionary.
     """
     # data loader config
     dataloader_config = dict(config.dataloader.copy())
