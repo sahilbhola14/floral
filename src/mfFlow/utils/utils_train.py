@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import pytorch_lightning as L
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch.utils.data import DataLoader, TensorDataset
 from mfFlow.utils import check_path, get_logger, printer
 
@@ -23,6 +24,18 @@ def get_trainer(checkpointer, logger_name: str, train_config: dict):
     assert isinstance(train_config, dict), "train_config must be a dictionary."
     # get the logger
     logger = get_logger(logger_name)
+
+    # early stopping
+    early_stop_callback = EarlyStopping(
+        monitor="val_loss",  # Metric to monitor
+        min_delta=1e-4,  # Minimum change to qualify as improvement
+        patience=int(
+            0.1 * train_config["max_epochs"]
+        ),  # Number of epochs with no improvement after which training will stop
+        verbose=True,
+        mode="min",  # "min" for loss, "max" for accuracy
+    )
+
     # trainer
     trainer = L.Trainer(
         logger=logger,
@@ -30,7 +43,7 @@ def get_trainer(checkpointer, logger_name: str, train_config: dict):
         devices=train_config["devices"],
         accelerator=train_config["accelerator"],
         strategy=train_config["strategy"],
-        callbacks=[checkpointer],
+        callbacks=[checkpointer, early_stop_callback],
     )
 
     return trainer
