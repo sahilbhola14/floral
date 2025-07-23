@@ -47,7 +47,7 @@ def get_logger(name: str):
     logger = WandbLogger(
         name=f"experiment-{current_time}",  # this appears in wandb dashboard
         project=name,
-        log_model=True,  # optional: logs model checkpoints as artifacts
+        log_model=False,  # optional: logs model checkpoints as artifacts
     )
 
     return logger
