@@ -1,9 +1,13 @@
 FLOREN:
-  learning_rate: 0.008888
-  batch_size: 32
-  max_epochs: 2
+  learning_rate: 0.008758979294246311
+  batch_size: 16
+  max_epochs: 2000
   optimizer: "AdamW"
-  weight_decay: 0.000834
+  weight_decay: 0.00000599675766059995
   latent_dim: 15
   num_centers: 20
   time_emb_freq: 2
+  scheduler: "steplr"
+  exponential_scheduler_gamma: 0.9
+  lr_scheduler_step: 5
+  lr_scheduler_gamma: 0.1

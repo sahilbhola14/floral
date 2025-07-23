@@ -11,9 +11,15 @@ class Flow(ABC):
         """Initialize the flow model."""
         self.hp_config = dict(hp_config)
         self.stepper_config = {
-            "learning_rate": self.hp_config.get("learning_rate", 1e-3),
-            "optimizer": self.hp_config.get("optimizer", "adam").lower().strip(),
-            "weight_decay": self.hp_config.get("weight_decay", 1e-4),
+            "learning_rate": self.hp_config["learning_rate"],
+            "optimizer": self.hp_config["optimizer"].lower().strip(),
+            "weight_decay": self.hp_config["weight_decay"],
+            "scheduler": self.hp_config["scheduler"].lower().strip(),
+            "exponential_scheduler_gamma": self.hp_config[
+                "exponential_scheduler_gamma"
+            ],
+            "lr_scheduler_step": self.hp_config["lr_scheduler_step"],
+            "lr_scheduler_gamma": self.hp_config["lr_scheduler_gamma"],
         }
 
     def configure_optimizers(self, verbose=False):
@@ -21,6 +27,7 @@ class Flow(ABC):
         learning_rate = self.stepper_config["learning_rate"]
         weight_decay = self.stepper_config["weight_decay"]
 
+        # optimizer
         if self.stepper_config["optimizer"] == "adam":
             optimizer = torch.optim.Adam(
                 self.parameters(), lr=learning_rate, weight_decay=weight_decay
@@ -53,16 +60,41 @@ class Flow(ABC):
                 "Unsupported optimizer:" f"{self.stepper_config['optimizer']}"
             )
 
-        # build the learning rate scheduler
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.99)
-        stepper = {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "epoch",
-                "frequency": 10,
-            },
-        }
+        # scheduler
+        if self.stepper_config["scheduler"] == "exponential":
+            gamma = self.stepper_config["exponential_scheduler_gamma"]
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+
+            stepper = {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch",
+                    "frequency": 10,
+                },
+            }
+
+        elif self.stepper_config["scheduler"] == "steplr":
+
+            step_size = self.stepper_config["lr_scheduler_step"]
+            gamma = self.stepper_config["lr_scheduler_gamma"]
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer, step_size=step_size, gamma=gamma
+            )
+
+            stepper = {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "interval": "epoch",
+                    "frequency": 10,
+                },
+            }
+
+        elif self.stepper_config["scheduler"] == "none":
+
+            stepper = {"optimizer": optimizer}
+
         return stepper
 
     def compute_conditional_flow(

@@ -1,8 +1,8 @@
 # Configutations for 1-D Correlation
 
 job_name: "oneDCorr_100_samples_10_sensors" # Unique identifier for each run
-mfFlow: True # True means residual operator is learned
-tune_hyperparameters: True # If true, then hyperparameter sweep is conducted
+mfFlow: False # True means residual operator is learned
+tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "oneDCorr" # Logger folder
@@ -11,6 +11,7 @@ data:
   nx: 1 # Output field dimensionality
   nc: 100 # Input field dimensionality
   nd: 1 # Domain dimensionality
+  sensing_strategy: "random" # Options: "random", "grid"
   low_fidelity:
     path: "./low_fidelity.npz"
   high_fidelity:
@@ -30,8 +31,8 @@ dataloader:
 
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
-  accelerator: 'cpu'
-  devices: 1
+  accelerator: 'gpu'
+  devices: 3
   strategy: 'ddp'
   precision: 'bf16-mixed'
 
