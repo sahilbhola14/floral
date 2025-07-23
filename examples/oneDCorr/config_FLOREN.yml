@@ -1,8 +1,8 @@
 # Configutations for 1-D Correlation
 
-job_name: "oneDCorr_10_samples_100_sensors" # Unique identifier for each run
+job_name: "oneDCorr_100_samples_10_sensors" # Unique identifier for each run
 mfFlow: True # True means residual operator is learned
-tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
+tune_hyperparameters: True # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "oneDCorr" # Logger folder
@@ -15,8 +15,8 @@ data:
     path: "./low_fidelity.npz"
   high_fidelity:
     path: "./high_fidelity.npz"
-    n_samples: 10 #Number of samples of the data set to use
-    n_sensors: 100 # Number of sensors in the output domain
+    n_samples: 100 #Number of samples of the data set to use
+    n_sensors: 10 # Number of sensors in the output domain
   test_data_path: "./test_data.npz"
 
 dataloader:

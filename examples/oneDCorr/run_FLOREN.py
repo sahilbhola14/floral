@@ -246,7 +246,10 @@ def train_model(hp_config: dict = None):
     printer("Starting training...")
     trainer.fit(model, data_module)
 
-    if config.tune_hyperparameters is False:
+    if config.tune_hyperparameters:
+        # clean up wandb run
+        wandb.finish()
+    else:
         # best model path
         best_model_path = checkpointer.best_model_path
         printer(f"Best model saved at {best_model_path}")
@@ -281,7 +284,7 @@ if __name__ == "__main__":
             hp_config = yaml.safe_load(file)
         # initialize agent
         sweep_id = wandb.sweep(hp_config)
-        wandb.agent(sweep_id, function=train_model, count=1)
+        wandb.agent(sweep_id, function=train_model, count=100)
     else:
         # load the hyperparameter config
         with open("config_hyperparameters.yml", "r") as file:
