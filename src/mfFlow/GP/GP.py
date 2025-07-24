@@ -26,6 +26,7 @@ def build_gp(train_set, val_set, gp_type: str = "vanilla", **kwargs):
         "enhanced_deep_kernel",
         "enhanced",
         "hierarchical",
+        "mini_batch_vanilla",
     ]
     assert gp_type in supported_gp_types, (
         f"Unsupported GP type: {gp_type}. "
@@ -36,6 +37,13 @@ def build_gp(train_set, val_set, gp_type: str = "vanilla", **kwargs):
     if gp_type == "vanilla":
         return VanillaGP(
             train_set, val_set, device=kwargs.get("device", torch.device("cpu"))
+        )
+    elif gp_type == "mini_batch_vanilla":
+        return MiniBatchVanillaGP(
+            train_set,
+            val_set,
+            device=kwargs.get("device", torch.device("cpu")),
+            batch_size=kwargs.get("batch_size", 1000),
         )
     elif gp_type == "deep_kernel":
         return DeepKernelGP(
@@ -109,6 +117,82 @@ class VanillaGP(ExactGP):
         self.likelihood.train()
         optimizer.zero_grad()
         loss = self._compute_loss(mll, self.train_x, self.train_y.view(-1))
+        if torch.isnan(loss):
+            raise RuntimeError("NaN loss during training.")
+        loss.backward()
+        optimizer.step()
+        return loss.item()
+
+    @torch.no_grad()
+    def val_step(self, mll):
+        self.eval()
+        self.likelihood.eval()
+        return self._compute_loss(mll, self.val_x, self.val_y.view(-1)).item()
+
+
+class MiniBatchVanillaGP(ExactGP):
+    """Vanilla GP with mini-batch training to reduce memory usage."""
+
+    def __init__(self, train_set, val_set, device=None, batch_size=1000):
+        self.full_train_set = train_set
+        self.val_set = val_set
+        self.batch_size = batch_size
+        self.device = device
+
+        # Initialize with a subset for the ExactGP parent class
+        train_x, train_y = [t.to(device) for t in train_set.tensors]
+        assert (
+            len(train_x) >= batch_size
+        ), f"Training set must have at least {batch_size} samples."
+        subset_idx = torch.randperm(len(train_x))[:batch_size]
+        self.current_train_x = train_x[subset_idx]
+        self.current_train_y = train_y[subset_idx].squeeze()
+
+        self.val_x, self.val_y = [t.to(device) for t in val_set.tensors]
+
+        likelihood = GaussianLikelihood()
+        super().__init__(self.current_train_x, self.current_train_y, likelihood)
+
+        self.likelihood = likelihood.to(device)
+        self.mean_module = ConstantMean()
+        self.covar_module = ScaleKernel(RBFKernel())
+        self.to(device)
+
+    def update_training_data(self):
+        """Randomly sample a new batch of training data."""
+        train_x, train_y = [t.to(self.device) for t in self.full_train_set.tensors]
+        n_samples = len(train_x)
+
+        if n_samples <= self.batch_size:
+            subset_idx = torch.arange(n_samples)
+        else:
+            subset_idx = torch.randperm(n_samples)[: self.batch_size]
+
+        self.current_train_x = train_x[subset_idx]
+        self.current_train_y = train_y[subset_idx].squeeze()
+
+        # Update the parent class training data
+        self.set_train_data(self.current_train_x, self.current_train_y, strict=False)
+
+    def _compute_loss(self, mll, x, y):
+        assert y.ndim == 1, "Targets should be 1D."
+        output = self.forward(x)
+        return -mll(output, y)
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return MultivariateNormal(mean_x, covar_x)
+
+    def train_step(self, mll, optimizer):
+        self.train()
+        self.likelihood.train()
+
+        # Update to a new batch
+        self.update_training_data()
+
+        optimizer.zero_grad()
+        loss = self._compute_loss(mll, self.current_train_x, self.current_train_y)
         if torch.isnan(loss):
             raise RuntimeError("NaN loss during training.")
         loss.backward()

@@ -69,7 +69,7 @@ def train_GP(model):
     )
     for epoch in pbar:
         # Train step
-        train_loss = model.train_step(mll, optimizer)
+        train_loss = model.train_step(mll=mll, optimizer=optimizer)
         # Valication step
         val_loss = model.val_step(mll)
         pbar.set_postfix({"train_loss": train_loss, "val_loss": val_loss})
