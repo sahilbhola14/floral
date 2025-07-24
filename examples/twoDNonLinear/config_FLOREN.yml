@@ -1,6 +1,6 @@
 # Configutations for 2-D Non Linear Correlation
 
-job_name: "twoDNonLinear_1000_samples_100_sensors" # Unique identifier for each run
+job_name: "twoDNonLinear_1000_samples_10_sensors" # Unique identifier for each run
 mfFlow: True # True means residual operator is learned
 tune_hyperparameters: True # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/twoDNonLinear/" # Save path for the checkpoints
@@ -11,7 +11,7 @@ data:
   nx: 1 # Output field dimensionality
   nc: 2500 # Input field dimensionality
   nd: 2 # Domain dimensionality
-  sensing_strategy: "random" # Options: "random", "uniform", "stratified"
+  sensing_strategy: "stratified" # Options: "random", "uniform", "stratified"
   low_fidelity:
     path: "./low_fidelity.npz"
   high_fidelity:
