@@ -21,7 +21,7 @@ from mfFlow.utils import (
     Inference,
 )
 from mfFlow.flow import Flow
-from mfFlow.archs import FiLM, RBFFiLM
+from mfFlow.archs import FiLM, RBFFiLM, SpatialAttentionPooling
 
 parser = argparse.ArgumentParser(
     description="Run twoDNonLinear with specified parameters."
@@ -231,7 +231,12 @@ class ConditionEmbedding(nn.Module):
 
         # Pooling Layers
         self.pools = nn.ModuleList(
-            [nn.MaxPool2d(2), nn.MaxPool2d(2), nn.AdaptiveAvgPool2d(1)]
+            # [nn.MaxPool2d(2), nn.MaxPool2d(2), nn.AdaptiveAvgPool2d(1)]
+            [
+                nn.MaxPool2d(2),
+                nn.MaxPool2d(2),
+                SpatialAttentionPooling(128, embed_dim=128, num_heads=4),
+            ]
         )
 
         # Multi-scale feature fusion
@@ -263,12 +268,12 @@ class ConditionEmbedding(nn.Module):
         x = condition
         for i, (conv_block, pool) in enumerate(zip(self.conv_blocks, self.pools)):
             x = conv_block(x, t_emb)  # conv block with time FiLM
-            if i < 2:
+            if isinstance(pool, nn.MaxPool2d):
+                x = pool(x)
                 spatial_features.append(x.mean(dim=[2, 3]))
-            x = pool(x)
-
-        # add final features
-        spatial_features.append(x.flatten(1))
+            else:
+                x_pooled = pool(x)
+                spatial_features.append(x_pooled)
 
         # weight the spatial featurse
         weighted_features = [
@@ -282,7 +287,6 @@ class ConditionEmbedding(nn.Module):
         # time-dependent gating
         gate = self.time_gate(t_emb)
         condition_emb = condition_emb * gate
-
         return condition_emb
 
 
@@ -431,7 +435,7 @@ class ResFlow(Flow, L.LightningModule):
 
         # learnable fusion
         self.fusion = nn.Sequential(
-            nn.Linear(self.latent_dim * 2, self.latent_dim),
+            nn.Linear(self.latent_dim, self.latent_dim),
             nn.LayerNorm(self.latent_dim),
             nn.SiLU(),
             nn.Linear(self.latent_dim, self.latent_dim),
@@ -466,8 +470,11 @@ class ResFlow(Flow, L.LightningModule):
         state_emb = self.state_embedding(x=x, t_emb=t_emb)
         # Embedd the condition
         condition_emb = self.condition_embedding(condition=c, t_emb=t_emb)
+        # scale embeddings to prevent vanishing/exploding gradients
+        state_emb *= 1.0 / math.sqrt(self.latent_dim)
+        condition_emb *= 1.0 / math.sqrt(self.latent_dim)
         # Learnable fusion
-        combined = self.fusion(torch.cat([state_emb, condition_emb], dim=-1))
+        combined = self.fusion(state_emb + condition_emb)
         # Skip connection
         out = self.skip(combined)
         # Embedd the domain

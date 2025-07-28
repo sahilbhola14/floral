@@ -325,6 +325,22 @@ class RBFFiLMAttention(nn.Module):
         return output
 
 
+class SpatialAttentionPooling(nn.Module):
+    def __init__(self, in_channels, embed_dim, num_heads=4):
+        super().__init__()
+        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=1)
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        x_proj = self.proj(x)  # (B, embed_dim, H, W)
+        x_flat = x_proj.flatten(2).transpose(1, 2)  # (B, H*W, embed_dim)
+        attn_out, _ = self.attn(x_flat, x_flat, x_flat)
+        attn_out = self.norm(attn_out)
+        return attn_out.mean(dim=1)  # shape: (B, embed_dim)
+
+
 class FiLM(nn.Module):
     """Vanilla Feature Layer Modulation (FiLM) layer
 

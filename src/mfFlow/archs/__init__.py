@@ -1,4 +1,4 @@
 from .mlp import MLP
-from .encoding import RBFFiLM, FiLM, RBFFiLMAttention
+from .encoding import RBFFiLM, FiLM, RBFFiLMAttention, SpatialAttentionPooling
 
-__all__ = ["RBFFiLM", "RBFFiLMAttention", "FiLM", "MLP"]
+__all__ = ["RBFFiLM", "RBFFiLMAttention", "FiLM", "MLP", "SpatialAttentionPooling"]
