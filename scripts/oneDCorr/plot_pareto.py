@@ -6,8 +6,8 @@ import pandas as pd
 plt.style.use("../journal.mplstyle")  # Optional style
 
 # Begin user input
-n_samples = 10
-n_sensors = 100
+n_samples = 50
+n_sensors = 20
 # End user input
 
 # Load data
