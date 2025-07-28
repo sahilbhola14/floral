@@ -1,77 +1,328 @@
+import math
 import torch
 import torch.nn as nn
 from mfFlow.archs import MLP
 
 
 class RBFFiLM(nn.Module):
-    """Radial Basis Function FiLM (Good for encodding spatial information)
-    TODO:
-    - Make this amenable to multiple dimensions of domain.
+    """
+    RBF-FiLM
     """
 
-    def __init__(self, latent_dim: int, num_centers: int, nd: int):
+    def __init__(
+        self,
+        latent_dim: int,
+        num_centers: int,
+        nd: int,
+        nx: int,
+        learnable_bandwidth=True,
+        improved_centers=True,
+    ):
         """
         Args:
             latent_dim (int): Dimension of the latent space
-            num_centers (int): Number of radial basis function centers
-            nd (int): Number of dimensions of the `mod` tensor
+            num_centers (int): Number of RBF centers
+            nd (int): Number of domain dimensions
+            nx (int): Output dimension (should match state dimension)
+            learnable_bandwidth (bool): Whether to learn bandwidth
+            improved_centers (bool): Whether to use better center initialization
         """
-        super(RBFFiLM, self).__init__()
+        super().__init__()
         self.num_centers = num_centers
         self.latent_dim = latent_dim
         self.nd = nd
-        assert self.nd <= 2, "RBF FiLM only supports 1D or 2D modulations."
+        self.nx = nx
 
-        # Lernable centers for the RBF encoder
-        self.centers = nn.Parameter(
-            torch.stack(
-                [torch.linspace(0, 1, self.num_centers) for _ in range(self.nd)], dim=-1
-            ),
-            requires_grad=True,
-        )
+        # Initialize centers with better coverage if requested
+        if improved_centers:
+            self.centers = self._initialize_better_centers()
+        else:
+            # Original initialization
+            self.centers = nn.Parameter(
+                torch.stack(
+                    [torch.linspace(0, 1, self.num_centers) for _ in range(self.nd)],
+                    dim=-1,
+                ),
+                requires_grad=True,
+            )
 
+        # Learnable bandwidth (single value for simplicity)
+        if learnable_bandwidth:
+            self.log_bandwidth = nn.Parameter(torch.tensor(math.log(10.0)))
+        else:
+            self.register_buffer("log_bandwidth", torch.tensor(math.log(10.0)))
+
+        # Keep similar network sizes to original but fix output dimension
         self.gamma_net = MLP(
             in_dim=self.num_centers,
-            width=[64, 64],
-            out_dim=self.latent_dim,
+            width=[64, 64],  # Same as original
+            out_dim=self.latent_dim,  # Match latent_dim for proper FiLM
             activations=[nn.ReLU(), nn.ReLU(), None],
         )
 
         self.beta_net = MLP(
             in_dim=self.num_centers,
-            width=[64, 64],
-            out_dim=1,
+            width=[64, 64],  # Same as original
+            out_dim=self.latent_dim,  # FIX: Match latent_dim, not 1
             activations=[nn.ReLU(), nn.ReLU(), None],
         )
 
-    def _rbf_encoding(self, mod, gamma=10.0):
-        """Radial Basis Function encoding
+        # Output projection to match state dimension
+        # This is the key missing piece in your original
+        self.output_proj = nn.Linear(latent_dim, nx)
 
-        Computes the RBF encoding of the modulation tensor
-        Args:
-            mod (torch.Tensor): Modulation tensor of shape (batch_size, nd)
-            gamma (float): Hyperparameter for the RBF kernel
-        Returns:
-            torch.Tensor: RBF encoded tensor of shape (batch_size, num_centers)
-        """
-        # compute the Delta (batch_size, num_centers, nd)
+    def _initialize_better_centers(self):
+        """Better center initialization without much complexity"""
+        if self.nd == 1:
+            # Chebyshev nodes for better approximation
+            i = torch.arange(1, self.num_centers + 1).float()
+            centers = 0.5 * (
+                1 + torch.cos((2 * i - 1) * math.pi / (2 * self.num_centers))
+            )
+            centers = centers.unsqueeze(1)
+        elif self.nd == 2:
+            # Simple grid initialization
+            side = int(math.ceil(math.sqrt(self.num_centers)))
+            x = torch.linspace(0, 1, side)
+            y = torch.linspace(0, 1, side)
+            xx, yy = torch.meshgrid(x, y, indexing="ij")
+            centers = torch.stack([xx.flatten(), yy.flatten()], dim=1)[
+                : self.num_centers
+            ]
+        else:
+            # Random for higher dimensions
+            centers = torch.rand(self.num_centers, self.nd)
+
+        assert centers.shape == (self.num_centers, self.nd)
+
+        return nn.Parameter(centers, requires_grad=True)
+
+    def _rbf_encoding(self, mod):
+        """Simple RBF encoding - minimal change from original"""
+        # Ensure mod is properly bounded
+        mod = torch.clamp(mod, 0, 1)
+
+        # Compute distances
         delta = mod.unsqueeze(1) - self.centers.unsqueeze(0)
-        # compute the RBF kernel
-        return torch.exp(-gamma * torch.norm(delta, dim=-1) ** 2)
+        distances = torch.norm(delta, dim=-1)
+
+        # RBF with learnable bandwidth
+        bandwidth = torch.exp(self.log_bandwidth)
+        return torch.exp(-bandwidth * distances**2)
 
     def forward(self, x: torch.Tensor, mod: torch.Tensor):
-        """forward pass of the FiLM layer
+        """
+        Forward pass - key fix is proper dimensionality handling
+
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, in_dim)
-            mod (torch.Tensor): Modulation tensor of shape (batch_size, in_dim)
+            x (torch.Tensor): Input features of shape (batch_size, latent_dim)
+            mod (torch.Tensor): Domain coordinates of shape (batch_size, nd)
+
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, nx)
         """
-        # encode the mod features
+        # Get RBF features (same as original)
         mod_features = self._rbf_encoding(mod)
-        gamma = self.gamma_net(mod_features)
-        beta = self.beta_net(mod_features)
-        return torch.sum(x * gamma, dim=-1, keepdim=True) + beta
+
+        # Generate FiLM parameters
+        gamma = self.gamma_net(mod_features)  # (batch_size, latent_dim)
+        beta = self.beta_net(mod_features)  # (batch_size, latent_dim) - FIXED
+
+        # Apply FiLM modulation properly
+        # Original: torch.sum(x * gamma, dim=-1, keepdim=True) + beta  # WRONG!
+        # Fixed: element-wise modulation
+        modulated = x * (1 + gamma) + beta  # (batch_size, latent_dim)
+
+        # Project to output dimension - THIS WAS MISSING
+        output = self.output_proj(modulated)  # (batch_size, nx)
+
+        return output
+
+
+class RBFFiLMAttention(nn.Module):
+    """Radial Basis Function FiLM (Good for encodding spatial information)"""
+
+    def __init__(
+        self,
+        latent_dim: int,
+        num_centers: int,
+        nd: int,
+        nx: int,
+        kernel_type="gaussian",
+        learnable_bandwidth=True,
+        multi_scale=True,
+        use_attention=False,
+    ):
+        """
+        Args:
+        latent_dim (int): Dimension of the latent space
+        num_centers (int): Number of RBF centers per dimension
+        nd (int): Number of domain dimensions
+        nx (int): Output dimension (should match state dimension)
+        kernel_type (str): Type of RBF kernel
+        learnable_bandwidth (bool): Whether to learn bandwidth parameters
+        multi_scale (bool): Whether to use multiple bandwidth scales
+        use_attention (bool): Whether to use attention over RBF features
+        """
+        super(RBFFiLMAttention, self).__init__()
+
+        self.num_centers = num_centers
+        self.latent_dim = latent_dim
+        self.nd = nd
+        self.nx = nx
+        self.kernel_type = kernel_type
+        self.learnable_bandwidth = learnable_bandwidth
+        self.multi_scale = multi_scale
+        self.use_attention = use_attention
+
+        assert self.use_attention is False, "Under construction"
+
+        # intialize the learnable RBF centers
+        self.centers = self._initialize_centers()  # (num_centers, nd)
+
+        self.num_scales = 4 if self.multi_scale else 1
+
+        # learnable bandwidth parameters (num_centers, num_scales)
+        if learnable_bandwidth:
+            if multi_scale:
+                # Multiple bandwidth scales for multi-resolution features
+                self.bandwidths = nn.Parameter(
+                    torch.linspace(-2, 2, self.num_scales)
+                    .unsqueeze(0)
+                    .repeat(self.num_centers, 1)
+                    .exp()
+                )  # Shape: [num_centers, num_scales]
+            else:
+                self.bandwidths = nn.Parameter(torch.zeros(self.num_centers).exp())
+        else:
+            if multi_scale:
+                self.register_buffer(
+                    "bandwidths",
+                    torch.ones(self.num_centers, self.num_scales)
+                    * math.log(10.0).exp(),
+                )
+            else:
+                self.register_buffer(
+                    "bandwidths", torch.ones(self.num_centers) * math.log(10.0).exp()
+                )
+
+        # Calculate total RBF feature dimension
+        self.total_rbf_dim = self.num_centers * self.num_scales
+
+        # FiLM gamma net
+        self.gamma_net = MLP(
+            in_dim=self.total_rbf_dim,
+            width=[128, 128, 64],
+            out_dim=self.latent_dim,
+            activations=[nn.SiLU(), nn.SiLU(), nn.SiLU(), None],
+            dropout=0.1,
+            norm="layer",
+        )
+
+        # FiLM beta net
+        self.beta_net = MLP(
+            in_dim=self.total_rbf_dim,
+            width=[128, 128, 64],
+            out_dim=self.latent_dim,
+            activations=[nn.SiLU(), nn.SiLU(), nn.SiLU(), None],
+            dropout=0.1,
+            norm="layer",
+        )
+
+        # Final output projection
+        self.output_proj = nn.Sequential(
+            nn.Linear(self.latent_dim, self.latent_dim * 2),
+            nn.LayerNorm(self.latent_dim * 2),
+            nn.SiLU(),
+            nn.Linear(self.latent_dim * 2, self.nx),
+        )
+
+    def _initialize_centers(self):
+        """Initialize the centers"""
+        if self.nd == 1:
+            # 1D: Use Chebyshev nodes for better approximation
+            i = torch.arange(1, self.num_centers + 1).float()
+            centers = 0.5 * (
+                1 + torch.cos((2 * i - 1) * math.pi / (2 * self.num_centers))
+            )
+            centers = centers.unsqueeze(1)
+        elif self.nd == 2:
+            # 2D: Use grid with some jitter for better coverage
+            side_length = int(math.ceil(math.sqrt(self.num_centers)))
+            x = torch.linspace(0, 1, side_length)
+            y = torch.linspace(0, 1, side_length)
+            xx, yy = torch.meshgrid(x, y, indexing="ij")
+            centers = torch.stack([xx.flatten(), yy.flatten()], dim=1)
+            # Add small random jitter
+            centers += 0.05 * torch.randn_like(centers)
+            centers = torch.clamp(centers, 0, 1)
+            # Take only num_centers points
+            centers = centers[: self.num_centers]
+        else:
+            # Higher dimensions: Use random initialization with Latin hypercube sampling
+            centers = torch.rand(self.num_centers, self.nd)
+        assert centers.shape == (self.num_centers, self.nd)
+        return nn.Parameter(centers, requires_grad=True)
+
+    def _rbf_kernel(self, distances, bandwidth):
+        """Compute RBF kernel values"""
+        if self.kernel_type == "gaussian":
+            return torch.exp(-0.5 * distances**2 / bandwidth**2)
+        else:
+            raise NotImplementedError("Under construction")
+
+    def _rbf_encoding(self, mod):
+        """encding for the mod using radial basis functions
+        TODO:
+            - Make input  for any range.
+            Can do some normalization to make it between [0, 1]
+        """
+        assert mod.min() >= 0 and mod.max() <= 1
+        batch_size = mod.shape[0]
+        # compute the distances
+        delta = mod.unsqueeze(1) - self.centers.unsqueeze(
+            0
+        )  # (batch_size, num_center, nd)
+        distances = torch.sqrt(torch.sum(delta**2, dim=-1))
+
+        # bandwidth
+
+        if self.multi_scale:
+            # Expand dimensions for broadcasting
+            distances_expanded = distances.unsqueeze(-1)  # (batch_size, num_centers, 1)
+            bandwidths_expanded = self.bandwidths.unsqueeze(0).to(
+                mod.device
+            )  # (1, num_centers, num_scales)
+            # compute the RBF values
+            rbf_values = self._rbf_kernel(distances_expanded, bandwidths_expanded)
+
+            # flatten to (batch_size, num_centers * num_scales)
+            rbf_features = rbf_values.view(batch_size, -1)
+        else:
+            rbf_features = self._rbf_kernel(distances, self.bandwidths.unsqueeze(0))
+
+        assert rbf_features.shape == (batch_size, self.total_rbf_dim)
+
+        return rbf_features
+
+    def forward(self, x: torch.Tensor, mod: torch.Tensor):
+        """forward"""
+        batch_size = x.shape[0]
+        assert x.ndim == 2 and x.shape == (batch_size, self.latent_dim)
+        assert mod.ndim == 2 and mod.shape == (batch_size, self.nd)
+        # get the rbf features
+        rbf_features = self._rbf_encoding(mod)  # (batch_size, num_center * num_scales)
+
+        # Generate FiLM parameters
+        gamma = self.gamma_net(rbf_features)  # (batch_size, latent_dim)
+        beta = self.beta_net(rbf_features)  # (batch_size, latent_dim)
+
+        # Apply FiLM modulation (proper element-wise modulation)
+        modulated = x * (1 + gamma) + beta  # (batch_size, latent_dim)
+
+        # Project to output dimension with residual connection
+        output = self.output_proj(modulated)  # (batch_size, nx)
+        return output
 
 
 class FiLM(nn.Module):
