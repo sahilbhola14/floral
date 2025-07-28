@@ -576,6 +576,6 @@ if __name__ == "__main__":
                 config.dataloader.reload is True
             ), "Reload must be True for evaluation"
             # check_path(config.checkpoint_load_path)
-            # best_model_path = config.checkpoint_load_path
+            best_model_path = config.checkpoint_load_path
         # infer
-        # infer_model(best_model_path, data_module)
+        infer_model(best_model_path, data_module)
