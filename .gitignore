@@ -187,3 +187,5 @@ undodir/
 experiments/
 logs/
 wandb/
+*.out
+*.err
