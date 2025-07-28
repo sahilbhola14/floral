@@ -5,10 +5,35 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 plt.style.use("../journal.mplstyle")
 
 # Begin user input
-n_samples = 10
-n_sensors = 100
-plot_idx = 6  # Select sample index
+n_samples = 50
+n_sensors = 20
+plot_idx = {"automatic": False, "idx": 6}  # Set to True for automatic index selection
 # End user input
+
+
+def find_best_idx(true, prediction):
+    """
+    Find the index with smallest error between true and predicted values.
+    """
+    assert (
+        true.shape == prediction.shape
+    ), "True and prediction must have the same shape."
+    error = (true - prediction).abs().mean(dim=1)
+    idx = error.argmin().item()
+    print(f"Best index found: {idx} with error {error.min().item()}")
+    return idx
+
+
+def find_worst_idx(true, prediction):
+    """Find the index with largest error between true and predicted values."""
+    assert (
+        true.shape == prediction.shape
+    ), "True and prediction must have the same shape."
+    error = (true - prediction).abs().mean(dim=1)
+    idx = error.argmax().item()
+    print(f"Worst index found: {idx} with error {error.max().item()}")
+    return idx
+
 
 # Load data
 data = torch.load(f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results.pt")
@@ -26,6 +51,19 @@ field_gp = data_gp["field"]
 field_gp_mfFlow = data_gp_mfFlow["field"]
 
 domain = data_mfFlow["domain"].ravel()
+
+plot_idx = (
+    plot_idx["idx"]
+    if not plot_idx["automatic"]
+    else find_best_idx(true=field["HF_field"], prediction=field["Prediction"].mean(1))
+)
+# plot_idx = (
+#     plot_idx["idx"]
+#     if not plot_idx["automatic"]
+#     else find_worst_idx(
+#         true=field["HF_field"], prediction=field_gp["Prediction"]["mean"]
+#     )
+# )
 
 # Extract relevant data
 LF_field = field_mfFlow.get("LF_field")[plot_idx]

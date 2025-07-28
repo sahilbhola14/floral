@@ -11,11 +11,38 @@ import matplotlib.pyplot as plt
 plt.style.use("../journal.mplstyle")
 
 # Begin user input
-n_samples = 2000
-n_sensors = 1
-plot_idx = 2  # Select sample index
+n_samples = 200
+n_sensors = 100
+plot_idx = {"automatic": True, "idx": 6}
 plot_error = False  # Whether to plot error or not
 # End user input
+
+
+def find_best_idx(true, prediction):
+    """
+    Find the index with smallest error between true and predicted values.
+    """
+    assert (
+        true.shape == prediction.shape
+    ), "True and prediction must have the same shape."
+    error = (true - prediction).abs().mean(dim=1)
+    idx = error.argmin().item()
+    print(f"Best index found: {idx} with error {error.min().item()}")
+    return idx
+
+
+def find_worst_idx(true, prediction):
+    """Find the index with largest error between true and predicted values."""
+    assert (
+        true.shape == prediction.shape
+    ), "True and prediction must have the same shape."
+    error = (true - prediction).abs().mean(dim=1)
+    idx = error.argmax().item()
+    print(f"Worst index found: {idx} with error {error.max().item()}")
+    return idx
+
+
+print(f"Plotting fields for {n_samples} samples and {n_sensors} sensors...")
 
 # Load data
 data = torch.load(f"twoDNonLinear_{n_samples}_samples_{n_sensors}_sensors_results.pt")
@@ -36,9 +63,22 @@ field_gp_mfFlow = data_gp_mfFlow["field"]
 
 domain = data_mfFlow["domain"].ravel()
 
+plot_idx = (
+    plot_idx["idx"]
+    if not plot_idx["automatic"]
+    else find_best_idx(true=field["HF_field"], prediction=field["Prediction"].mean(1))
+)
+# plot_idx = (
+#     plot_idx["idx"]
+#     if not plot_idx["automatic"]
+#     else find_worst_idx(
+#         true=field["HF_field"], prediction=field_gp["Prediction"]["mean"]
+#     )
+# )
+
 # Extract relevant data
-LF_field = field_mfFlow.get("LF_field")[plot_idx]
-HF_field = field_mfFlow.get("HF_field")[plot_idx]
+LF_field = field_gp.get("LF_field")[plot_idx]
+HF_field = field_gp.get("HF_field")[plot_idx]
 
 Prediction_flora = field.get("Prediction")[plot_idx]
 mean_flora = Prediction_flora.mean(dim=0)
@@ -59,6 +99,7 @@ std_regp = Prediction_regp["std"][plot_idx]
 image_dim = int(math.sqrt(mean_regp.shape[-1]))
 assert image_dim * image_dim == mean_regp.shape[-1]
 
+
 # Ordered list of methods
 method_order = ["FLORA", "FLOREN", "GP", "REGP"]
 
@@ -78,10 +119,6 @@ stds = {
 }
 
 # plots
-fig, axs = plt.subplots(
-    2, 4, figsize=(12, 5), sharey=True, sharex=True, constrained_layout=True, dpi=300
-)
-
 # range of values for mean and std
 mean_vmin, mean_vmax = float("inf"), float("-inf")
 std_vmin, std_vmax = float("inf"), float("-inf")
@@ -102,6 +139,27 @@ for ii, method in enumerate(method_order):
         std_vmax = max(std_vmax, stds[method].log10().max())
 
 fig, axs = plt.subplots(
+    1, 2, figsize=(10, 5), dpi=300, constrained_layout=True, sharex=True, sharey=True
+)
+axs[0].imshow(
+    HF_field.view(image_dim, image_dim),
+    origin="lower",
+    vmin=mean_vmin,
+    vmax=mean_vmax,
+    interpolation="bilinear",
+)
+axs[0].set_title("High-fidelity")
+axs[1].imshow(
+    LF_field.view(image_dim, image_dim),
+    origin="lower",
+    vmin=mean_vmin,
+    vmax=mean_vmax,
+    interpolation="bilinear",
+)
+axs[1].set_title("Low-fidelity")
+plt.savefig("twoDNonLinear_HF_LF_fields.png")
+
+fig, axs = plt.subplots(
     2, 4, figsize=(12, 5), sharey=True, sharex=True, constrained_layout=True, dpi=300
 )
 
@@ -119,6 +177,7 @@ for ii, method in enumerate(method_order):
         aspect="equal",
         vmin=mean_vmin,
         vmax=mean_vmax,
+        interpolation="bilinear",
     )
     # plot std
     plot_std = stds[method].view(image_dim, image_dim).log10()
@@ -129,6 +188,7 @@ for ii, method in enumerate(method_order):
         aspect="equal",
         vmin=std_vmin,
         vmax=std_vmax,
+        interpolation="bilinear",
     )
     # set titles
     axs[0, ii].set_title(method)
