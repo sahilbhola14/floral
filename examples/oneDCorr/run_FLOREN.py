@@ -3,6 +3,7 @@
 Flow-Matching Residual Embedded Nerual Opeartor for One-dimensional correlation
 benchmark.
 """
+import math
 import torch
 import wandb
 import torch.nn as nn
@@ -20,7 +21,7 @@ from mfFlow.utils import (
     Inference,
 )
 from mfFlow.flow import Flow
-from mfFlow.archs import RBFFiLM
+from mfFlow.archs import RBFFiLM, FiLM
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
@@ -137,16 +138,130 @@ class ConditionEmbedding(nn.Module):
         self.latent_dim = latent_dim
         self.time_emb_freq = time_emb_freq
 
+        # embedding
         self.condition_embedding = nn.Sequential(
-            nn.Linear(self.nc + 2 * self.time_emb_freq, 32),
+            nn.Linear(self.nc, 32),
             nn.BatchNorm1d(32),
             nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(32, self.latent_dim),
         )
 
+        # skip projection
+        self.skip_proj = (
+            nn.Linear(self.nc, self.latent_dim)
+            if self.nc != self.latent_dim
+            else nn.Identity()
+        )
+
+        # film
+        self.film = FiLM(2 * self.time_emb_freq, self.latent_dim)
+
+    def forward(self, condition: torch.Tensor, t_emb: torch.Tensor):
+        """forward pass"""
+        # apply skip
+        skip = self.skip_proj(condition)
+        out = self.condition_embedding(condition) + skip  # (batch_size, latent_dim)
+
+        # apply FiLM
+        out = self.film(out.unsqueeze(-1).unsqueeze(-1), t_emb).squeeze()
+
+        return out
+
+
+class StateEmbedding(nn.Module):
+    """State embedding"""
+
+    def __init__(
+        self, nx: int, time_emb_freq: int, latent_dim: int, hidden_dims=[64, 128]
+    ):
+        super(StateEmbedding, self).__init__()
+        self.nx = nx
+        self.time_emb_freq = time_emb_freq
+        self.latent_dim = latent_dim
+
+        # encoder for state
+        self.x_encoder = nn.Sequential(
+            nn.Linear(self.nx, hidden_dims[0]),
+            nn.LayerNorm(hidden_dims[0]),
+            nn.SiLU(),
+            nn.Linear(hidden_dims[0], hidden_dims[1]),
+        )
+
+        # time projection
+        self.time_proj = nn.Sequential(
+            nn.Linear(2 * self.time_emb_freq, hidden_dims[1]), nn.Tanh()
+        )
+
+        # Input skip connection projection
+        self.skip_proj = (
+            nn.Linear(self.nx, hidden_dims[1])
+            if self.nx != hidden_dims[1]
+            else nn.Identity()
+        )
+
+        # FiLM modulation for time-dependent dynamics
+        self.film_layers = nn.ModuleList(
+            [
+                FiLM(2 * self.time_emb_freq, hidden_dims[1]),
+                FiLM(2 * self.time_emb_freq, hidden_dims[1]),
+            ]
+        )
+
+        # Main processing layers with residuals
+        self.main_layers = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(hidden_dims[1], hidden_dims[1]),
+                    nn.LayerNorm(hidden_dims[1]),
+                    nn.SiLU(),
+                )
+                for _ in range(2)
+            ]
+        )
+
+        # Output projection
+        self.output_proj = nn.Linear(hidden_dims[1], latent_dim)
+
+    def forward(self, x, t_emb):
+        """forward"""
+        # encode the state
+        x_skip = self.skip_proj(x)
+        x_emb = self.x_encoder(x) + x_skip  # (batch_size, hidden_dim[1])
+
+        # time-modulated processing
+        out = x_emb + self.time_proj(t_emb)
+
+        # apply FiLM modulation and residual layers
+        for film, layer in zip(self.film_layers, self.main_layers):
+            residual = out
+            out = film(out.unsqueeze(-1).unsqueeze(-1), t_emb).squeeze()
+            out = layer(out)
+            out = out + residual
+        return self.output_proj(out)
+
+
+class SkipConnection(nn.Module):
+    """Skip connection with regularization"""
+
+    def __init__(self, latent_dim, hidden_dim=128):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.layers = nn.Sequential(
+            nn.Linear(self.latent_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),  # LayerNorm instead of BatchNorm
+            nn.SiLU(),  # SiLU instead of ReLU
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, self.latent_dim),
+        )
+
+        # Learnable residual weight
+        self.residual_weight = nn.Parameter(torch.tensor(0.1))
+
     def forward(self, x):
-        return self.condition_embedding(x)
+        return self.layers(x) * self.residual_weight + x
 
 
 class ResFlow(Flow, L.LightningModule):
@@ -183,31 +298,34 @@ class ResFlow(Flow, L.LightningModule):
         self.num_centers = self.flow_config.num_centers
 
         # state embedding
-        self.state_embedding = nn.Sequential(
-            nn.Linear(self.nx + 2 * self.time_emb_freq, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(32, self.latent_dim),
+        self.state_embedding = StateEmbedding(
+            nx=self.nx, time_emb_freq=self.time_emb_freq, latent_dim=self.latent_dim
         )
 
         # condition embedding
         self.condition_embedding = ConditionEmbedding(
-            nc=self.nc, latent_dim=self.latent_dim, time_emb_freq=self.time_emb_freq
+            nc=self.nc,
+            latent_dim=self.latent_dim,
+            time_emb_freq=self.time_emb_freq,
+        )
+
+        # learnable fusion
+        self.fusion = nn.Sequential(
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.SiLU(),
+            nn.Linear(self.latent_dim, self.latent_dim),
         )
 
         # skip connections
-        self.skip = nn.Sequential(
-            nn.Linear(self.latent_dim, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(64, self.latent_dim),
-        )
+        self.skip = SkipConnection(self.latent_dim)
 
         # domain embedding
         self.domain_embedding = RBFFiLM(
-            num_centers=self.num_centers, latent_dim=self.latent_dim, nd=self.nd
+            num_centers=self.num_centers,
+            latent_dim=self.latent_dim,
+            nd=self.nd,
+            nx=self.nx,
         )
 
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
@@ -225,11 +343,16 @@ class ResFlow(Flow, L.LightningModule):
         # Embedd the time
         t_emb = self.time_embedding(t, self.time_emb_freq)
         # Embedd the state
-        state_emb = self.state_embedding(torch.cat([x, t_emb], dim=-1))
+        state_emb = self.state_embedding(x=x, t_emb=t_emb)
         # Embedd the condition
-        condition_emb = self.condition_embedding(torch.cat([c, t_emb], dim=-1))
+        condition_emb = self.condition_embedding(condition=c, t_emb=t_emb)
+        # scale embeddings to prevent vanishing/exploding gradients
+        state_emb *= 1.0 / math.sqrt(self.latent_dim)
+        condition_emb *= 1.0 / math.sqrt(self.latent_dim)
+        # Learnable fusion
+        combined = self.fusion(state_emb + condition_emb)
         # Skip connection
-        out = self.skip(state_emb + condition_emb) + state_emb + condition_emb
+        out = self.skip(combined)
         # Embedd the domain
         out = self.domain_embedding(out, d)
         return out
