@@ -15,7 +15,7 @@ data:
   high_fidelity:
     path: "./high_fidelity.npz"
     n_samples: 1000 #Number of samples of the data set to use
-    n_sensors: 50 # Number of sensors in the output domain
+    n_sensors: 200 # Number of sensors in the output domain
   test_data_path: "./test_data.npz"
 
 dataloader:
