@@ -1,6 +1,6 @@
 # Configutations for Dary Flow
 
-job_name: "Darcy_1000_samples_50_sensors" # Unique identifier for each run
+job_name: "Darcy_1000_samples_200_sensors" # Unique identifier for each run
 mfFlow: True # True means residual operator is learned
 checkpoint_save_path: "./experiments/Darcy/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
