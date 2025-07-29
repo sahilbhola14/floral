@@ -2,11 +2,13 @@ import os
 import os.path as osp
 import torch
 import json
+import time
 
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities import rank_zero_only
 from pytorch_lightning.callbacks import ModelCheckpoint
 from datetime import datetime
+from typing import Callable, Any, Tuple, Dict
 
 
 @rank_zero_only
@@ -68,3 +70,31 @@ def save_args(args, path: str) -> None:
 def save_checkpoint(state, path: str) -> None:
     """Save the model state to a file."""
     torch.save(state, path)
+
+
+class Timer:
+    def __init__(self):
+        self.elapsed = 0.0
+
+    def timeit(self, func: Callable, *args: Tuple, **kwargs: Dict) -> Any:
+        """
+        Times the execution of a function.
+
+        Args:
+            func (Callable): The function to time.
+            *args, **kwargs: Arguments to pass to the function.
+
+        Returns:
+            The result of the function call.
+        """
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        end = time.perf_counter()
+
+        self.elapsed = end - start
+        print(f"[Timer] {func.__name__} took {self.elapsed:.6f} seconds")
+        return result
+
+    def get_last_time(self) -> float:
+        """Returns the last recorded elapsed time."""
+        return self.elapsed

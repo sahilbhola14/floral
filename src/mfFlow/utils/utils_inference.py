@@ -4,6 +4,181 @@ import gpytorch
 from mfFlow.utils import printer
 from tqdm import tqdm
 from gpytorch.models import ExactGP
+from contextlib import nullcontext
+from torch.amp import autocast
+
+
+class OptimizedInference:
+    """Inference class for handling inference operations."""
+
+    def __init__(
+        self,
+        model: L.LightningModule,
+        test_config: dict,
+        statistics: dict,
+        job_name: str,
+        mfFlow: bool,
+        generate_config: dict,
+    ):
+        # Initialize the model with the best_model_path
+        self.model = model
+        # Set the model to evaluation mode
+        self.model.eval()
+        # Enable inference optimizations
+        torch.backends.cudnn.benchmark = True  # Optimize for fixed input sizes
+
+        # Store the test configuration, statistics, job name, and number of samples
+        self.test_config = test_config  # Configuration for the inference task
+        self.statistics = statistics  # Statistics of the data
+        self.job_name = job_name  # Name of the inference job
+        self.mfFlow = mfFlow  # Flag for multi-flow processing
+        self.generate_config = generate_config  # Configuration for generation settings
+
+        # Extract generate config
+        self.minibatch_size = generate_config.get("minibatch_size", None)
+        self.nT = generate_config.get("nT", None)  # Number of time steps
+        self.n_gen = generate_config.get(
+            "n_gen", None
+        )  # Number of generations (for UQ)
+
+        # Pre-comptue normalization facotrs
+        self.field_mean = self.statistics["field"]["mean"].item()
+        self.field_std = self.statistics["field"]["std"].item()
+
+        # Pre-move the domain to device
+        self.d_eval = self.test_config["domain"].to(self.model.device)
+
+    @torch.no_grad()
+    def __call__(self):
+        """Perform the inference task"""
+        n_samples = self.test_config.get("n_samples")
+
+        # Pre-allocate tensors
+        device = self.model.device
+        field = {
+            "LF_field": torch.empty(
+                n_samples, *self.test_config["LF_field"][0].shape, device="cpu"
+            ),
+            "HF_field": torch.empty(
+                n_samples, *self.test_config["HF_field"][0].shape, device="cpu"
+            ),
+            "Prediction": torch.empty(
+                n_samples, self.n_gen, len(self.d_eval), device="cpu"
+            ),
+        }
+        residual = {
+            "True": torch.empty(
+                n_samples, *self.test_config["LF_field"][0].shape, device="cpu"
+            ),
+            "Prediction": torch.empty(
+                n_samples, self.n_gen, len(self.d_eval), device="cpu"
+            ),
+        }
+
+        # use mixed precision if available for faster inference
+        use_amp = torch.cuda.is_available() and hasattr(torch.cuda.amp, "autocast")
+        printer(f"Using automatic mixed-precioin: {use_amp}")
+        autocast_context = autocast("cuda") if use_amp else nullcontext()
+
+        pbar = tqdm(
+            range(n_samples),
+            desc="Inference",
+            ncols=150,
+            leave=True,
+        )
+
+        for ii in pbar:
+            with autocast_context:
+                # get the condition
+                c_eval = (
+                    self.test_config["condition"][ii]
+                    .unsqueeze(0)
+                    .to(device, non_blocking=True)
+                )
+
+                # true field
+                LF_field = self.test_config["LF_field"][ii]
+                HF_field = self.test_config["HF_field"][ii]
+                true_residual = HF_field - LF_field
+
+                # perform the prediction
+                if self.mfFlow:
+                    pred_residual = self._get_prediction(c_eval)
+                    # Denormalize in-place
+                    pred_residual = pred_residual * self.field_std + self.field_mean
+                    # Get the high fidelity field prediction
+                    pred_field = pred_residual + LF_field.unsqueeze(0).to(device)
+                    pred_field = pred_field.to(
+                        "cpu", non_blocking=True
+                    )  # Move back to CPU
+                    pred_residual = pred_residual.to("cpu", non_blocking=True)
+                else:
+                    pred_field = self._get_prediction(c_eval)
+                    # Denormalize in-place
+                    pred_field = pred_field * self.field_std + self.field_mean
+                    pred_field_cpu = pred_field.to("cpu", non_blocking=True)
+                    # Compute the residual
+                    pred_residual = (pred_field - LF_field.unsqueeze(0).to(device)).to(
+                        "cpu", non_blocking=True
+                    )
+                    pred_field = pred_field_cpu
+
+            # Store results
+            field["LF_field"][ii] = LF_field
+            field["HF_field"][ii] = HF_field
+            field["Prediction"][ii] = (
+                pred_field.squeeze(0) if pred_field.dim() > 2 else pred_field
+            )
+            residual["True"][ii] = true_residual
+            residual["Prediction"][ii] = (
+                pred_residual.squeeze(0) if pred_residual.dim() > 2 else pred_residual
+            )
+
+        # Ensure all async transfers are complete
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        # Save the results
+        results = {
+            "field": field,
+            "residual": residual,
+            "statistics": self.statistics,
+            "domain": self.test_config["domain"],
+            "job_name": self.job_name,
+            "test_config": self.test_config,
+        }
+
+        # Save the results to a file
+        save_path = f"{self.job_name}_results{'_mfFlow' if self.mfFlow else ''}.pt"
+        printer(f"Saving results to {save_path}")
+        torch.save(results, save_path)
+        pbar.close()
+
+    def _get_prediction(self, c_eval: torch.Tensor):
+        """Get the model prediction"""
+        pred_list = []
+
+        # process in batches with optimziation
+        for ii in range(0, len(self.d_eval), self.minibatch_size):
+            d_batch = self.d_eval[ii : ii + self.minibatch_size]
+
+            batch_pred = (
+                self.model.interpolate(
+                    c_eval=c_eval,
+                    d_eval=d_batch,
+                    n_gen=self.n_gen,
+                    nT=self.nT,
+                )
+                .squeeze(-1)
+                .T.detach()
+            )
+
+            pred_list.append(batch_pred)
+
+        pred = torch.hstack(pred_list)
+        assert pred.shape == (self.n_gen, len(self.d_eval))
+
+        return pred
 
 
 class Inference:
