@@ -2,7 +2,7 @@
 
 job_name: "Darcy_1000_samples_200_sensors" # Unique identifier for each run
 mfFlow: True # True means residual operator is learned
-tune_hyperparameters: True # If true, then hyperparameter sweep is conducted
+tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/Darcy/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "Darcy" # Logger folder
@@ -40,8 +40,8 @@ flow:
   sig_min: 1.0e-5 # gaussian std for the data
 
 generate:
-  minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
-  n_gen: 100 # number of samples generated (for UQ purposes)
+  minibatch_size: 50 # number of domain points to process at a time (increase if memory is available)
+  n_gen: 10 # number of samples generated (for UQ purposes)
   nT: 100 # number of time steps for integration
 
 plot:

@@ -150,12 +150,12 @@ class ConvBlock(nn.Module):
         self.film = FiLM(2 * self.t_emb_dim, self.out_channels)
 
         # self attention
-        self.attention = nn.MultiheadAttention(
-            embed_dim=self.out_channels,
-            num_heads=min(8, self.out_channels // 32),
-            batch_first=True,
-            dropout=0.1,
-        )
+        # self.attention = nn.MultiheadAttention(
+        #     embed_dim=self.out_channels,
+        #     num_heads=min(8, self.out_channels // 32),
+        #     batch_first=True,
+        #     dropout=0.1,
+        # )
 
         # Skip connection projection (if needed)
         self.skip_proj = (
@@ -188,10 +188,10 @@ class ConvBlock(nn.Module):
         out = self.film(out, t_emb)
         out = self.activation(out)
 
-        # spatial attention
-        out_flat = out.view(B, C, H * W).transpose(1, 2)  # (B, H*W, C)
-        out_attn, _ = self.attention(out_flat, out_flat, out_flat)
-        out = out_attn.transpose(1, 2).view(B, C, H, W)
+        # # spatial attention
+        # out_flat = out.view(B, C, H * W).transpose(1, 2)  # (B, H*W, C)
+        # out_attn, _ = self.attention(out_flat, out_flat, out_flat)
+        # out = out_attn.transpose(1, 2).view(B, C, H, W)
 
         out = self.activation(out)
 
@@ -306,11 +306,6 @@ class StateEmbedding(nn.Module):
             nn.Linear(hidden_dims[0], hidden_dims[1]),
         )
 
-        # time projection
-        self.time_proj = nn.Sequential(
-            nn.Linear(2 * self.time_emb_freq, hidden_dims[1]), nn.Tanh()
-        )
-
         # Input skip connection projection
         self.skip_proj = (
             nn.Linear(self.nx, hidden_dims[1])
@@ -345,10 +340,7 @@ class StateEmbedding(nn.Module):
         """forward"""
         # encode the state
         x_skip = self.skip_proj(x)
-        x_emb = self.x_encoder(x) + x_skip  # (batch_size, hidden_dim[1])
-
-        # time-modulated processing
-        out = x_emb + self.time_proj(t_emb)
+        out = self.x_encoder(x) + x_skip  # (batch_size, hidden_dim[1])
 
         # apply FiLM modulation and residual layers
         for film, layer in zip(self.film_layers, self.main_layers):
@@ -420,7 +412,10 @@ class ResFlow(Flow, L.LightningModule):
 
         # state embedding
         self.state_embedding = StateEmbedding(
-            nx=self.nx, time_emb_freq=self.time_emb_freq, latent_dim=self.latent_dim
+            nx=self.nx,
+            time_emb_freq=self.time_emb_freq,
+            latent_dim=self.latent_dim,
+            hidden_dims=[32, 64],
         )
 
         # condition embedding
@@ -503,6 +498,11 @@ def train_model(hp_config: dict = None):
     )
     # model
     model = ResFlow(config=config, hp_config=hp_config)
+    if hasattr(model, "compile") and torch.cuda.is_available():
+        # Use torch.compile for PyTorch 2.0+ (significant speedup)
+        printer("Compiling the model...")
+        model = torch.compile(model, mode="default")
+
     model.apply(init_weights)
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:

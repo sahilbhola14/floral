@@ -1,6 +1,6 @@
 FLOREN:
-  learning_rate: 1.0e-2
-  batch_size: 256
+  learning_rate: 5.0e-3
+  batch_size: 512
   max_epochs: 5000
   optimizer: "Adam"
   weight_decay: 1.0e-4
