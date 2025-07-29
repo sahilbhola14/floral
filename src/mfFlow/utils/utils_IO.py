@@ -25,6 +25,9 @@ def make_dirs(dirname) -> None:
 
 def check_path(path: str, suggestion: str = None) -> None:
     """Check if a path exists, raise an error if it does not."""
+    assert path is not None and isinstance(
+        path, str
+    ), "Path must be a string and not None"
     assert osp.exists(path), f"Path {path} does not exist" + (
         f". Did you mean {suggestion}?" if suggestion else ""
     )
@@ -92,7 +95,7 @@ class Timer:
         end = time.perf_counter()
 
         self.elapsed = end - start
-        print(f"[Timer] {func.__name__} took {self.elapsed:.6f} seconds")
+        print(f"[Timer] {func.__name__} took {self.elapsed: .6f} seconds")
         return result
 
     def get_last_time(self) -> float:
