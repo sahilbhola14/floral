@@ -489,13 +489,25 @@ class OpDataModule(L.LightningDataModule):
             check_path(self.file_paths["datasets"]["val"])
             check_path(self.file_paths["statistics"])
             check_path(self.file_paths["test_config"])
-            self.train_set = torch.load(self.file_paths["datasets"]["train"])
-            self.val_set = torch.load(self.file_paths["datasets"]["val"])
-            self.statistics = torch.load(self.file_paths["statistics"])
-            self.test_config = torch.load(self.file_paths["test_config"])
+            check_path(self.file_paths["sensor_locations"])
+
+            self.train_set = torch.load(
+                self.file_paths["datasets"]["train"], weights_only=False
+            )
+            self.val_set = torch.load(
+                self.file_paths["datasets"]["val"], weights_only=False
+            )
+            self.statistics = torch.load(
+                self.file_paths["statistics"], weights_only=False
+            )
+            self.test_config = torch.load(
+                self.file_paths["test_config"], weights_only=False
+            )
 
             # Load sensor locations irrespective of self.reload_sensors
-            self.sensor_locations = torch.load(self.file_paths["sensor_locations"])
+            self.sensor_locations = torch.load(
+                self.file_paths["sensor_locations"], weights_only=False
+            )
 
         else:
             # Get the processed operator fields
