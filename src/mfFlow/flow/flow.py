@@ -191,7 +191,8 @@ class Flow(ABC):
         c_eval = c.view(batch_size, -1)
         d_eval = d.reshape(batch_size, -1)
         t_eval = t.repeat(batch_size, 1)
-        vt = self.evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
+        with torch.no_grad():
+            vt = self.evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
         return vt.view(x.shape)
 
     @torch.no_grad()
@@ -241,7 +242,8 @@ class Flow(ABC):
                 return vt
 
             # Integrate
-            x1_chunk = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
+            with torch.no_grad():
+                x1_chunk = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
             results.append(x1_chunk)
 
             # clear cache

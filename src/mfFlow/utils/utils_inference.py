@@ -165,7 +165,6 @@ class OptimizedInference:
         start_idx = 0
 
         for ii in range(0, total_size, self.minibatch_size):
-
             d_batch = self.d_eval[ii : ii + self.minibatch_size]
 
             batch_pred = (
@@ -174,7 +173,7 @@ class OptimizedInference:
                     d_eval=d_batch,
                     n_gen=self.n_gen,
                     nT=self.nT,
-                    method="dopri5",
+                    method="rk4",
                     atol=1e-3,
                     rtol=1e-3,
                     max_n_gen_per_batch=20,
