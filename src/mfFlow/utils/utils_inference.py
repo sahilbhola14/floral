@@ -77,7 +77,7 @@ class OptimizedInference:
 
         # use mixed precision if available for faster inference
         use_amp = torch.cuda.is_available() and hasattr(torch.cuda.amp, "autocast")
-        printer(f"Using automatic mixed-precioin: {use_amp}")
+        printer(f"Using automatic mixed-precision: {use_amp}")
         autocast_context = autocast("cuda") if use_amp else nullcontext()
 
         pbar = tqdm(
@@ -103,6 +103,7 @@ class OptimizedInference:
 
                 # perform the prediction
                 if self.mfFlow:
+                    # pred_residual = self._get_prediction(c_eval)
                     pred_residual = self._get_prediction(c_eval)
                     # Denormalize in-place
                     pred_residual = pred_residual * self.field_std + self.field_mean
@@ -155,11 +156,16 @@ class OptimizedInference:
         pbar.close()
 
     def _get_prediction(self, c_eval: torch.Tensor):
-        """Get the model prediction"""
-        pred_list = []
+        """Get the model prediction for a given conditon over the entire domain"""
+        total_size = len(self.d_eval)
+        pred = torch.empty(
+            self.n_gen, total_size, device=c_eval.device, dtype=torch.float32
+        )  # adjust dtype as needed
 
-        # process in batches with optimziation
-        for ii in range(0, len(self.d_eval), self.minibatch_size):
+        start_idx = 0
+
+        for ii in range(0, total_size, self.minibatch_size):
+
             d_batch = self.d_eval[ii : ii + self.minibatch_size]
 
             batch_pred = (
@@ -168,15 +174,22 @@ class OptimizedInference:
                     d_eval=d_batch,
                     n_gen=self.n_gen,
                     nT=self.nT,
+                    method="dopri5",
+                    atol=1e-3,
+                    rtol=1e-3,
+                    max_n_gen_per_batch=20,
                 )
                 .squeeze(-1)
                 .T.detach()
-            )
+            )  # shape: (n_gen, batch_size)
 
-            pred_list.append(batch_pred)
+            batch_size = batch_pred.shape[1]
+            pred[
+                :, start_idx : start_idx + batch_size
+            ] = batch_pred  # copy batch into pre-allocated tensor
+            start_idx += batch_size
 
-        pred = torch.hstack(pred_list)
-        assert pred.shape == (self.n_gen, len(self.d_eval))
+        assert pred.shape == (self.n_gen, total_size)
 
         return pred
 
