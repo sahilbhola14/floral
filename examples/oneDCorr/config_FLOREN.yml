@@ -32,7 +32,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 3
+  devices: 4
   strategy: 'ddp'
   precision: 'bf16-mixed'
 
@@ -40,7 +40,7 @@ flow:
   sig_min: 1.0e-5 # gaussian std for the data
 
 generate:
-  minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
+  minibatch_size: 100 # number of domain points to process at a time (increase if memory is available)
   n_gen: 100 # number of samples generated (for UQ purposes)
   nT: 100 # number of time steps for integration
 
