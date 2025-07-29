@@ -1,7 +1,8 @@
 # Configutations for 1-D Correlation
 
 job_name: "poisson_2000_samples_1_sensors" # Unique identifier for each run
-mfFlow: True # True means residual operator is learned
+mfFlow: False # True means residual operator is learned
+tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/poisson/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "poisson" # Logger folder
@@ -10,6 +11,7 @@ data:
   nx: 1 # Output field dimensionality
   nc: 100 # Input field dimensionality
   nd: 1 # Domain dimensionality
+  sensing_strategy: "random" # Options: "random", "uniform", "stratified"
   low_fidelity:
     path: "./low_fidelity.npz"
   high_fidelity:
@@ -21,7 +23,6 @@ data:
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   reload_sensors: False # If True, "sensor_location.pt" file will be used. If 'reload' is True, then it will reload anyways.
-  batch_size: 2048 # batch size
   train_ratio: 0.7 # percentage of {n_samples} to train
   num_workers: 6 # Number of workers
   normalize:
@@ -34,15 +35,9 @@ train:
   devices: 3
   strategy: 'ddp'
   precision: 'bf16-mixed'
-  max_epochs: 5000
-  learning_rate: 5.0e-3
-  weight_decay: 1.0e-4
 
 flow:
-  time_emb_freq: 4 # time embedding
   sig_min: 1.0e-5 # gaussian std for the data
-  latent_dim: 35 # latent for the embedding (state and condition)
-  num_centers: 10 # Number of RBF centers for domain embedding
 
 generate:
   minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
