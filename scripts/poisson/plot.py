@@ -88,7 +88,7 @@ ax_main.fill_between(
 
 # ax_main.set_title("Method Comparison")
 ax_main.set_xlabel(r"$x$")
-ax_main.legend(ncol=2)
+ax_main.legend(ncol=2, loc="upper right")
 
 # --- Inset Zoom-in on Right Plot ---
 

@@ -136,7 +136,7 @@ ax_main.legend(ncol=2)
 axins = inset_axes(
     ax_main,
     width="20%",  # or float (absolute units)
-    height="40%",
+    height="20%",
     bbox_to_anchor=(
         0.32,
         0.0000,
@@ -150,8 +150,8 @@ axins = inset_axes(
 )
 
 # Define zoom range (you can change this to a region of interest)
-x1, x2 = 0.8, 1.0
-y1, y2 = -0.5, 1.5
+x1, x2 = 0.55, 0.7
+y1, y2 = -1.2, -0.8
 # y1, y2 = (
 #     HF_field[(domain > x1) & (domain < x2)].min(),
 #     HF_field[(domain > x1) & (domain < x2)].max(),
