@@ -9,3 +9,6 @@ python run_GP.py
 ```
 
 To turn on the residual learning, use the key `mfFlow=True`
+
+## Parameter sweeps
+For sweeps, only use single device.
