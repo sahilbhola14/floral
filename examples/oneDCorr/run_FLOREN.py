@@ -361,6 +361,7 @@ def train_model(hp_config: dict = None):
     Returns:
         best_model_path (str): Path to the best model checkpoint after training.
     """
+    printer("Training ...")
     if config.tune_hyperparameters:
         # initialize wandb with the hyperparameter config
         wandb.init()
@@ -403,6 +404,7 @@ def train_model(hp_config: dict = None):
 
 
 def infer_model(best_model_path, data_module):
+    printer("Inference...")
     # load the best model
     # best_model = ResFlow.load_from_checkpoint(best_model_path, map_location="cpu")
     # best_model.to("cuda" if torch.cuda.is_available() else "cpu")
@@ -450,16 +452,20 @@ if __name__ == "__main__":
         if config.train.stage == "train":
             best_model_path, data_module = train_model(hp_config)
         elif config.train.stage == "eval":
-            # TODO: Currently broken as it must take in the dataloader
-            raise NotImplementedError(
-                "Evaluation stage is not implemented yet.\
-                                      Dataloader is not available from the train_model\
-                                      function"
+            printer(
+                "Skipping training and evaluating directly using"
+                f"{config.checkpoint_load_path}"
             )
             assert (
                 config.dataloader.reload is True
             ), "Reload must be True for evaluation"
-            # check_path(config.checkpoint_load_path)
-            # best_model_path = config.checkpoint_load_path
+            assert (
+                config.checkpoint_load_path is not None
+            ), "checkpoint must be provided in eval mode"
+            # data module
+            data_module = build_data_module(config=config, hp_config=hp_config)
+            # load the checkpoint
+            check_path(config.checkpoint_load_path)
+            best_model_path = config.checkpoint_load_path
         # infer
         infer_model(best_model_path, data_module)
