@@ -189,7 +189,7 @@ class Flow(ABC):
         batch_size = x.shape[0] * x.shape[1]
         x_eval = x.view(batch_size, -1)
         c_eval = c.view(batch_size, -1)
-        d_eval = d.view(batch_size, -1)
+        d_eval = d.reshape(batch_size, -1)
         t_eval = t.repeat(batch_size, 1)
         vt = self.evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
         return vt.view(x.shape)
@@ -204,32 +204,51 @@ class Flow(ABC):
         method="dopri5",
         atol=1e-4,
         rtol=1e-4,
+        max_n_gen_per_batch: int = 50,  # reduce this if c_eval is high dimensional
     ):
         self.eval()  # set to eval mode
         c_eval, d_eval = c_eval.to(self.device), d_eval.to(self.device)
+
         assert c_eval.ndim == 2, "c_eval should be 2D"
         assert d_eval.ndim == 2, "d_eval should be 2D"
         assert c_eval.shape[-1] == self.nc, "c_eval should have shape (batch_size, nc)"
         assert c_eval.shape[0] == 1, "c_eval should have shape (1, nc)"
-        # Create batches
+
+        # batch size
         batch_size = d_eval.shape[0]
-        c_batch = c_eval.unsqueeze(1).repeat(batch_size, n_gen, 1)
-        d_batch = d_eval.unsqueeze(1).repeat(1, n_gen, 1)
-        # Sample initial condition
-        x0 = self.sample_initial_condition(c_batch, batch_size, n_gen)
-        # Sample time
-        t = torch.linspace(0, 1, nT, device=self.device)
 
-        # RHS
+        # results
+        results = []
 
-        def rhs(t, x):
-            vt = self._wrapper(x, c_batch, d_batch, t)
-            return vt
+        # Split n_gen into smaller batches
+        for n_start in range(0, n_gen, max_n_gen_per_batch):
+            n_end = min(n_start + max_n_gen_per_batch, n_gen)
+            current_n_gen = n_end - n_start
 
-        # Integrate
-        x1 = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
+            # create batches
+            c_batch = c_eval.unsqueeze(1).expand(batch_size, current_n_gen, -1)
+            d_batch = d_eval.unsqueeze(1).expand(-1, current_n_gen, -1)
 
-        return x1
+            # Sample initial condition
+            x0 = self.sample_initial_condition(c_batch, batch_size, current_n_gen)
+
+            # Sample time
+            t = torch.linspace(0, 1, nT, device=self.device, dtype=x0.dtype)
+
+            # RHS
+            def rhs(t, x):
+                vt = self._wrapper(x, c_batch, d_batch, t)
+                return vt
+
+            # Integrate
+            x1_chunk = odeint(rhs, x0, t, method=method, atol=atol, rtol=rtol)[-1]
+            results.append(x1_chunk)
+
+            # clear cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        return torch.cat(results, dim=1)
 
     @abstractmethod
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
