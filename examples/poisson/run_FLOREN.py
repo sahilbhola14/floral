@@ -17,8 +17,8 @@ from mfFlow.utils import (
     get_trainer,
     init_weights,
     check_path,
-    Inference,
 )
+from mfFlow.utils import OptimizedInference as Inference
 from mfFlow.flow import Flow
 from mfFlow.archs import RBFFiLM, FiLM
 
@@ -405,8 +405,19 @@ def train_model(hp_config: dict = None):
 
 def infer_model(best_model_path, data_module):
     # load the best model
-    best_model = ResFlow.load_from_checkpoint(best_model_path, map_location="cpu")
-    best_model.to("cuda" if torch.cuda.is_available() else "cpu")
+    # best_model = ResFlow.load_from_checkpoint(best_model_path, map_location="cpu")
+    # best_model.to("cuda" if torch.cuda.is_available() else "cpu")
+    best_model = ResFlow.load_from_checkpoint(
+        best_model_path, map_location="cuda" if torch.cuda.is_availalbe() else "cpu"
+    )
+
+    # set model to eval mode
+    best_model.eval()
+    # enable inference model optimizations
+    if hasattr(best_model, "compile") and torch.cuda.is_available():
+        # Use torch.compile for PyTorch 2.0+ (significant speedup)
+        printer("Compiling the model...")
+        best_model = torch.compile(best_model, mode="max-autotune")
 
     # infer the mode
     infer = Inference(
