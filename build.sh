@@ -21,6 +21,4 @@ pip install --upgrade dist/*.whl --force-reinstall
 
 # Step 5: Export build time to log
 BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-echo "Build completed at $BUILD_TIME" >> build_time.log
-
-echo "Build time logged to build_time.log"
+echo "Build completed at $BUILD_TIME and logged to build_time.log" | tee -a build_time.log
