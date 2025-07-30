@@ -61,6 +61,7 @@ class Flow(ABC):
             )
 
         # scheduler
+        available_schedulers = ["exponential", "steplr", "none"]
         if self.stepper_config["scheduler"] == "exponential":
             gamma = self.stepper_config["exponential_scheduler_gamma"]
             scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
@@ -94,6 +95,12 @@ class Flow(ABC):
         elif self.stepper_config["scheduler"] == "none":
 
             stepper = {"optimizer": optimizer}
+
+        else:
+            raise ValueError(
+                f"Scheduler: {self.stepper_config['scheduler']} is unavailable."
+                f"Choose from: {','.join(available_schedulers)}"
+            )
 
         return stepper
 

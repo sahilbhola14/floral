@@ -173,9 +173,9 @@ class OptimizedInference:
                     d_eval=d_batch,
                     n_gen=self.n_gen,
                     nT=self.nT,
-                    method="rk4",
-                    atol=1e-3,
-                    rtol=1e-3,
+                    method="dopri5",
+                    atol=1e-4,
+                    rtol=1e-4,
                     max_n_gen_per_batch=20,
                 )
                 .squeeze(-1)
