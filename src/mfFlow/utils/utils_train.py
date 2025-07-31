@@ -133,7 +133,9 @@ class OpDataModule(L.LightningDataModule):
             },
             "statistics": "statistics_mfFlow.pt" if self.mfFlow else "statistics.pt",
             "test_config": "test_config_mfFlow.pt" if self.mfFlow else "test_config.pt",
-            "sensor_locations": "sensor_locations.pt",
+            "sensor_locations": "sensor_locations_mfFlow.pt"
+            if self.mfFlow
+            else "sensor_locations.pt",
         }
 
     def _extract_fields(self, data_dict: dict):
@@ -171,6 +173,7 @@ class OpDataModule(L.LightningDataModule):
             sensor_locations (torch.Tensor): Tensor of shape (n_samples, n_sensors)
         """
         if self.reload_sensors:
+            raise NotImplementedError("Pass sensor file instead from config.")
             printer(
                 f"Reloading sensor locations from {self.file_paths['sensor_locations']}"
             )
@@ -359,6 +362,7 @@ class OpDataModule(L.LightningDataModule):
 
             field_train_norm = field_train
             field_val_norm = field_val
+
         # Normalize the conditions
         condition_train = train_data["condition"]
         condition_val = val_data["condition"]
@@ -442,10 +446,12 @@ class OpDataModule(L.LightningDataModule):
         assert all(
             test_key in test_data for test_key in req_keys
         ), f"Test data must contain the keys: {req_keys}"
+
         LF_field = test_data.get("LF_field", None)
         HF_field = test_data.get("HF_field", None)
         condition = test_data.get("condition", None)
         domain = test_data.get("domain", None)
+
         # Check shapes
         assert (
             LF_field.shape[1] == self.nc
@@ -470,6 +476,8 @@ class OpDataModule(L.LightningDataModule):
         condition_mean = self.statistics["condition"]["mean"]
         condition_std = self.statistics["condition"]["std"]
         condition = (condition - condition_mean) / condition_std
+
+        assert not torch.isnan(condition).any(), "Invalid normalization"
 
         # Create config dict
         test_config = {
@@ -630,7 +638,9 @@ class GPDataModule:
             "test_config": "test_config_mfFlow_GP.pt"
             if self.mfFlow
             else "test_config_GP.pt",
-            "sensor_locations": "sensor_locations.pt",
+            "sensor_locations": "sensor_locations_mfFlow_GP.pt"
+            if self.mfFlow
+            else "sensor_locations_GP.pt",
         }
 
     def _extract_fields(self, data_dict: dict):
@@ -688,6 +698,7 @@ class GPDataModule:
             n_sensors_available >= self.n_sensors
         ), f"Not enough sensors available: {n_sensors_available} < {self.n_sensors}"
         if self.reload_sensors:
+            raise NotImplementedError("Load sensor form file. pass in config.")
             printer(
                 f"Reloading sensor locations from {self.file_paths['sensor_locations']}"
             )

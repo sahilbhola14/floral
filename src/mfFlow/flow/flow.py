@@ -200,6 +200,7 @@ class Flow(ABC):
         t_eval = t.repeat(batch_size, 1)
         with torch.no_grad():
             vt = self.evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
+            assert not torch.isnan(vt).any(), "Vector field is NaN"
         return vt.view(x.shape)
 
     @torch.no_grad()
@@ -221,6 +222,14 @@ class Flow(ABC):
         assert d_eval.ndim == 2, "d_eval should be 2D"
         assert c_eval.shape[-1] == self.nc, "c_eval should have shape (batch_size, nc)"
         assert c_eval.shape[0] == 1, "c_eval should have shape (1, nc)"
+
+        # check for Nan and inf
+        assert not (
+            torch.isnan(c_eval).any() or torch.isinf(c_eval).any()
+        ), "Nans/Infs found in condition."
+        assert not (
+            torch.isnan(d_eval).any() or torch.isinf(d_eval).any()
+        ), "Nans/Infs found in domain."
 
         # batch size
         batch_size = d_eval.shape[0]
