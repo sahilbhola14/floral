@@ -1,6 +1,7 @@
 import torch
 import pytorch_lightning as L
 import gpytorch
+import warnings
 from mfFlow.utils import printer
 from tqdm import tqdm
 from gpytorch.models import ExactGP
@@ -138,6 +139,10 @@ class OptimizedInference:
         # Ensure all async transfers are complete
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+
+        # check for nans
+        if torch.isnan(field["Prediction"]).any():
+            warnings.warn("Nans found in prediction.", RuntimeWarning)
 
         # Save the results
         results = {
