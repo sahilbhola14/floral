@@ -1,7 +1,37 @@
 import math
 import torch
 import torch.nn as nn
-from mfFlow.archs import MLP
+
+
+class MLP(nn.Module):
+    """Multi-layer perceptron with flexible architecture"""
+
+    def __init__(self, in_dim, width, out_dim, activations, dropout=0.0, norm=None):
+        super().__init__()
+        layers = []
+        dims = [in_dim] + width + [out_dim]
+
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+
+            # Add normalization if specified
+            if norm == "layer" and i < len(dims) - 2:
+                layers.append(nn.LayerNorm(dims[i + 1]))
+            elif norm == "batch" and i < len(dims) - 2:
+                layers.append(nn.BatchNorm1d(dims[i + 1]))
+
+            # Add activation
+            if i < len(activations) and activations[i] is not None:
+                layers.append(activations[i])
+
+            # Add dropout
+            if dropout > 0 and i < len(dims) - 2:
+                layers.append(nn.Dropout(dropout))
+
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.network(x)
 
 
 class RBFFiLM(nn.Module):
