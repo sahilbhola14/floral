@@ -19,7 +19,7 @@ from mfFlow.utils import (
 )
 from mfFlow.utils import OptimizedInference as Inference
 from mfFlow.flow import Flow
-from mfFlow.archs import RBFFiLM, FiLM
+from mfFlow.archs import RBFFiLM, Conditional1DEmbedding, StateEmbedding
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
@@ -121,122 +121,122 @@ def build_trainer(
     return trainer
 
 
-class ConditionEmbedding(nn.Module):
-    """Class for condition embedding."""
+# class ConditionEmbedding(nn.Module):
+#     """Class for condition embedding."""
 
-    def __init__(self, nc: int, latent_dim, time_emb_freq: int):
-        """Initialize the condition embedding module.
-        Args:
-            nc (int): Dimensionality of the condition field.
-            latent_dim (int): Dimension of the latent space (output dimension).
-            time_emb_freq (int): Frequency of the time embedding.
-        """
-        super(ConditionEmbedding, self).__init__()
-        self.nc = nc
-        self.latent_dim = latent_dim
-        self.time_emb_freq = time_emb_freq
+#     def __init__(self, nc: int, latent_dim, time_embed_freq: int):
+#         """Initialize the condition embedding module.
+#         Args:
+#             nc (int): Dimensionality of the condition field.
+#             latent_dim (int): Dimension of the latent space (output dimension).
+#             time_embed_freq (int): Frequency of the time embedding.
+#         """
+#         super(ConditionEmbedding, self).__init__()
+#         self.nc = nc
+#         self.latent_dim = latent_dim
+#         self.time_embed_freq = time_embed_freq
 
-        # embedding
-        self.condition_embedding = nn.Sequential(
-            nn.Linear(self.nc, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(32, self.latent_dim),
-        )
+#         # embedding
+#         self.condition_embedding = nn.Sequential(
+#             nn.Linear(self.nc, 32),
+#             nn.BatchNorm1d(32),
+#             nn.ReLU(),
+#             nn.Dropout(0.1),
+#             nn.Linear(32, self.latent_dim),
+#         )
 
-        # skip projection
-        self.skip_proj = (
-            nn.Linear(self.nc, self.latent_dim)
-            if self.nc != self.latent_dim
-            else nn.Identity()
-        )
+#         # skip projection
+#         self.skip_proj = (
+#             nn.Linear(self.nc, self.latent_dim)
+#             if self.nc != self.latent_dim
+#             else nn.Identity()
+#         )
 
-        # film
-        self.film = FiLM(2 * self.time_emb_freq, self.latent_dim)
+#         # film
+#         self.film = FiLM(2 * self.time_embed_freq, self.latent_dim)
 
-    def forward(self, condition: torch.Tensor, t_emb: torch.Tensor):
-        """forward pass"""
-        # apply skip
-        skip = self.skip_proj(condition)
-        out = self.condition_embedding(condition) + skip  # (batch_size, latent_dim)
+#     def forward(self, condition: torch.Tensor, t_emb: torch.Tensor):
+#         """forward pass"""
+#         # apply skip
+#         skip = self.skip_proj(condition)
+#         out = self.condition_embedding(condition) + skip  # (batch_size, latent_dim)
 
-        # apply FiLM
-        out = self.film(out.unsqueeze(-1).unsqueeze(-1), t_emb).squeeze()
+#         # apply FiLM
+#         out = self.film(out.unsqueeze(-1).unsqueeze(-1), t_emb).squeeze()
 
-        return out
+#         return out
 
 
-class StateEmbedding(nn.Module):
-    """State embedding"""
+# class StateEmbedding(nn.Module):
+#     """State embedding"""
 
-    def __init__(
-        self, nx: int, time_emb_freq: int, latent_dim: int, hidden_dims=[64, 128]
-    ):
-        super(StateEmbedding, self).__init__()
-        self.nx = nx
-        self.time_emb_freq = time_emb_freq
-        self.latent_dim = latent_dim
+#     def __init__(
+#         self, nx: int, time_embed_freq: int, latent_dim: int, hidden_dims=[64, 128]
+#     ):
+#         super(StateEmbedding, self).__init__()
+#         self.nx = nx
+#         self.time_embed_freq = time_embed_freq
+#         self.latent_dim = latent_dim
 
-        # encoder for state
-        self.x_encoder = nn.Sequential(
-            nn.Linear(self.nx, hidden_dims[0]),
-            nn.LayerNorm(hidden_dims[0]),
-            nn.SiLU(),
-            nn.Linear(hidden_dims[0], hidden_dims[1]),
-        )
+#         # encoder for state
+#         self.x_encoder = nn.Sequential(
+#             nn.Linear(self.nx, hidden_dims[0]),
+#             nn.LayerNorm(hidden_dims[0]),
+#             nn.SiLU(),
+#             nn.Linear(hidden_dims[0], hidden_dims[1]),
+#         )
 
-        # time projection
-        self.time_proj = nn.Sequential(
-            nn.Linear(2 * self.time_emb_freq, hidden_dims[1]), nn.Tanh()
-        )
+#         # time projection
+#         self.time_proj = nn.Sequential(
+#             nn.Linear(2 * self.time_embed_freq, hidden_dims[1]), nn.Tanh()
+#         )
 
-        # Input skip connection projection
-        self.skip_proj = (
-            nn.Linear(self.nx, hidden_dims[1])
-            if self.nx != hidden_dims[1]
-            else nn.Identity()
-        )
+#         # Input skip connection projection
+#         self.skip_proj = (
+#             nn.Linear(self.nx, hidden_dims[1])
+#             if self.nx != hidden_dims[1]
+#             else nn.Identity()
+#         )
 
-        # FiLM modulation for time-dependent dynamics
-        self.film_layers = nn.ModuleList(
-            [
-                FiLM(2 * self.time_emb_freq, hidden_dims[1]),
-                FiLM(2 * self.time_emb_freq, hidden_dims[1]),
-            ]
-        )
+#         # FiLM modulation for time-dependent dynamics
+#         self.film_layers = nn.ModuleList(
+#             [
+#                 FiLM(2 * self.time_embed_freq, hidden_dims[1]),
+#                 FiLM(2 * self.time_embed_freq, hidden_dims[1]),
+#             ]
+#         )
 
-        # Main processing layers with residuals
-        self.main_layers = nn.ModuleList(
-            [
-                nn.Sequential(
-                    nn.Linear(hidden_dims[1], hidden_dims[1]),
-                    nn.LayerNorm(hidden_dims[1]),
-                    nn.SiLU(),
-                )
-                for _ in range(2)
-            ]
-        )
+#         # Main processing layers with residuals
+#         self.main_layers = nn.ModuleList(
+#             [
+#                 nn.Sequential(
+#                     nn.Linear(hidden_dims[1], hidden_dims[1]),
+#                     nn.LayerNorm(hidden_dims[1]),
+#                     nn.SiLU(),
+#                 )
+#                 for _ in range(2)
+#             ]
+#         )
 
-        # Output projection
-        self.output_proj = nn.Linear(hidden_dims[1], latent_dim)
+#         # Output projection
+#         self.output_proj = nn.Linear(hidden_dims[1], latent_dim)
 
-    def forward(self, x, t_emb):
-        """forward"""
-        # encode the state
-        x_skip = self.skip_proj(x)
-        x_emb = self.x_encoder(x) + x_skip  # (batch_size, hidden_dim[1])
+#     def forward(self, x, t_emb):
+#         """forward"""
+#         # encode the state
+#         x_skip = self.skip_proj(x)
+#         x_emb = self.x_encoder(x) + x_skip  # (batch_size, hidden_dim[1])
 
-        # time-modulated processing
-        out = x_emb + self.time_proj(t_emb)
+#         # time-modulated processing
+#         out = x_emb + self.time_proj(t_emb)
 
-        # apply FiLM modulation and residual layers
-        for film, layer in zip(self.film_layers, self.main_layers):
-            residual = out
-            out = film(out.unsqueeze(-1).unsqueeze(-1), t_emb).squeeze()
-            out = layer(out)
-            out = out + residual
-        return self.output_proj(out)
+#         # apply FiLM modulation and residual layers
+#         for film, layer in zip(self.film_layers, self.main_layers):
+#             residual = out
+#             out = film(out.unsqueeze(-1).unsqueeze(-1), t_emb).squeeze()
+#             out = layer(out)
+#             out = out + residual
+#         return self.output_proj(out)
 
 
 class SkipConnection(nn.Module):
@@ -286,26 +286,41 @@ class ResFlow(Flow, L.LightningModule):
 
         # flow config
         self.flow_config = self.config.flow.copy()
-        self.flow_config["time_emb_freq"] = hp_config["time_emb_freq"]
+        self.flow_config["time_embed_freq"] = hp_config["time_embed_freq"]
         self.flow_config["latent_dim"] = hp_config["latent_dim"]
         self.flow_config["num_centers"] = hp_config["num_centers"]
 
         self.sig_min = self.flow_config.sig_min
-        self.time_emb_freq = self.flow_config.time_emb_freq
+        self.time_embed_freq = self.flow_config.time_embed_freq
         self.latent_dim = self.flow_config.latent_dim
         self.num_centers = self.flow_config.num_centers
 
         # state embedding
         self.state_embedding = StateEmbedding(
-            nx=self.nx, time_emb_freq=self.time_emb_freq, latent_dim=self.latent_dim
+            nx=self.nx,
+            latent_dim=self.latent_dim,
+            time_embed_freq=self.time_embed_freq,
         )
 
+        dummy_x = torch.randn(2, self.nx)
+        dummy_t = torch.randn(2, 2 * self.time_embed_freq)
+        self.state_embedding(dummy_x, dummy_t)
+
         # condition embedding
-        self.condition_embedding = ConditionEmbedding(
+        self.condition_embedding = Conditional1DEmbedding(
             nc=self.nc,
             latent_dim=self.latent_dim,
-            time_emb_freq=self.time_emb_freq,
+            time_embed_freq=self.time_embed_freq,
         )
+        dummy_c = torch.randn(2, self.nc)
+        dummy_t = torch.randn(2, 2 * self.time_embed_freq)
+        self.condition_embedding(dummy_c, dummy_t)
+
+        # self.condition_embedding = ConditionEmbedding(
+        #     nc=self.nc,
+        #     latent_dim=self.latent_dim,
+        #     time_embed_freq=self.time_embed_freq,
+        # )
 
         # learnable fusion
         self.fusion = nn.Sequential(
@@ -339,7 +354,7 @@ class ResFlow(Flow, L.LightningModule):
     ):
         """evalute the vector field of the flow"""
         # Embedd the time
-        t_emb = self.time_embedding(t, self.time_emb_freq)
+        t_emb = self.time_embedding(t, self.time_embed_freq)
         # Embedd the state
         state_emb = self.state_embedding(x=x, t_emb=t_emb)
         # Embedd the condition
