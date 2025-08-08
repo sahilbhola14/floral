@@ -34,13 +34,19 @@ def get_embedding_modules(
         nx=nx, latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
     )
     # condition embedding
-    condition_embedding = (
-        None
-        if field_data
-        else Condition1DEmbedding(
+    if field_data:
+        condition_embedding = Condition2DEmbedding(
+            nc=nc,
+            latent_dim=latent_dim,
+            time_embed_freq=time_embed_freq,
+            use_attention=kwargs.get("use_attention", False),
+            num_attention_heads=kwargs.get("num_attention_heads", 1),
+            **kwargs,
+        )
+    else:
+        condition_embedding = Condition1DEmbedding(
             nc=nc, latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
         )
-    )
     # fusion embedding
     fusion_embedding = FusionEmbedding(
         latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
@@ -235,9 +241,7 @@ class Condition1DEmbedding(nn.Module):
         nc (int): Dimensionality of the conditional input
         latent_dim (int): Dimensionality of the encodedlatent space
         time_emb_freq (int): Frequency of the time embedding
-        hidden_dims (list): List of hidden layer sizes
         dropout (float): Dropout rate
-        num_res_blocks (int): Number of residual blocks
     """
 
     def __init__(self, nc: int, latent_dim: int, time_embed_freq: int, **kwargs):
@@ -290,6 +294,25 @@ class Condition1DEmbedding(nn.Module):
             condition_embedding.unsqueeze(-1).unsqueeze(-1), time_embed
         ).squeeze()
         return out
+
+
+class Condition2DEmbedding(nn.Module):
+    """Class for 2D condition embedding
+
+    This class embeds an input of (batch_size, nc) into (batch_size, latent_dim)
+    Attibutes:
+        nc (int): Dimensionality of the conditional input
+        latent_dim (int): Dimensionality of the encodedlatent space
+        time_emb_freq (int): Frequency of the time embedding
+        dropout (float): Dropout rate
+    """
+
+    def __init__(self, nc: int, latent_dim: int, time_embed_freq: int, **kwargs):
+        super(Condition1DEmbedding, self).__init__()
+        self.nc = nc
+        self.latent_dim = latent_dim
+        self.dropout = kwargs.get("dropout", 0.1)
+        self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
 
 
 class StateEmbedding(nn.Module):
