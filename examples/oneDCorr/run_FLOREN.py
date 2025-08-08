@@ -1,5 +1,6 @@
 # examples/oneDCorr/run_FLOREN.py
 """
+Flow-matching Residual Embedded Neural Operator for One D problem
 """
 import torch
 import wandb
@@ -223,11 +224,9 @@ def train_model(hp_config: dict = None):
 
 
 def infer_model(best_model_path, data_module):
+    """Infererence task"""
     printer("Inference...")
     # load the best model
-    # best_model = ResFlow.load_from_checkpoint(best_model_path, map_location="cpu")
-    # best_model.to("cuda" if torch.cuda.is_available() else "cpu")
-    # load the model
     best_model = ResFlow.load_from_checkpoint(
         best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
     )
