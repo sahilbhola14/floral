@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .encoding import FiLM, RBFFiLM
+from .encoding import FiLM, MLP, RBFFiLM
 from xformers.components.attention import build_attention
 
 
@@ -211,14 +211,13 @@ class SkipConnection(nn.Module):
     def __init__(self, latent_dim, hidden_dim=128):
         super().__init__()
         self.latent_dim = latent_dim
-        self.layers = nn.Sequential(
-            nn.Linear(self.latent_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),  # LayerNorm instead of BatchNorm
-            nn.SiLU(),  # SiLU instead of ReLU
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, self.latent_dim),
+
+        self.layers = MLP(
+            in_dim=self.latent_dim,
+            out_dim=self.latent_dim,
+            width=[hidden_dim, hidden_dim],
+            activations=[nn.SiLU(), nn.SiLU(), None],
+            norm="layer",
         )
 
         # Learnable residual weight
@@ -249,17 +248,23 @@ class Condition1DEmbedding(nn.Module):
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
         # skip connection
         if self.nc != self.latent_dim:
-            self.skip = nn.Sequential(nn.Linear(self.nc, self.latent_dim))
+            self.skip = MLP(
+                in_dim=self.nc,
+                width=[],
+                activations=[None],
+                out_dim=self.latent_dim,
+            )
         else:
             self.skip = nn.Identity()
 
         # condition embedding
-        self.condition_embedding = nn.Sequential(
-            nn.Linear(self.nc, 32),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(32, self.latent_dim),
+        self.condition_embedding = MLP(
+            in_dim=self.nc,
+            width=[32],
+            out_dim=self.latent_dim,
+            activations=[nn.ReLU(), None],
+            norm="batch",
+            dropout=self.dropout,
         )
 
         # FiLM embedding
@@ -320,16 +325,21 @@ class StateEmbedding(nn.Module):
             self.skip = nn.Linear(self.nx, self.hidden_dims[-1])
 
         # state embedding
-        self.state_embedding = nn.Sequential(
-            nn.Linear(self.nx, self.hidden_dims[0]),
-            nn.LayerNorm(self.hidden_dims[0]),
-            nn.SiLU(),
-            nn.Linear(self.hidden_dims[0], self.hidden_dims[1]),
+        self.state_embedding = MLP(
+            in_dim=self.nx,
+            out_dim=self.hidden_dims[1],
+            width=[self.hidden_dims[0]],
+            activations=[nn.SiLU(), None],
+            dropout=self.dropout,
+            norm="layer",
         )
 
         # time projection
-        self.time_proj = nn.Sequential(
-            nn.Linear(self.time_embed_dim, self.hidden_dims[1]), nn.Tanh()
+        self.time_proj = MLP(
+            in_dim=self.time_embed_dim,
+            out_dim=self.hidden_dims[1],
+            width=[],
+            activations=[nn.Tanh()],
         )
 
         # FiLM layers
@@ -343,17 +353,24 @@ class StateEmbedding(nn.Module):
         # Main processing layer
         self.main_layers = nn.ModuleList(
             [
-                nn.Sequential(
-                    nn.Linear(self.hidden_dims[1], self.hidden_dims[1]),
-                    nn.LayerNorm(self.hidden_dims[1]),
-                    nn.SiLU(),
+                MLP(
+                    in_dim=self.hidden_dims[1],
+                    out_dim=self.hidden_dims[1],
+                    width=[],
+                    activations=[nn.SiLU()],
+                    norm="layer",
                 )
                 for _ in range(2)
             ]
         )
 
         # output projection
-        self.out_proj = nn.Linear(self.hidden_dims[1], self.latent_dim)
+        self.out_proj = MLP(
+            in_dim=self.hidden_dims[1],
+            out_dim=self.latent_dim,
+            width=[],
+            activations=[None],
+        )
 
     def forward(self, state: torch.Tensor, time_embed: torch.Tensor):
         """forward pass of the state embedding
@@ -391,11 +408,12 @@ class FusionEmbedding(nn.Module):
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
 
         # fusion layer
-        self.fusion = nn.Sequential(
-            nn.Linear(self.latent_dim, self.latent_dim),
-            nn.LayerNorm(self.latent_dim),
-            nn.SiLU(),
-            nn.Linear(self.latent_dim, self.latent_dim),
+        self.fusion = MLP(
+            in_dim=self.latent_dim,
+            out_dim=self.latent_dim,
+            width=[self.latent_dim],
+            activations=[nn.SiLU(), None],
+            norm="layer",
         )
 
         # skip connection
