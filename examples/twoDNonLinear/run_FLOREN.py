@@ -4,10 +4,8 @@ Flow-Matching Residual Embedded Nerual Opeartor for Two-dimensional problem with
 non-linear correlation.
 """
 import torch
-import torch.nn as nn
 import wandb
 import argparse
-import math
 import pytorch_lightning as L
 import yaml
 from omegaconf import OmegaConf
@@ -21,7 +19,7 @@ from mfFlow.utils import (
 )
 from mfFlow.utils import OptimizedInference as Inference
 from mfFlow.flow import Flow
-from mfFlow.archs import get_embedding_modules, FiLM, SpatialAttentionPooling
+from mfFlow.archs import get_embedding_modules
 
 parser = argparse.ArgumentParser(
     description="Run twoDNonLinear with specified parameters."
@@ -129,167 +127,6 @@ def build_trainer(
     return trainer
 
 
-class ConvBlock(nn.Module):
-    """Class for a convolution block used in condition embedding."""
-
-    def __init__(self, in_channels, out_channels, t_emb_dim):
-        super(ConvBlock, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.t_emb_dim = t_emb_dim
-
-        # Opening convolution layer
-        self.conv1 = nn.Conv2d(
-            self.in_channels, self.out_channels, kernel_size=3, padding=1
-        )
-        self.norm1 = nn.GroupNorm(min(8, self.out_channels), out_channels)
-        # Second convolution layer
-        self.conv2 = nn.Conv2d(
-            self.out_channels, self.out_channels, kernel_size=3, padding=1
-        )
-        self.norm2 = nn.GroupNorm(min(8, self.out_channels), out_channels)
-
-        # FiLM for modulating the output based on time embedding
-        self.film = FiLM(2 * self.t_emb_dim, self.out_channels)
-
-        # self attention
-        # self.attention = nn.MultiheadAttention(
-        #     embed_dim=self.out_channels,
-        #     num_heads=min(8, self.out_channels // 32),
-        #     batch_first=True,
-        #     dropout=0.1,
-        # )
-
-        # Skip connection projection (if needed)
-        self.skip_proj = (
-            nn.Conv2d(self.in_channels, self.out_channels, 1)
-            if self.in_channels != self.out_channels
-            else nn.Identity()
-        )
-
-        # ReLU
-        self.activation = nn.SiLU()  # SiLU generally works better than ReLU
-
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor):
-        """Forward pass of the convolution block in U-Net style with Residual
-        connection and FiLM modulation.
-        """
-        # Apply skip projection
-        skip = self.skip_proj(x)
-        B, C, H, W = skip.shape
-
-        # First conv block
-        out = self.conv1(x)
-        out = self.norm1(out)
-        out = self.activation(out)
-
-        # Second conv block
-        out = self.conv2(out)
-        out = self.norm2(out)
-
-        # FiLM modulation
-        out = self.film(out, t_emb)
-        out = self.activation(out)
-
-        # spatial attention
-        # out_flat = out.view(B, C, H * W).transpose(1, 2)  # (B, H*W, C)
-        # out_attn, _ = self.attention(out_flat, out_flat, out_flat)
-        # out = out_attn.transpose(1, 2).view(B, C, H, W)
-
-        out = self.activation(out)
-
-        return out + skip
-
-
-class ConditionEmbedding(nn.Module):
-    """Class for condition embedding using a convolution layer."""
-
-    def __init__(self, nc: int, latent_dim: int, time_emb_freq: int):
-        """Initialize the condition embedding module.
-        Args:
-            nc (int): Dimensionality of the condition field.
-            latent_dim (int): Dimension of the latent space (output dimension).
-            time_emb_freq (int): Frequency of the time embedding.
-        """
-        super(ConditionEmbedding, self).__init__()
-        self.nc = nc
-        self.time_emb_freq = time_emb_freq
-        self.field_dim = (int(math.sqrt(nc)), int(math.sqrt(nc)))
-        assert (
-            self.field_dim[0] * self.field_dim[1] == nc
-        ), "Condition field must be square."
-        self.latent_dim = latent_dim
-
-        # Progressive features extration
-        self.conv_blocks = nn.ModuleList(
-            [
-                ConvBlock(1, 32, self.time_emb_freq),
-                ConvBlock(32, 64, self.time_emb_freq),
-                ConvBlock(64, 128, self.time_emb_freq),
-            ]
-        )
-
-        # Pooling Layers
-        self.pools = nn.ModuleList(
-            # [nn.MaxPool2d(2), nn.MaxPool2d(2), nn.AdaptiveAvgPool2d(1)]
-            [
-                nn.MaxPool2d(2),
-                nn.MaxPool2d(2),
-                SpatialAttentionPooling(128, embed_dim=128, num_heads=4),
-            ]
-        )
-
-        # Multi-scale feature fusion
-        self.feature_weights = nn.Parameter(torch.ones(3) / 3)
-
-        # Final projection with skip connection
-        self.final_proj = nn.Sequential(
-            nn.Linear(
-                32 + 64 + 128, self.latent_dim * 2
-            ),  # Input is spatial features (32 + 64 + 128)
-            nn.LayerNorm(self.latent_dim * 2),
-            nn.SiLU(),
-            nn.Dropout(0.1),
-            nn.Linear(self.latent_dim * 2, self.latent_dim),
-        )
-
-        # Time-dependent gating
-        self.time_gate = nn.Sequential(
-            nn.Linear(2 * self.time_emb_freq, self.latent_dim), nn.Sigmoid()
-        )
-
-    def forward(self, condition: torch.Tensor, t_emb: torch.Tensor):
-        """Forward pass of the condition embedding."""
-        # reshape the condition to (batch_size, 1, H, W)
-        condition = condition.view(-1, 1, *self.field_dim)
-
-        # Progressive conv processing
-        spatial_features = []
-        x = condition
-        for i, (conv_block, pool) in enumerate(zip(self.conv_blocks, self.pools)):
-            x = conv_block(x, t_emb)  # conv block with time FiLM
-            if isinstance(pool, nn.MaxPool2d):
-                x = pool(x)
-                spatial_features.append(x.mean(dim=[2, 3]))
-            else:
-                x_pooled = pool(x)
-                spatial_features.append(x_pooled)
-
-        # weight the spatial featurse
-        weighted_features = [
-            self.feature_weights[i] * feat for i, feat in enumerate(spatial_features)
-        ]
-        fused_features = torch.cat(weighted_features, dim=1)
-
-        # Final projection
-        condition_emb = self.final_proj(fused_features)
-
-        # time-dependent gating
-        gate = self.time_gate(t_emb)
-        condition_emb = condition_emb * gate
-        return condition_emb
-
-
 class ResFlow(Flow, L.LightningModule):
     """Class for the residual flow model."""
 
@@ -317,12 +154,12 @@ class ResFlow(Flow, L.LightningModule):
 
         # flow config
         self.flow_config = self.config.flow.copy()
-        self.flow_config["time_emb_freq"] = hp_config["time_emb_freq"]
+        self.flow_config["time_embed_freq"] = hp_config["time_embed_freq"]
         self.flow_config["latent_dim"] = hp_config["latent_dim"]
         self.flow_config["num_centers"] = hp_config["num_centers"]
 
         self.sig_min = self.flow_config.sig_min
-        self.time_emb_freq = self.flow_config.time_emb_freq
+        self.time_embed_freq = self.flow_config.time_embed_freq
         self.latent_dim = self.flow_config.latent_dim
         self.num_centers = self.flow_config.num_centers
 
@@ -401,9 +238,7 @@ def train_model(hp_config: dict = None):
 
 
 def infer_model(best_model_path, data_module):
-    # load the best model
-    # best_model = ResFlow.load_from_checkpoint(best_model_path, map_location="cpu")
-    # best_model.to("cuda" if torch.cuda.is_available() else "cpu")
+    """Inference task"""
     best_model = ResFlow.load_from_checkpoint(
         best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
     )

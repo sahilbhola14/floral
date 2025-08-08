@@ -104,7 +104,6 @@ class OptimizedInference:
 
                 # perform the prediction
                 if self.mfFlow:
-                    # pred_residual = self._get_prediction(c_eval)
                     pred_residual = self._get_prediction(c_eval)
                     # Denormalize in-place
                     pred_residual = pred_residual * self.field_std + self.field_mean

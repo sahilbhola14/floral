@@ -242,6 +242,9 @@ class Flow(ABC):
         )
         # Embedd the domain
         out = self.domain_embedding(out, d)
+
+        assert not torch.isnan(out).any(), "Vector field is NaN"
+
         return out
 
     def _wrapper(
@@ -255,7 +258,6 @@ class Flow(ABC):
         t_eval = t.repeat(batch_size, 1)
         with torch.no_grad():
             vt = self._evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
-            assert not torch.isnan(vt).any(), "Vector field is NaN"
         return vt.view(x.shape)
 
     @torch.no_grad()

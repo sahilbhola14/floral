@@ -1,7 +1,14 @@
 import math
 import torch
 import torch.nn as nn
-from .encoding import FiLM, MLP, RBFFiLM
+from .encoding import (
+    FiLM,
+    MLP,
+    RBFFiLM,
+    conv_nd,
+    SpatialAttentionPooling,
+    SpatialAdaptivePooling,
+)
 from xformers.components.attention import build_attention
 
 
@@ -17,6 +24,15 @@ def normalization1D(in_features):
     return LayerNorm32(in_features)
 
 
+def normalization2D(channels):
+    """Make a standard normalization layer.
+
+    :param channels: number of input channels.
+    :return: an nn.Module for normalization.
+    """
+    return GroupNorm32(32, channels)
+
+
 def get_embedding_modules(
     nx: int,
     nc: int,
@@ -29,7 +45,6 @@ def get_embedding_modules(
 ):
     """Wrapper to get the modules for StateEmbedding, ConditionEmbedding,
     FusionEmbedding, and DomainEmbedding"""
-    assert field_data is False, "field data is currently not implemented."
     # state embedding
     state_embedding = StateEmbedding(
         nx=nx, latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
@@ -40,8 +55,6 @@ def get_embedding_modules(
             nc=nc,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
-            use_attention=kwargs.get("use_attention", False),
-            num_attention_heads=kwargs.get("num_attention_heads", 1),
             **kwargs,
         )
     else:
@@ -69,6 +82,11 @@ def get_embedding_modules(
 class LayerNorm32(nn.LayerNorm):
     """Layer normalization for 1D inputs with arbitrary precision"""
 
+    def forward(self, x):
+        return super().forward(x.float()).type(x.dtype)
+
+
+class GroupNorm32(nn.GroupNorm):
     def forward(self, x):
         return super().forward(x.float()).type(x.dtype)
 
@@ -153,6 +171,67 @@ class Res1DBlock(nn.Module):
         # apply attention
         out = self.attention(out)
         return out
+
+
+class Res2DBlock(nn.Module):
+    """Residual block for 2D inputs"""
+
+    def __init__(
+        self, in_channels: int, out_channels: int, time_embed_dim: int, **kwargs
+    ):
+        super(Res2DBlock, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.time_embed_dim = time_embed_dim
+        self.dropout = kwargs.get("dropout", 0.1)
+
+        #  input layer
+        self.input_layer = (
+            nn.Sequential(
+                normalization2D(self.in_channels),
+                conv_nd(
+                    dims=2,
+                    in_channels=self.in_channels,
+                    out_channels=self.out_channels,
+                    kernel_size=3,
+                    padding=1,
+                ),
+            )
+            if self.in_channels != self.out_channels
+            else nn.Identity()
+        )
+
+        # embedding
+        self.conv_layers = nn.ModuleList(
+            [
+                nn.Sequential(
+                    normalization2D(self.out_channels),
+                    conv_nd(
+                        dims=2,
+                        in_channels=self.out_channels,
+                        out_channels=self.out_channels,
+                        kernel_size=3,
+                        padding=1,
+                    ),
+                )
+                for _ in range(2)
+            ]
+        )
+        # film
+        self.film_layers = nn.ModuleList(
+            [FiLM(self.time_embed_dim, self.out_channels) for _ in range(2)]
+        )
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor):
+        """forward pass"""
+        # input layer
+        skip = self.input_layer(x)
+        out = skip
+        # apply transformations
+        for conv_layer, film_layer in zip(self.conv_layers, self.film_layers):
+            out = conv_layer(out)
+            out = film_layer(out, t)
+        return out + skip
 
 
 class Attention1D(nn.Module):
@@ -313,33 +392,37 @@ class Condition2DEmbedding(nn.Module):
         nc: int,
         latent_dim: int,
         time_embed_freq: int,
-        use_attention: bool = False,
-        num_attention_heads: int = 1,
         channel_mult=None,
         base_channels: int = 32,  # multiplier for the number of channels
         in_channels: int = 1,  # number of input channels in the condition
+        feature_pool_type: str = "adaptive",  # options: adaptive, attention
+        pool_type: str = "max",  # options: max-> MaxPool2D, avg -> AvgPool2d
+        num_attention_heads: int = 1,
+        attention_embed_dim: int = 64,
         **kwargs,
     ):
-        super(Condition1DEmbedding, self).__init__()
+        super(Condition2DEmbedding, self).__init__()
         self.nc = nc
         self.latent_dim = latent_dim
         self.dropout = kwargs.get("dropout", 0.1)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
-        self.use_attention = use_attention
+        self.in_channels = in_channels
+        self.feature_pool_type = feature_pool_type
+        self.pool_type = pool_type
         self.num_attention_heads = num_attention_heads
-        self.field_shape = (math.sqrt(self.nc), math.sqrt(self.nc))
+        self.field_shape = (int(math.sqrt(self.nc)), int(math.sqrt(self.nc)))
         assert (
             self.field_shape[0] * self.field_shape[1] == self.nc
         ), "Only square fields currently supported"
 
-        if self.channel_mult is None:
+        if channel_mult is None:
             image_size = self.field_shape[0]
             if image_size == 64:
                 self.channel_mult = (1, 2, 3, 4)
             elif image_size == 32:
                 self.channel_mult = (1, 2, 2, 2)
             elif image_size == 50:
-                self.channel_mult = (1, 2, 4, 8)
+                self.channel_mult = (1, 2, 4)
             else:
                 raise ValueError(
                     "Unsupported size: {}. Supported sizes are 32, 50, 64.".format(
@@ -350,21 +433,77 @@ class Condition2DEmbedding(nn.Module):
             self.channel_mult = channel_mult
 
         # input block to process the condition
-        # ch = input_ch = int(channel_mult[0] * base_channels)
-        # self.input_blocks = conv_nd(
-        #     dims=2, in_channels=in_channels, out_channels=ch, kernel_size=3, padding=1
-        # )
-        # Residual blocks
-        # self.residual_blocks = nn.ModuleList()
-        # for mult in enumerate(self.channel_mult):
-        #     # self.residual_blocks.append(
-        #     #         Res2DBlock(
-        #     #             in_channels=ch,
-        #     #             out_channels=ch,
-        #     #             )
-        #     #         )
-        #     # update channels
-        #     # ch = int(
+        ch = input_ch = int(self.channel_mult[0] * base_channels)
+        self.input_blocks = conv_nd(
+            dims=2, in_channels=in_channels, out_channels=ch, kernel_size=3, padding=1
+        )
+
+        # encoding blocks
+        self.residual_blocks = nn.ModuleList()
+        self.feature_blocks = nn.ModuleList()
+        self.pool_blocks = nn.ModuleList()
+        for mult in self.channel_mult:
+            output_ch = mult * base_channels
+            # residual blocks
+            self.residual_blocks.append(
+                Res2DBlock(
+                    in_channels=input_ch,
+                    out_channels=output_ch,
+                    time_embed_dim=self.time_embed_dim,
+                    dropout=self.dropout,
+                )
+            )
+            # feature blocks
+            if self.feature_pool_type == "adaptive":
+                self.feature_blocks.append(
+                    SpatialAdaptivePooling(
+                        in_channels=output_ch,
+                        latent_dim=self.latent_dim,
+                    )
+                )
+            elif self.feature_pool_type == "attention":
+                self.feature_blocks.append(
+                    SpatialAttentionPooling(
+                        in_channels=output_ch,
+                        latent_dim=self.latent_dim,
+                        num_attention_heads=self.num_attention_heads,
+                        embed_dim=attention_embed_dim,
+                    )
+                )
+            else:
+                raise ValueError(f"Invalid feature pool type {self.feature_pool_type}")
+
+            # pool blocks
+            if self.pool_type == "max":
+                self.pool_blocks.append(nn.MaxPool2d(2))
+            elif self.pool_type == "avg":
+                self.pool_blocks.append(nn.AdaptiveAvgPool2d(1))
+            else:
+                raise ValueError(f"Invalid pool type {self.pool_type}")
+
+            # update the input channels
+            input_ch = output_ch
+
+        # spatial feature weights
+        self.spatial_feature_weights = nn.Parameter(
+            torch.ones(len(self.channel_mult)) / len(self.channel_mult)
+        )
+
+        # Time FiLM
+        self.film = FiLM(self.time_embed_dim, self.latent_dim)
+
+        # output projection
+        self.out_proj = nn.Sequential(
+            normalization1D(self.latent_dim),
+            MLP(
+                in_dim=self.latent_dim,
+                out_dim=self.latent_dim,
+                width=[32, 32],
+                activations=[nn.SiLU(), nn.SiLU(), None],
+                norm="layer",
+                dropout=self.dropout,
+            ),
+        )
 
     def forward(self, condition: torch.Tensor, time_embed: torch.Tensor):
         """forward pass"""
@@ -372,8 +511,33 @@ class Condition2DEmbedding(nn.Module):
         condition = condition.view(-1, self.in_channels, *self.field_shape)
         # process through the input block (B, base_channels, H, W)
         condition = self.input_blocks(condition)
-        # process throught the residual blocks
-        raise NotImplementedError("Under construction")
+        # process throught the residual and pool blocks
+        out = condition
+        spatial_features = []
+        for ii, (residual_block, feature_block, pool_block) in enumerate(
+            zip(self.residual_blocks, self.feature_blocks, self.pool_blocks)
+        ):
+            # residual block
+            out = residual_block(out, time_embed)
+            # store spatial features
+            spatial_features.append(feature_block(out))
+            # pooling
+            if ii < len(self.channel_mult) - 1:
+                out = pool_block(out)
+
+        # weighted spatial features
+        weighted_features = [
+            self.spatial_feature_weights[i] * feat
+            for i, feat in enumerate(spatial_features)
+        ]
+        fused_features = torch.stack(weighted_features).sum(dim=0)
+
+        # FiLM
+        out = self.film(
+            fused_features.unsqueeze(-1).unsqueeze(-1), time_embed
+        ).squeeze()
+
+        return self.out_proj(out)
 
 
 class StateEmbedding(nn.Module):

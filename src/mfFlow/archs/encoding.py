@@ -367,19 +367,67 @@ class RBFFiLMAttention(nn.Module):
 
 
 class SpatialAttentionPooling(nn.Module):
-    def __init__(self, in_channels, embed_dim, num_heads=4):
+    def __init__(
+        self,
+        in_channels: int,
+        latent_dim: int,
+        embed_dim: int = 128,
+        num_attention_heads=1,
+        **kwargs,
+    ):
         super().__init__()
-        self.proj = nn.Conv2d(in_channels, embed_dim, kernel_size=1)
-        self.attn = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(embed_dim)
+        self.embed_dim = embed_dim
+        self.latent_dim = latent_dim
+        self.dropout = kwargs.get("dropout", 0.1)
+        self.num_attention_heads = num_attention_heads
+        self.conv = conv_nd(
+            dims=2, in_channels=in_channels, out_channels=self.embed_dim, kernel_size=1
+        )
+        self.q = nn.Parameter(torch.randn(1, self.embed_dim))  # learnable query
+        self.proj = MLP(
+            in_dim=self.embed_dim,
+            out_dim=self.latent_dim,
+            width=[32],
+            activations=[nn.SiLU(), None],
+            dropout=self.dropout,
+            norm="layer",
+        )
+        self.attn = nn.MultiheadAttention(
+            embed_dim=self.embed_dim,
+            num_heads=self.num_attention_heads,
+            batch_first=True,
+        )
 
     def forward(self, x):
         B, C, H, W = x.shape
-        x_proj = self.proj(x)  # (B, embed_dim, H, W)
-        x_flat = x_proj.flatten(2).transpose(1, 2)  # (B, H*W, embed_dim)
-        attn_out, _ = self.attn(x_flat, x_flat, x_flat)
-        attn_out = self.norm(attn_out)
-        return attn_out.mean(dim=1)  # shape: (B, embed_dim)
+        x = self.conv(x)  # (B, embed_dim, H, W)
+        x = x.view(B, self.embed_dim, H * W).transpose(1, 2)  # (B, HW, embed_dim)
+        q = self.q.expand(B, -1).unsqueeze(1)  # (B, 1, embed_dim)
+        out, _ = self.attn(q, x, x)  # (B, 1, embed_dim)
+        return self.proj(out.squeeze(1))  # (B, latent_dim)
+
+
+class SpatialAdaptivePooling(nn.Module):
+    def __init__(self, in_channels: int, latent_dim: int, **kwargs):
+        super().__init__()
+        self.in_channels = in_channels
+        self.latent_dim = latent_dim
+        self.dropout = kwargs.get("dropout", 0.1)
+
+        self.proj = MLP(
+            in_dim=self.in_channels,
+            out_dim=self.latent_dim,
+            width=[32],
+            activations=[nn.SiLU(), None],
+            dropout=self.dropout,
+            norm="layer",
+        )
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        out = self.pool(x)  # (B, C, 1, 1)
+        return self.proj(out.squeeze())  # (B, latent_dim)
 
 
 class FiLM(nn.Module):
