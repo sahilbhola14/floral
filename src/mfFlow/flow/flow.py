@@ -146,10 +146,35 @@ class Flow(ABC):
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
-    def time_embedding(self, t: torch.Tensor, n_freq: int):
+    def time_embedding(
+        self,
+        t: torch.Tensor,
+        n_freq: int,
+        style: str = "nerf",  # options: "linear" or "nerf"
+        t_min: float = 0.0,  # only used for nerf
+        t_max: float = 1.0,  # only used for nerf
+    ):
         """time embedding function"""
-        f = 2 * torch.arange(n_freq, device=self.device) * torch.pi
-        return torch.cat([torch.sin(f * t), torch.cos(f * t)], dim=-1)
+
+        assert t.ndim == 2 and t.shape[-1] == 1, "Invalid shape"
+        device = getattr(self, "device", t.device)
+        dtype = t.dtype
+
+        if style == "nerf":
+            # Normalize to [0,1]
+            denom = max(t_max - t_min, 1e-12)
+            t_use = (t - t_min) / denom
+            k = torch.arange(n_freq, device=device, dtype=dtype)
+            freqs = (2.0**k) * torch.pi  # π·2^k
+            phase = t_use * freqs
+        elif style == "linear":
+            t_use = t
+            freqs = 2 * torch.arange(n_freq, device=device, dtype=dtype) * torch.pi
+            phase = t_use * freqs
+        else:
+            raise ValueError(f"Unknown style: {style}")
+
+        return torch.cat([torch.sin(phase), torch.cos(phase)], dim=-1)
 
     def position_embedding(self, d: torch.Tensor):
         """position embedding function"""
