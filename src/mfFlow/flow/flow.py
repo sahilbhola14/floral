@@ -174,7 +174,13 @@ class Flow(ABC):
         else:
             raise ValueError(f"Unknown style: {style}")
 
-        return torch.cat([torch.sin(phase), torch.cos(phase)], dim=-1)
+        time_embed = torch.cat([torch.sin(phase), torch.cos(phase)], dim=-1)
+
+        assert (
+            time_embed.ndim == 2 and time_embed.shape[-1] == n_freq
+        ), "incorrect time embedding"
+
+        return time_embed
 
     def position_embedding(self, d: torch.Tensor):
         """position embedding function"""
