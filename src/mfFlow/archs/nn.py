@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from .encoding import FiLM
+from .encoding import FiLM, RBFFiLM
+from xformers.components.attention import build_attention
 
 
 def zero_module(module: nn.Module):
@@ -11,7 +12,51 @@ def zero_module(module: nn.Module):
 
 
 def normalization1D(in_features):
+    """Layer Normalize"""
     return LayerNorm32(in_features)
+
+
+def get_embedding_modules(
+    nx: int,
+    nc: int,
+    nd: int,
+    latent_dim: int,
+    time_embed_freq: int,
+    num_centers: int,
+    field_data: bool = False,
+    **kwargs,
+):
+    """Wrapper to get the modules for StateEmbedding, ConditionEmbedding,
+    FusionEmbedding, and DomainEmbedding"""
+    assert field_data is False, "field data is currently not implemented."
+    # state embedding
+    state_embedding = StateEmbedding(
+        nx=nx, latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
+    )
+    # condition embedding
+    condition_embedding = (
+        None
+        if field_data
+        else Condition1DEmbedding(
+            nc=nc, latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
+        )
+    )
+    # fusion embedding
+    fusion_embedding = FusionEmbedding(
+        latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
+    )
+    # domain embedding
+    domain_embedding = RBFFiLM(
+        num_centers=num_centers, latent_dim=latent_dim, nd=nd, nx=nx
+    )
+
+    embedding = {
+        "state_embedding": state_embedding,
+        "condition_embedding": condition_embedding,
+        "fusion_embedding": fusion_embedding,
+        "domain_embedding": domain_embedding,
+    }
+    return embedding
 
 
 class LayerNorm32(nn.LayerNorm):
@@ -22,13 +67,26 @@ class LayerNorm32(nn.LayerNorm):
 
 
 class Res1DBlock(nn.Module):
-    """Residual block for 1D inputs"""
+    """Residual block for 1D inputs
+    TODO:
+        Add attention emb dim to config file.
+    """
 
-    def __init__(self, in_features, time_emb_dim: int, hidden_dims: list, **kwargs):
+    def __init__(
+        self,
+        in_features,
+        time_emb_dim: int,
+        hidden_dims: list,
+        use_attention: bool = False,
+        num_attention_heads: int = 1,
+        **kwargs,
+    ):
         super(Res1DBlock, self).__init__()
         self.in_features = in_features
         self.time_emb_dim = time_emb_dim
         self.hidden_dims = hidden_dims
+        self.use_attention = use_attention
+        self.num_attention_heads = num_attention_heads
 
         # skip connection
         self.skip_connection = nn.Sequential(
@@ -62,6 +120,16 @@ class Res1DBlock(nn.Module):
         # FiLM layer
         self.film_layer = FiLM(self.time_emb_dim, self.in_features)
 
+        # Attention layer
+        self.attention = (
+            Attention1D(
+                in_features=self.in_features,
+                num_attention_heads=self.num_attention_heads,
+            )
+            if self.use_attention
+            else nn.Identity()
+        )
+
     def forward(self, x: torch.Tensor, time_emb: torch.Tensor):
         """forward pass of the residual block"""
         B, C = x.shape
@@ -75,14 +143,95 @@ class Res1DBlock(nn.Module):
         out = self.output_layers(out)
         # add skip connection
         out = out + skip
+        # apply attention
+        out = self.attention(out)
         return out
 
 
-class Conditional1DEmbedding(nn.Module):
-    """Class for 1D conditional embedding
+class Attention1D(nn.Module):
+    """Apply Self-Attention
+    Apply attention to an input of size (batch_size, in_features) which is first
+    transformed to (batch_size, in_features, embed_dim).
+    Here, in_features is the context length.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        embed_dim: int = 32,
+        num_attention_heads: int = 1,
+        **kwargs,
+    ):
+        super(Attention1D, self).__init__()
+        assert (
+            in_features > 1 and num_attention_heads >= 1
+        ), "Atleast one feature and head required"
+        self.in_features = in_features
+        self.embed_dim = embed_dim
+        self.num_attention_heads = num_attention_heads
+        # embed layer
+        self.embed_layer = nn.Linear(
+            1, self.embed_dim
+        )  # project each token to embed dim
+        # build attention
+        self.attn = build_attention(
+            {
+                "name": kwargs.get("attention_mode", "scaled_dot_product"),
+                "dropout": kwargs.get("dropout", 0.1),
+                "causal": False,
+                "num_heads": self.num_attention_heads,
+            }
+        )
+        self.qkv_proj = nn.Linear(self.embed_dim, self.embed_dim * 3)
+        self.out_proj = nn.Linear(self.embed_dim, 1)
+
+    def forward(self, x: torch.Tensor):
+        assert (
+            x.ndim == 2 and x.shape[-1] == self.in_features
+        ), f"Expected: (batch_size, {self.in_features}, got {x.shape}"
+        B, C = x.shape  # B: batch_size, C: context_lenght
+        # embed
+        out = self.embed_layer(
+            x.unsqueeze(-1)
+        )  # (batch_size, context_length, embed_dim)
+        # compute qkv values
+        qkv = self.qkv_proj(out)
+        q, k, v = qkv.chunk(3, dim=-1)
+        # attention
+        out = self.attn(q, k, v)  # (batch_size, context_lenght, embed_dim)
+        # output projection
+        out = self.out_proj(out).view(B, C)
+
+        return out
+
+
+class SkipConnection(nn.Module):
+    """Skip connection with regularization"""
+
+    def __init__(self, latent_dim, hidden_dim=128):
+        super().__init__()
+        self.latent_dim = latent_dim
+        self.layers = nn.Sequential(
+            nn.Linear(self.latent_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),  # LayerNorm instead of BatchNorm
+            nn.SiLU(),  # SiLU instead of ReLU
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, self.latent_dim),
+        )
+
+        # Learnable residual weight
+        self.residual_weight = nn.Parameter(torch.tensor(0.1))
+
+    def forward(self, x):
+        return self.layers(x) * self.residual_weight + x
+
+
+class Condition1DEmbedding(nn.Module):
+    """Class for 1D condition embedding
 
     This class embeds an input of (batch_size, nc) into (batch_size, latent_dim)
-
     Attibutes:
         nc (int): Dimensionality of the conditional input
         latent_dim (int): Dimensionality of the encodedlatent space
@@ -93,62 +242,48 @@ class Conditional1DEmbedding(nn.Module):
     """
 
     def __init__(self, nc: int, latent_dim: int, time_embed_freq: int, **kwargs):
-        super(Conditional1DEmbedding, self).__init__()
+        super(Condition1DEmbedding, self).__init__()
         self.nc = nc
         self.latent_dim = latent_dim
-        self.time_embed_freq = time_embed_freq
-        self.hidden_dims = kwargs.get("hiddden_dims", [64, 64])
         self.dropout = kwargs.get("dropout", 0.1)
-        self.num_res_blocks = kwargs.get("num_res_blocks", 2)
-        self.use_attention = kwargs.get("use_attention", False)
+        self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
+        # skip connection
+        if self.nc != self.latent_dim:
+            self.skip = nn.Sequential(nn.Linear(self.nc, self.latent_dim))
+        else:
+            self.skip = nn.Identity()
 
-        # time embedding for encoding the time embedding for the conditional input
-        self.time_embed_dim = (self.time_embed_freq * 2) * 4
-        self.time_embed = nn.Sequential(
-            nn.Linear(self.time_embed_freq * 2, self.time_embed_dim),
-            nn.SiLU(),
-            nn.Linear(self.time_embed_dim, self.time_embed_dim),
+        # condition embedding
+        self.condition_embedding = nn.Sequential(
+            nn.Linear(self.nc, 32),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(32, self.latent_dim),
         )
 
-        # opening layer to bring the inputs to the latent dim
-        if self.nc != self.latent_dim:
-            self.opening = nn.Sequential(
-                normalization1D(self.nc),
-                nn.Linear(self.nc, self.latent_dim),
-                nn.SiLU(),
-                nn.Dropout(self.dropout),
-                nn.Linear(self.latent_dim, self.latent_dim),
-            )
-        else:
-            self.opening = nn.Identity()
+        # FiLM embedding
+        self.film = FiLM(self.time_embed_dim, self.latent_dim)
 
-        # Residual 1D blocks
-        self.res_blocks = nn.ModuleList()
-        for _ in range(self.num_res_blocks):
-            self.res_blocks.append(
-                Res1DBlock(self.latent_dim, self.time_embed_dim, self.hidden_dims)
-            )
-
-    def forward(self, condition: torch.Tensor, time_emb: torch.Tensor):
+    def forward(self, condition: torch.Tensor, time_embed: torch.Tensor):
         """forward pass of the conditional embedding
 
         Args:
             condition (torch.Tensor): Input tensor of shape (batch_size, nc)
-            time_emb (torch.Tensor): Time embedding tensor of shape
+            time_embed (torch.Tensor): Time embedding tensor of shape
             (batch_size, time_embed_freq * 2)
 
         Returns:
             torch.Tensor: Embedded tensor of shape (batch_size, latent_dim)
         """
-        # time embedding
-        time_emb = self.time_embed(time_emb)
-
-        # opening layer
-        out = self.opening(condition)
-
-        # residual blocks
-        for res_block in self.res_blocks:
-            out = res_block(out, time_emb)
+        # apply skip
+        skip = self.skip(condition)
+        # apply conditon embedding
+        condition_embedding = self.condition_embedding(condition) + skip
+        # apply FiLM
+        out = self.film(
+            condition_embedding.unsqueeze(-1).unsqueeze(-1), time_embed
+        ).squeeze()
         return out
 
 
@@ -162,46 +297,65 @@ class StateEmbedding(nn.Module):
         time_emb_freq (int): Frequency of the time embedding
         hidden_dims (list): List of hidden layer sizes
         dropout (float): Dropout rate
-        num_res_blocks (int): Number of residual blocks
     """
 
-    def __init__(self, nx: int, latent_dim: int, time_embed_freq: int, **kwargs):
+    def __init__(
+        self,
+        nx: int,
+        latent_dim: int,
+        time_embed_freq: int,
+        hidden_dims: list = [64, 128],
+        **kwargs,
+    ):
         super(StateEmbedding, self).__init__()
         self.nx = nx
         self.latent_dim = latent_dim
-        self.time_embed_freq = time_embed_freq
-        self.hidden_dims = kwargs.get("hiddden_dims", [64, 64])
         self.dropout = kwargs.get("dropout", 0.1)
-        self.num_res_blocks = kwargs.get("num_res_blocks", 2)
+        self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
+        self.hidden_dims = hidden_dims
+        assert len(self.hidden_dims) == 2, "currently only 2 layer support."
 
-        # time embedding for encoding the time embedding for the state input
-        self.time_embed_dim = (self.time_embed_freq * 2) * 4
-        self.time_embed = nn.Sequential(
-            nn.Linear(self.time_embed_freq * 2, self.time_embed_dim),
+        # skip connection
+        if self.nx != self.hidden_dims[-1]:
+            self.skip = nn.Linear(self.nx, self.hidden_dims[-1])
+
+        # state embedding
+        self.state_embedding = nn.Sequential(
+            nn.Linear(self.nx, self.hidden_dims[0]),
+            nn.LayerNorm(self.hidden_dims[0]),
             nn.SiLU(),
-            nn.Linear(self.time_embed_dim, self.time_embed_dim),
+            nn.Linear(self.hidden_dims[0], self.hidden_dims[1]),
         )
 
-        # opening layer to bring the inputs to the latent dim
-        if self.nx != self.latent_dim:
-            self.opening = nn.Sequential(
-                normalization1D(self.nx),
-                nn.Linear(self.nx, self.latent_dim),
-                nn.SiLU(),
-                nn.Dropout(self.dropout),
-                nn.Linear(self.latent_dim, self.latent_dim),
-            )
-        else:
-            self.opening = nn.Identity()
+        # time projection
+        self.time_proj = nn.Sequential(
+            nn.Linear(self.time_embed_dim, self.hidden_dims[1]), nn.Tanh()
+        )
 
-        # Residual 1D blocks
-        self.res_blocks = nn.ModuleList()
-        for _ in range(self.num_res_blocks):
-            self.res_blocks.append(
-                Res1DBlock(self.latent_dim, self.time_embed_dim, self.hidden_dims)
-            )
+        # FiLM layers
+        self.film_layers = nn.ModuleList(
+            [
+                FiLM(self.time_embed_dim, self.hidden_dims[1]),
+                FiLM(self.time_embed_dim, self.hidden_dims[1]),
+            ]
+        )
 
-    def forward(self, state: torch.Tensor, time_emb: torch.Tensor):
+        # Main processing layer
+        self.main_layers = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(self.hidden_dims[1], self.hidden_dims[1]),
+                    nn.LayerNorm(self.hidden_dims[1]),
+                    nn.SiLU(),
+                )
+                for _ in range(2)
+            ]
+        )
+
+        # output projection
+        self.out_proj = nn.Linear(self.hidden_dims[1], self.latent_dim)
+
+    def forward(self, state: torch.Tensor, time_embed: torch.Tensor):
         """forward pass of the state embedding
 
         Args:
@@ -212,13 +366,46 @@ class StateEmbedding(nn.Module):
         Returns:
             torch.Tensor: Embedded tensor of shape (batch_size, latent_dim)
         """
-        # time embedding
-        time_emb = self.time_embed(time_emb)
+        # skip
+        skip = self.skip(state)
+        # state embedding
+        state_embedding = self.state_embedding(state) + skip
+        # time modulation
+        out = state_embedding + self.time_proj(time_embed)
+        # Apply FiLM modulation and residual layers
+        for film, layer in zip(self.film_layers, self.main_layers):
+            residual = out
+            out = film(out.unsqueeze(-1).unsqueeze(-1), time_embed).squeeze()
+            out = layer(out)
+            out += residual
+        return self.out_proj(out)
 
-        # opening layer
-        out = self.opening(state)
 
-        # residual blocks
-        for res_block in self.res_blocks:
-            out = res_block(out, time_emb)
-        return out
+class FusionEmbedding(nn.Module):
+    """Fuse the state and condition"""
+
+    def __init__(self, latent_dim: int, time_embed_freq: int, **kwargs):
+        super(FusionEmbedding, self).__init__()
+        self.latent_dim = latent_dim
+        self.dropout = kwargs.get("dropout", 0.1)
+        self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
+
+        # fusion layer
+        self.fusion = nn.Sequential(
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.LayerNorm(self.latent_dim),
+            nn.SiLU(),
+            nn.Linear(self.latent_dim, self.latent_dim),
+        )
+
+        # skip connection
+        self.skip = SkipConnection(latent_dim=self.latent_dim)
+
+    def forward(
+        self,
+        state_embed: torch.Tensor,
+        condition_embed: torch.Tensor,
+        time_embed: torch.Tensor,
+    ):
+        """forward pass"""
+        return self.skip(self.fusion(state_embed + condition_embed))

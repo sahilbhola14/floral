@@ -1,4 +1,4 @@
-from .nn import Conditional1DEmbedding, StateEmbedding
+from .nn import get_embedding_modules
 from .encoding import RBFFiLM, FiLM, RBFFiLMAttention, SpatialAttentionPooling, MLP
 
 __all__ = [
@@ -7,6 +7,5 @@ __all__ = [
     "FiLM",
     "MLP",
     "SpatialAttentionPooling",
-    "Conditional1DEmbedding",
-    "StateEmbedding",
+    "get_embedding_modules",
 ]

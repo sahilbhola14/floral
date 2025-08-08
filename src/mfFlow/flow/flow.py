@@ -1,3 +1,4 @@
+import math
 import torch
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint
@@ -126,7 +127,7 @@ class Flow(ABC):
         # Compute the conditional flow derivative
         psi_prime = self.compute_conditional_flow_derivative(x0, x1)
         # Compute the vector field
-        vt = self.evaluate_vector_field(psi, c, d, t)
+        vt = self._evaluate_vector_field(psi, c, d, t)
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
         return loss
@@ -189,6 +190,29 @@ class Flow(ABC):
 
         return x, c
 
+    def _evaluate_vector_field(
+        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
+    ):
+        """evalute the vector field of the flow"""
+        # Embedd the time
+        time_embed = self.time_embedding(t, self.time_embed_freq)
+        # Embedd the state
+        state_embed = self.state_embedding(state=x, time_embed=time_embed)
+        # Embedd the condition
+        condition_embed = self.condition_embedding(condition=c, time_embed=time_embed)
+        # Scaling
+        state_embed *= 1.0 / math.sqrt(self.latent_dim)
+        condition_embed *= 1.0 / math.sqrt(self.latent_dim)
+        # Learnable fusion
+        out = self.fusion_embedding(
+            state_embed=state_embed,
+            condition_embed=condition_embed,
+            time_embed=time_embed,
+        )
+        # Embedd the domain
+        out = self.domain_embedding(out, d)
+        return out
+
     def _wrapper(
         self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
     ):
@@ -199,7 +223,7 @@ class Flow(ABC):
         d_eval = d.reshape(batch_size, -1)
         t_eval = t.repeat(batch_size, 1)
         with torch.no_grad():
-            vt = self.evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
+            vt = self._evaluate_vector_field(x_eval, c_eval, d_eval, t_eval)
             assert not torch.isnan(vt).any(), "Vector field is NaN"
         return vt.view(x.shape)
 
@@ -271,13 +295,6 @@ class Flow(ABC):
     @abstractmethod
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample the base density"""
-        pass
-
-    @abstractmethod
-    def evaluate_vector_field(
-        self, x: torch.Tensor, c: torch.Tensor, d: torch.Tensor, t: torch.Tensor
-    ):
-        """evaluate the vector field"""
         pass
 
     @abstractmethod
