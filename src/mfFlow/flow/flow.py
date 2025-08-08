@@ -177,7 +177,7 @@ class Flow(ABC):
         time_embed = torch.cat([torch.sin(phase), torch.cos(phase)], dim=-1)
 
         assert (
-            time_embed.ndim == 2 and time_embed.shape[-1] == n_freq
+            time_embed.ndim == 2 and time_embed.shape[-1] == 2 * n_freq
         ), "incorrect time embedding"
 
         return time_embed
