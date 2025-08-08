@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from .encoding import FiLM, MLP, RBFFiLM
@@ -307,12 +308,72 @@ class Condition2DEmbedding(nn.Module):
         dropout (float): Dropout rate
     """
 
-    def __init__(self, nc: int, latent_dim: int, time_embed_freq: int, **kwargs):
+    def __init__(
+        self,
+        nc: int,
+        latent_dim: int,
+        time_embed_freq: int,
+        use_attention: bool = False,
+        num_attention_heads: int = 1,
+        channel_mult=None,
+        base_channels: int = 32,  # multiplier for the number of channels
+        in_channels: int = 1,  # number of input channels in the condition
+        **kwargs,
+    ):
         super(Condition1DEmbedding, self).__init__()
         self.nc = nc
         self.latent_dim = latent_dim
         self.dropout = kwargs.get("dropout", 0.1)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
+        self.use_attention = use_attention
+        self.num_attention_heads = num_attention_heads
+        self.field_shape = (math.sqrt(self.nc), math.sqrt(self.nc))
+        assert (
+            self.field_shape[0] * self.field_shape[1] == self.nc
+        ), "Only square fields currently supported"
+
+        if self.channel_mult is None:
+            image_size = self.field_shape[0]
+            if image_size == 64:
+                self.channel_mult = (1, 2, 3, 4)
+            elif image_size == 32:
+                self.channel_mult = (1, 2, 2, 2)
+            elif image_size == 50:
+                self.channel_mult = (1, 2, 4, 8)
+            else:
+                raise ValueError(
+                    "Unsupported size: {}. Supported sizes are 32, 50, 64.".format(
+                        image_size
+                    )
+                )
+        else:
+            self.channel_mult = channel_mult
+
+        # input block to process the condition
+        # ch = input_ch = int(channel_mult[0] * base_channels)
+        # self.input_blocks = conv_nd(
+        #     dims=2, in_channels=in_channels, out_channels=ch, kernel_size=3, padding=1
+        # )
+        # Residual blocks
+        # self.residual_blocks = nn.ModuleList()
+        # for mult in enumerate(self.channel_mult):
+        #     # self.residual_blocks.append(
+        #     #         Res2DBlock(
+        #     #             in_channels=ch,
+        #     #             out_channels=ch,
+        #     #             )
+        #     #         )
+        #     # update channels
+        #     # ch = int(
+
+    def forward(self, condition: torch.Tensor, time_embed: torch.Tensor):
+        """forward pass"""
+        # reshape the condition to field (B, C, H, W)
+        condition = condition.view(-1, self.in_channels, *self.field_shape)
+        # process through the input block (B, base_channels, H, W)
+        condition = self.input_blocks(condition)
+        # process throught the residual blocks
+        raise NotImplementedError("Under construction")
 
 
 class StateEmbedding(nn.Module):
