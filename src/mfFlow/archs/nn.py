@@ -260,10 +260,10 @@ class Condition1DEmbedding(nn.Module):
         # condition embedding
         self.condition_embedding = MLP(
             in_dim=self.nc,
-            width=[32],
+            width=[32, 32],
             out_dim=self.latent_dim,
-            activations=[nn.ReLU(), None],
-            norm="batch",
+            activations=[nn.SiLU(), nn.SiLU(), None],
+            norm="layer",
             dropout=self.dropout,
         )
 
