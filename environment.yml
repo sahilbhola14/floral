@@ -20,4 +20,3 @@ dependencies:
     - tensorboard==2.20.0
     - torchdiffeq==0.2.5
     - wandb==0.21.0
-    - xformers==0.0.31.post1

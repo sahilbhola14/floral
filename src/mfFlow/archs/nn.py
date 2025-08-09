@@ -9,7 +9,6 @@ from .encoding import (
     SpatialAttentionPooling,
     SpatialAdaptivePooling,
 )
-from xformers.components.attention import build_attention
 
 
 def zero_module(module: nn.Module):
@@ -91,88 +90,6 @@ class GroupNorm32(nn.GroupNorm):
         return super().forward(x.float()).type(x.dtype)
 
 
-class Res1DBlock(nn.Module):
-    """Residual block for 1D inputs
-    TODO:
-        Add attention emb dim to config file.
-    """
-
-    def __init__(
-        self,
-        in_features,
-        time_emb_dim: int,
-        hidden_dims: list,
-        use_attention: bool = False,
-        num_attention_heads: int = 1,
-        **kwargs,
-    ):
-        super(Res1DBlock, self).__init__()
-        self.in_features = in_features
-        self.time_emb_dim = time_emb_dim
-        self.hidden_dims = hidden_dims
-        self.use_attention = use_attention
-        self.num_attention_heads = num_attention_heads
-
-        # skip connection
-        self.skip_connection = nn.Sequential(
-            nn.Linear(self.in_features, self.in_features),
-        )
-
-        # embedding layer
-        self.emb_layers = nn.Sequential(
-            normalization1D(self.in_features),
-            nn.Linear(self.in_features, self.in_features),
-            nn.SiLU(),
-            nn.Linear(self.in_features, self.hidden_dims[0]),
-            nn.SiLU(),
-            nn.Dropout(kwargs.get("dropout", 0.1)),
-            nn.Linear(self.hidden_dims[0], self.hidden_dims[1]),
-            nn.SiLU(),
-            nn.Dropout(kwargs.get("dropout", 0.1)),
-            nn.Linear(self.hidden_dims[1], self.in_features),
-        )
-
-        # output layer
-        self.output_layers = zero_module(
-            nn.Sequential(
-                normalization1D(self.in_features),
-                nn.Linear(self.in_features, self.in_features),
-                nn.SiLU(),
-                nn.Linear(self.in_features, self.in_features),
-            )
-        )
-
-        # FiLM layer
-        self.film_layer = FiLM(self.time_emb_dim, self.in_features)
-
-        # Attention layer
-        self.attention = (
-            Attention1D(
-                in_features=self.in_features,
-                num_attention_heads=self.num_attention_heads,
-            )
-            if self.use_attention
-            else nn.Identity()
-        )
-
-    def forward(self, x: torch.Tensor, time_emb: torch.Tensor):
-        """forward pass of the residual block"""
-        B, C = x.shape
-        # skip
-        skip = self.skip_connection(x)
-        # embedding
-        out = self.emb_layers(x)
-        # apply FiLM layer for time embedding
-        out = self.film_layer(out.unsqueeze(-1).unsqueeze(-1), time_emb).view(B, C)
-        # output
-        out = self.output_layers(out)
-        # add skip connection
-        out = out + skip
-        # apply attention
-        out = self.attention(out)
-        return out
-
-
 class Res2DBlock(nn.Module):
     """Residual block for 2D inputs"""
 
@@ -232,63 +149,6 @@ class Res2DBlock(nn.Module):
             out = conv_layer(out)
             out = film_layer(out, t)
         return out + skip
-
-
-class Attention1D(nn.Module):
-    """Apply Self-Attention
-    Apply attention to an input of size (batch_size, in_features) which is first
-    transformed to (batch_size, in_features, embed_dim).
-    Here, in_features is the context length.
-    """
-
-    def __init__(
-        self,
-        in_features: int,
-        embed_dim: int = 32,
-        num_attention_heads: int = 1,
-        **kwargs,
-    ):
-        super(Attention1D, self).__init__()
-        assert (
-            in_features > 1 and num_attention_heads >= 1
-        ), "Atleast one feature and head required"
-        self.in_features = in_features
-        self.embed_dim = embed_dim
-        self.num_attention_heads = num_attention_heads
-        # embed layer
-        self.embed_layer = nn.Linear(
-            1, self.embed_dim
-        )  # project each token to embed dim
-        # build attention
-        self.attn = build_attention(
-            {
-                "name": kwargs.get("attention_mode", "scaled_dot_product"),
-                "dropout": kwargs.get("dropout", 0.1),
-                "causal": False,
-                "num_heads": self.num_attention_heads,
-            }
-        )
-        self.qkv_proj = nn.Linear(self.embed_dim, self.embed_dim * 3)
-        self.out_proj = nn.Linear(self.embed_dim, 1)
-
-    def forward(self, x: torch.Tensor):
-        assert (
-            x.ndim == 2 and x.shape[-1] == self.in_features
-        ), f"Expected: (batch_size, {self.in_features}, got {x.shape}"
-        B, C = x.shape  # B: batch_size, C: context_lenght
-        # embed
-        out = self.embed_layer(
-            x.unsqueeze(-1)
-        )  # (batch_size, context_length, embed_dim)
-        # compute qkv values
-        qkv = self.qkv_proj(out)
-        q, k, v = qkv.chunk(3, dim=-1)
-        # attention
-        out = self.attn(q, k, v)  # (batch_size, context_lenght, embed_dim)
-        # output projection
-        out = self.out_proj(out).view(B, C)
-
-        return out
 
 
 class SkipConnection(nn.Module):
