@@ -172,6 +172,7 @@ class ResFlow(Flow, L.LightningModule):
             time_embed_freq=self.time_embed_freq,
             num_centers=self.num_centers,
             field_data=True,
+            dropout=0.0,
         )
         self.state_embedding = embedding.get("state_embedding")
         self.condition_embedding = embedding.get("condition_embedding")

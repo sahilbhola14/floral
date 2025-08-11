@@ -54,19 +54,33 @@ def get_embedding_modules(
             nc=nc,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
+            dropout=kwargs.get("dropout", 0.1),
             **kwargs,
         )
     else:
         condition_embedding = Condition1DEmbedding(
-            nc=nc, latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
+            nc=nc,
+            latent_dim=latent_dim,
+            time_embed_freq=time_embed_freq,
+            dropout=kwargs.get("dropout", 0.1),
+            **kwargs,
         )
     # fusion embedding
     fusion_embedding = FusionEmbedding(
-        latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
+        latent_dim=latent_dim,
+        time_embed_freq=time_embed_freq,
+        dropout=kwargs.get("dropout", 0.1),
+        **kwargs,
     )
+
     # domain embedding
     domain_embedding = RBFFiLM(
-        num_centers=num_centers, latent_dim=latent_dim, nd=nd, nx=nx
+        num_centers=num_centers,
+        latent_dim=latent_dim,
+        nd=nd,
+        nx=nx,
+        dropout=kwargs.get("dropout", 0.1),
+        **kwargs,
     )
 
     embedding = {
@@ -94,13 +108,18 @@ class Res2DBlock(nn.Module):
     """Residual block for 2D inputs"""
 
     def __init__(
-        self, in_channels: int, out_channels: int, time_embed_dim: int, **kwargs
+        self,
+        in_channels: int,
+        out_channels: int,
+        time_embed_dim: int,
+        dropout: float = 0.1,
+        **kwargs,
     ):
         super(Res2DBlock, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.time_embed_dim = time_embed_dim
-        self.dropout = kwargs.get("dropout", 0.1)
+        self.dropout = dropout
 
         #  input layer
         self.input_layer = (
@@ -154,9 +173,10 @@ class Res2DBlock(nn.Module):
 class SkipConnection(nn.Module):
     """Skip connection with regularization"""
 
-    def __init__(self, latent_dim, hidden_dim=128):
+    def __init__(self, latent_dim, hidden_dim=128, dropout: float = 0.1):
         super().__init__()
         self.latent_dim = latent_dim
+        self.dropout = dropout
 
         self.layers = MLP(
             in_dim=self.latent_dim,
@@ -164,6 +184,7 @@ class SkipConnection(nn.Module):
             width=[hidden_dim, hidden_dim],
             activations=[nn.SiLU(), nn.SiLU(), None],
             norm="layer",
+            dropout=self.dropout,
         )
 
         # Learnable residual weight
@@ -184,11 +205,18 @@ class Condition1DEmbedding(nn.Module):
         dropout (float): Dropout rate
     """
 
-    def __init__(self, nc: int, latent_dim: int, time_embed_freq: int, **kwargs):
+    def __init__(
+        self,
+        nc: int,
+        latent_dim: int,
+        time_embed_freq: int,
+        dropout: float = 0.1,
+        **kwargs,
+    ):
         super(Condition1DEmbedding, self).__init__()
         self.nc = nc
         self.latent_dim = latent_dim
-        self.dropout = kwargs.get("dropout", 0.1)
+        self.dropout = dropout
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
         # skip connection
         if self.nc != self.latent_dim:
@@ -197,6 +225,7 @@ class Condition1DEmbedding(nn.Module):
                 width=[],
                 activations=[None],
                 out_dim=self.latent_dim,
+                dropout=self.dropout,
             )
         else:
             self.skip = nn.Identity()
@@ -259,12 +288,13 @@ class Condition2DEmbedding(nn.Module):
         pool_type: str = "max",  # options: max-> MaxPool2D, avg -> AvgPool2d
         num_attention_heads: int = 1,
         attention_embed_dim: int = 64,
+        dropout: float = 0.1,
         **kwargs,
     ):
         super(Condition2DEmbedding, self).__init__()
         self.nc = nc
         self.latent_dim = latent_dim
-        self.dropout = kwargs.get("dropout", 0.1)
+        self.dropout = dropout
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
         self.in_channels = in_channels
         self.feature_pool_type = feature_pool_type
@@ -418,12 +448,13 @@ class StateEmbedding(nn.Module):
         latent_dim: int,
         time_embed_freq: int,
         hidden_dims: list = [64, 128],
+        dropout: float = 0.1,
         **kwargs,
     ):
         super(StateEmbedding, self).__init__()
         self.nx = nx
         self.latent_dim = latent_dim
-        self.dropout = kwargs.get("dropout", 0.1)
+        self.dropout = dropout
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
         self.hidden_dims = hidden_dims
         assert len(self.hidden_dims) == 2, "currently only 2 layer support."
@@ -467,6 +498,7 @@ class StateEmbedding(nn.Module):
                     width=[],
                     activations=[nn.SiLU()],
                     norm="layer",
+                    dropout=self.dropout,
                 )
                 for _ in range(2)
             ]
@@ -478,6 +510,7 @@ class StateEmbedding(nn.Module):
             out_dim=self.latent_dim,
             width=[],
             activations=[None],
+            dropout=self.dropout,
         )
 
     def forward(self, state: torch.Tensor, time_embed: torch.Tensor):
@@ -509,11 +542,14 @@ class StateEmbedding(nn.Module):
 class FusionEmbedding(nn.Module):
     """Fuse the state and condition"""
 
-    def __init__(self, latent_dim: int, time_embed_freq: int, **kwargs):
+    def __init__(
+        self, latent_dim: int, time_embed_freq: int, dropout: float = 0.1, **kwargs
+    ):
         super(FusionEmbedding, self).__init__()
         self.latent_dim = latent_dim
         self.dropout = kwargs.get("dropout", 0.1)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
+        self.dropout = dropout
 
         # fusion layer
         self.fusion = MLP(
@@ -522,10 +558,11 @@ class FusionEmbedding(nn.Module):
             width=[self.latent_dim],
             activations=[nn.SiLU(), None],
             norm="layer",
+            dropout=self.dropout,
         )
 
         # skip connection
-        self.skip = SkipConnection(latent_dim=self.latent_dim)
+        self.skip = SkipConnection(latent_dim=self.latent_dim, dropout=self.dropout)
 
     def forward(
         self,

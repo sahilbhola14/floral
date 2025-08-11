@@ -58,6 +58,7 @@ class RBFFiLM(nn.Module):
         nx: int,
         learnable_bandwidth=True,
         improved_centers=True,
+        dropout: float = 0.1,
     ):
         """
         Args:
@@ -73,6 +74,7 @@ class RBFFiLM(nn.Module):
         self.latent_dim = latent_dim
         self.nd = nd
         self.nx = nx
+        self.dropout = dropout
 
         # Initialize centers with better coverage if requested
         if improved_centers:
@@ -99,6 +101,7 @@ class RBFFiLM(nn.Module):
             width=[64, 64],  # Same as original
             out_dim=self.latent_dim,  # Match latent_dim for proper FiLM
             activations=[nn.ReLU(), nn.ReLU(), None],
+            dropout=self.dropout,
         )
 
         self.beta_net = MLP(
@@ -106,6 +109,7 @@ class RBFFiLM(nn.Module):
             width=[64, 64],  # Same as original
             out_dim=self.latent_dim,  # FIX: Match latent_dim, not 1
             activations=[nn.ReLU(), nn.ReLU(), None],
+            dropout=self.dropout,
         )
 
         # Output projection to match state dimension
