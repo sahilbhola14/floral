@@ -420,21 +420,22 @@ class SpatialAdaptivePooling(nn.Module):
         self.in_channels = in_channels
         self.latent_dim = latent_dim
         self.dropout = dropout
+        self.pool_size = kwargs.get("pool_size", 4)
 
+        self.pool = nn.AdaptiveAvgPool2d((self.pool_size, self.pool_size))
         self.proj = MLP(
-            in_dim=self.in_channels,
+            in_dim=self.in_channels * self.pool_size**2,
             out_dim=self.latent_dim,
             width=[32],
             activations=[nn.SiLU(), None],
             dropout=self.dropout,
             norm="layer",
         )
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
 
     def forward(self, x):
         B, C, H, W = x.shape
-        out = self.pool(x)  # (B, C, 1, 1)
-        return self.proj(out.squeeze())  # (B, latent_dim)
+        out = self.pool(x)  # (B, C, 4, 4)
+        return self.proj(out.flatten(1))  # (B, latent_dim)
 
 
 class FiLM(nn.Module):

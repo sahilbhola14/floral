@@ -46,7 +46,11 @@ def get_embedding_modules(
     FusionEmbedding, and DomainEmbedding"""
     # state embedding
     state_embedding = StateEmbedding(
-        nx=nx, latent_dim=latent_dim, time_embed_freq=time_embed_freq, **kwargs
+        nx=nx,
+        latent_dim=latent_dim,
+        time_embed_freq=time_embed_freq,
+        dropout=kwargs.get("dropout", 0.0),
+        **kwargs,
     )
     # condition embedding
     if field_data:
@@ -54,7 +58,7 @@ def get_embedding_modules(
             nc=nc,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
-            dropout=kwargs.get("dropout", 0.1),
+            dropout=kwargs.get("dropout", 0.0),
             **kwargs,
         )
     else:
@@ -62,14 +66,14 @@ def get_embedding_modules(
             nc=nc,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
-            dropout=kwargs.get("dropout", 0.1),
+            dropout=kwargs.get("dropout", 0.0),
             **kwargs,
         )
     # fusion embedding
     fusion_embedding = FusionEmbedding(
         latent_dim=latent_dim,
         time_embed_freq=time_embed_freq,
-        dropout=kwargs.get("dropout", 0.1),
+        dropout=kwargs.get("dropout", 0.0),
         **kwargs,
     )
 
@@ -79,7 +83,7 @@ def get_embedding_modules(
         latent_dim=latent_dim,
         nd=nd,
         nx=nx,
-        dropout=kwargs.get("dropout", 0.1),
+        dropout=kwargs.get("dropout", 0.0),
         **kwargs,
     )
 
