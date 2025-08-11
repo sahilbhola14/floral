@@ -349,6 +349,7 @@ class Condition2DEmbedding(nn.Module):
                     SpatialAdaptivePooling(
                         in_channels=output_ch,
                         latent_dim=self.latent_dim,
+                        dropout=self.dropout,
                     )
                 )
             elif self.feature_pool_type == "attention":
@@ -358,6 +359,7 @@ class Condition2DEmbedding(nn.Module):
                         latent_dim=self.latent_dim,
                         num_attention_heads=self.num_attention_heads,
                         embed_dim=attention_embed_dim,
+                        dropout=self.dropout,
                     )
                 )
             else:

@@ -377,12 +377,13 @@ class SpatialAttentionPooling(nn.Module):
         latent_dim: int,
         embed_dim: int = 128,
         num_attention_heads=1,
+        dropout: float = 0.1,
         **kwargs,
     ):
         super().__init__()
         self.embed_dim = embed_dim
         self.latent_dim = latent_dim
-        self.dropout = kwargs.get("dropout", 0.1)
+        self.dropout = dropout
         self.num_attention_heads = num_attention_heads
         self.conv = conv_nd(
             dims=2, in_channels=in_channels, out_channels=self.embed_dim, kernel_size=1
@@ -412,11 +413,13 @@ class SpatialAttentionPooling(nn.Module):
 
 
 class SpatialAdaptivePooling(nn.Module):
-    def __init__(self, in_channels: int, latent_dim: int, **kwargs):
+    def __init__(
+        self, in_channels: int, latent_dim: int, dropout: float = 0.1, **kwargs
+    ):
         super().__init__()
         self.in_channels = in_channels
         self.latent_dim = latent_dim
-        self.dropout = kwargs.get("dropout", 0.1)
+        self.dropout = dropout
 
         self.proj = MLP(
             in_dim=self.in_channels,
