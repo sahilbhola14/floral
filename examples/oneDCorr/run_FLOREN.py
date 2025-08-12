@@ -141,8 +141,8 @@ class ResFlow(Flow, L.LightningModule):
         # Convert condition_domain tensor to list for saving
         condition_domain_list = (
             condition_domain.detach().cpu().tolist()
-            if condition_domain is not None
-            else None
+            if isinstance(condition_domain, torch.Tensor)
+            else condition_domain
         )
 
         # save the config and hyperparameter config
@@ -166,10 +166,10 @@ class ResFlow(Flow, L.LightningModule):
             if condition_domain_list is not None
             else None
         )
-        assert self.condition_domain.shape == (
-            self.nc,
-            self.nd,
-        ), "Condition domain shape mismatch"
+        assert self.condition_domain.shape == (self.nc, self.nd_c,), (
+            "Condition domain shape mismatch."
+            f"Expected ({self.nc, self.nd_c}), got {self.condition_domain.shape}"
+        )
 
         # flow config
         self.flow_config = self.config.flow.copy()

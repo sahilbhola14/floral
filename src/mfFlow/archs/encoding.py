@@ -92,8 +92,13 @@ class RBFFiLM(nn.Module):
         # Learnable bandwidth (single value for simplicity)
         if learnable_bandwidth:
             self.log_bandwidth = nn.Parameter(torch.tensor(math.log(10.0)))
+            self.log_bandwidth = nn.Parameter(
+                torch.ones(self.num_centers) * math.log(10.0)
+            )
         else:
-            self.register_buffer("log_bandwidth", torch.tensor(math.log(10.0)))
+            self.register_buffer(
+                "log_bandwidth", torch.ones(self.num_centers) * math.log(10.0)
+            )
 
         # Keep similar network sizes to original but fix output dimension
         self.gamma_net = MLP(
@@ -149,11 +154,11 @@ class RBFFiLM(nn.Module):
 
         # Compute distances
         delta = mod.unsqueeze(1) - self.centers.unsqueeze(0)
-        distances = torch.norm(delta, dim=-1)
+        sq_dist = (delta * delta).sum(-1)
 
         # RBF with learnable bandwidth
-        bandwidth = torch.exp(self.log_bandwidth)
-        return torch.exp(-bandwidth * distances**2)
+        bandwidth = self.log_bandwidth.exp().unsqueeze(0)  # (1, num_centers)
+        return torch.exp(-bandwidth * sq_dist)
 
     def forward(self, x: torch.Tensor, mod: torch.Tensor):
         """
@@ -490,27 +495,33 @@ class CoordModulation(nn.Module):
 
     def __init__(self, coords: torch.Tensor, nc: int, nd_c: int, **kwargs):
         super(CoordModulation, self).__init__()
-        self.coords = coords
         self.nc = nc
         self.nd_c = nd_c
         self.dropout = kwargs.get("dropout", 0.0)
         self.num_centers = kwargs.get("num_centers", 10)
         self.latent_dim = kwargs.get("latent_dim", 64)
+
+        # register coords
+        self.register_buffer("coords", coords)
+
         assert isinstance(self.coords, torch.Tensor), "coords must be a torch.Tensor"
         assert self.coords.ndim == 2 and self.coords.shape == (
             self.nc,
             self.nd_c,
         ), f"coords must be of shape ({self.nc}, {self.nd_c}), got {self.coords.shape}"
 
-        self.centers = self._initialize_centers()
-        self.log_bandwidth = nn.Parameter(torch.tensor(math.log(10.0)))
+        centers = self._initialize_centers().to(coords.dtype).to(coords.device)
+        self.centers = nn.Parameter(centers, requires_grad=True)
+
+        self.log_bandwidth = nn.Parameter(torch.ones(self.num_centers) * math.log(10.0))
 
         # feature embedding
         self.feature_embedding = MLP(
             in_dim=self.num_centers + 1,
-            out_dim=1,
+            out_dim=2,
             width=[32, 32],
             activations=[nn.SiLU(), nn.SiLU(), None],
+            dropout=self.dropout,
         )
 
     def _initialize_centers(self):
@@ -541,20 +552,19 @@ class CoordModulation(nn.Module):
 
         assert centers.shape == (self.num_centers, self.nd_c)
 
-        return nn.Parameter(centers, requires_grad=True)
+        return centers
 
     def _rbf_encoding(self):
         """Simple RBF encoding - minimal change from original"""
         # Ensure mod is properly bounded
         mod = torch.clamp(self.coords, 0, 1)
-
         # Compute distances
         delta = mod.unsqueeze(1) - self.centers.unsqueeze(0)
-        distances = torch.norm(delta, dim=-1)
+        sq_dist = (delta * delta).sum(-1)
 
         # RBF with learnable bandwidth
-        bandwidth = torch.exp(self.log_bandwidth)
-        return torch.exp(-bandwidth * distances**2)
+        bandwidth = self.log_bandwidth.exp().unsqueeze(0)  # (1, num_centers)
+        return torch.exp(-bandwidth * sq_dist)
 
     def forward(self, x: torch.Tensor):
         """forward pass"""
@@ -562,12 +572,15 @@ class CoordModulation(nn.Module):
             x.ndim == 2 and x.shape[1] == self.nc
         ), "Input tensor must be 2D with shape (batch_size, nc)"
         # get the modulation coordinates
-        mod_coords = self._rbf_encoding()  # (nc, num_centers)
-        # apped the coordinates to the input tensor
-        x_appended = torch.cat(
-            [x.unsqueeze(-1), mod_coords.unsqueeze(0).expand(x.shape[0], -1, -1)],
-            dim=-1,
-        )
-        # feature embedding
-        feature_embedding = self.feature_embedding(x_appended)  # (batch_size, 1)
-        return x + feature_embedding.squeeze(-1)  # (batch_size, nc) - modulated output
+        rbf = self._rbf_encoding()  # (nc, num_centers)
+
+        # concat raw feature value per location as an extra basis fn
+        B = x.shape[0]
+        x_app = torch.cat(
+            [x.unsqueeze(-1), rbf.unsqueeze(0).expand(B, -1, -1)], dim=-1
+        )  # (B,nc,K+1)
+        gamma_beta = self.feature_embedding(x_app)  # (B, nc, 2)
+        gamma, beta = torch.chunk(gamma_beta, 2, dim=-1)
+        gamma, beta = gamma.squeeze(-1), beta.squeeze(-1)
+
+        return (1 + gamma) * x + beta

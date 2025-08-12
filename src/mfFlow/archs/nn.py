@@ -305,6 +305,7 @@ class Condition2DEmbedding(nn.Module):
         pool_type: str = "max",  # options: max-> MaxPool2D, avg -> AvgPool2d
         num_attention_heads: int = 1,
         attention_embed_dim: int = 64,
+        condition_domain: torch.Tensor = None,
         **kwargs,
     ):
         super(Condition2DEmbedding, self).__init__()
@@ -338,6 +339,11 @@ class Condition2DEmbedding(nn.Module):
                 )
         else:
             self.channel_mult = channel_mult
+
+        # Coordinate embedding
+        self.coordinate_embedding = CoordModulation(
+            coords=self.condition_domain, nc=self.nc, nd_c=self.nd_c
+        )
 
         # input block to process the condition
         ch = input_ch = int(self.channel_mult[0] * base_channels)
@@ -386,7 +392,7 @@ class Condition2DEmbedding(nn.Module):
             if self.pool_type == "max":
                 self.pool_blocks.append(nn.MaxPool2d(2))
             elif self.pool_type == "avg":
-                self.pool_blocks.append(nn.AdaptiveAvgPool2d(1))
+                self.pool_blocks.append(nn.AvgPool2d(2))
             else:
                 raise ValueError(f"Invalid pool type {self.pool_type}")
 
@@ -416,6 +422,8 @@ class Condition2DEmbedding(nn.Module):
 
     def forward(self, condition: torch.Tensor, time_embed: torch.Tensor):
         """forward pass"""
+        # apply coordinate embedding
+        condition = self.coordinate_embedding(condition)
         # reshape the condition to field (B, C, H, W)
         condition = condition.view(-1, self.in_channels, *self.field_shape)
         # process through the input block (B, base_channels, H, W)
