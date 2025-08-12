@@ -49,7 +49,6 @@ def get_embedding_modules(
         nx=nx,
         latent_dim=latent_dim,
         time_embed_freq=time_embed_freq,
-        dropout=kwargs.get("dropout", 0.0),
         **kwargs,
     )
     # condition embedding
@@ -58,7 +57,6 @@ def get_embedding_modules(
             nc=nc,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
-            dropout=kwargs.get("dropout", 0.0),
             **kwargs,
         )
     else:
@@ -66,14 +64,12 @@ def get_embedding_modules(
             nc=nc,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
-            dropout=kwargs.get("dropout", 0.0),
             **kwargs,
         )
     # fusion embedding
     fusion_embedding = FusionEmbedding(
         latent_dim=latent_dim,
         time_embed_freq=time_embed_freq,
-        dropout=kwargs.get("dropout", 0.0),
         **kwargs,
     )
 
@@ -83,7 +79,6 @@ def get_embedding_modules(
         latent_dim=latent_dim,
         nd=nd,
         nx=nx,
-        dropout=kwargs.get("dropout", 0.0),
         **kwargs,
     )
 
@@ -214,13 +209,12 @@ class Condition1DEmbedding(nn.Module):
         nc: int,
         latent_dim: int,
         time_embed_freq: int,
-        dropout: float = 0.1,
         **kwargs,
     ):
         super(Condition1DEmbedding, self).__init__()
         self.nc = nc
         self.latent_dim = latent_dim
-        self.dropout = dropout
+        self.dropout = kwargs.get("dropout", 0.0)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
         # skip connection
         if self.nc != self.latent_dim:
@@ -292,13 +286,12 @@ class Condition2DEmbedding(nn.Module):
         pool_type: str = "max",  # options: max-> MaxPool2D, avg -> AvgPool2d
         num_attention_heads: int = 1,
         attention_embed_dim: int = 64,
-        dropout: float = 0.1,
         **kwargs,
     ):
         super(Condition2DEmbedding, self).__init__()
         self.nc = nc
         self.latent_dim = latent_dim
-        self.dropout = dropout
+        self.dropout = kwargs.get("dropout", 0.0)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
         self.in_channels = in_channels
         self.feature_pool_type = feature_pool_type
@@ -454,13 +447,12 @@ class StateEmbedding(nn.Module):
         latent_dim: int,
         time_embed_freq: int,
         hidden_dims: list = [64, 128],
-        dropout: float = 0.1,
         **kwargs,
     ):
         super(StateEmbedding, self).__init__()
         self.nx = nx
         self.latent_dim = latent_dim
-        self.dropout = dropout
+        self.dropout = kwargs.get("dropout", 0.0)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
         self.hidden_dims = hidden_dims
         assert len(self.hidden_dims) == 2, "currently only 2 layer support."
@@ -548,14 +540,11 @@ class StateEmbedding(nn.Module):
 class FusionEmbedding(nn.Module):
     """Fuse the state and condition"""
 
-    def __init__(
-        self, latent_dim: int, time_embed_freq: int, dropout: float = 0.1, **kwargs
-    ):
+    def __init__(self, latent_dim: int, time_embed_freq: int, **kwargs):
         super(FusionEmbedding, self).__init__()
         self.latent_dim = latent_dim
-        self.dropout = kwargs.get("dropout", 0.1)
+        self.dropout = kwargs.get("dropout", 0.0)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
-        self.dropout = dropout
 
         # fusion layer
         self.fusion = MLP(

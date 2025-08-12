@@ -58,7 +58,7 @@ class RBFFiLM(nn.Module):
         nx: int,
         learnable_bandwidth=True,
         improved_centers=True,
-        dropout: float = 0.1,
+        **kwargs,
     ):
         """
         Args:
@@ -74,7 +74,7 @@ class RBFFiLM(nn.Module):
         self.latent_dim = latent_dim
         self.nd = nd
         self.nx = nx
-        self.dropout = dropout
+        self.dropout = kwargs.get("dropout", 0.0)
 
         # Initialize centers with better coverage if requested
         if improved_centers:
