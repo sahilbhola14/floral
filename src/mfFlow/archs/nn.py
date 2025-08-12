@@ -8,6 +8,7 @@ from .encoding import (
     conv_nd,
     SpatialAttentionPooling,
     SpatialAdaptivePooling,
+    CoordModulation,
 )
 
 
@@ -36,10 +37,12 @@ def get_embedding_modules(
     nx: int,
     nc: int,
     nd: int,
+    nd_c: int,
     latent_dim: int,
     time_embed_freq: int,
     num_centers: int,
     field_data: bool = False,
+    condition_domain: torch.Tensor = None,
     **kwargs,
 ):
     """Wrapper to get the modules for StateEmbedding, ConditionEmbedding,
@@ -55,15 +58,19 @@ def get_embedding_modules(
     if field_data:
         condition_embedding = Condition2DEmbedding(
             nc=nc,
+            nd_c=nd_c,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
+            condition_domain=condition_domain,
             **kwargs,
         )
     else:
         condition_embedding = Condition1DEmbedding(
             nc=nc,
+            nd_c=nd_c,
             latent_dim=latent_dim,
             time_embed_freq=time_embed_freq,
+            condition_domain=condition_domain,
             **kwargs,
         )
     # fusion embedding
@@ -207,15 +214,24 @@ class Condition1DEmbedding(nn.Module):
     def __init__(
         self,
         nc: int,
+        nd_c: int,
         latent_dim: int,
         time_embed_freq: int,
+        condition_domain: torch.Tensor = None,
         **kwargs,
     ):
         super(Condition1DEmbedding, self).__init__()
         self.nc = nc
+        self.nd_c = nd_c
         self.latent_dim = latent_dim
         self.dropout = kwargs.get("dropout", 0.0)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())
+        self.condition_domain = condition_domain
+
+        # Coordinate embedding
+        self.coordinate_embedding = CoordModulation(
+            coords=self.condition_domain, nc=self.nc, nd_c=self.nd_c
+        )
         # skip connection
         if self.nc != self.latent_dim:
             self.skip = MLP(
@@ -252,6 +268,8 @@ class Condition1DEmbedding(nn.Module):
         Returns:
             torch.Tensor: Embedded tensor of shape (batch_size, latent_dim)
         """
+        # apply coordinate embedding
+        condition = self.coordinate_embedding(condition)
         # apply skip
         skip = self.skip(condition)
         # apply conditon embedding
@@ -277,6 +295,7 @@ class Condition2DEmbedding(nn.Module):
     def __init__(
         self,
         nc: int,
+        nd_c: int,
         latent_dim: int,
         time_embed_freq: int,
         channel_mult=None,
@@ -290,6 +309,7 @@ class Condition2DEmbedding(nn.Module):
     ):
         super(Condition2DEmbedding, self).__init__()
         self.nc = nc
+        self.nd_c = nd_c
         self.latent_dim = latent_dim
         self.dropout = kwargs.get("dropout", 0.0)
         self.time_embed_dim = 2 * time_embed_freq  # (sin(), cos())

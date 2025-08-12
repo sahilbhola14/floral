@@ -11,6 +11,7 @@ data:
   nx: 1 # Output field dimensionality
   nc: 100 # Input field dimensionality
   nd: 1 # Domain dimensionality
+  nd_c: 1 # Domain dimensionality for the condition
   sensing_strategy: "random" # Options: "random", "uniform", "stratified"
   low_fidelity:
     path: "./low_fidelity.npz"
@@ -31,8 +32,8 @@ dataloader:
 
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
-  accelerator: 'gpu'
-  devices: 4
+  accelerator: 'cpu'
+  devices: 1
   strategy: 'ddp'
   precision: 'bf16-mixed'
 

@@ -66,6 +66,7 @@ def build_data_module(
         nx=config.data.nx,
         nc=config.data.nc,
         nd=config.data.nd,
+        nd_c=config.data.nd_c,
         low_fidelity_path=config.data.low_fidelity.path,
         high_fidelity_path=config.data.high_fidelity.path,
         n_samples=config.data.high_fidelity.n_samples,
@@ -124,7 +125,10 @@ class ResFlow(Flow, L.LightningModule):
     """Class for the residual flow model."""
 
     def __init__(
-        self, config: dict, hp_config: wandb.sdk.wandb_config.Config | dict = None
+        self,
+        config: dict,
+        hp_config: wandb.sdk.wandb_config.Config | dict = None,
+        condition_domain: torch.Tensor = None,
     ):
         # Initialize the Flow and LightningModule
         Flow.__init__(self, hp_config=hp_config)
@@ -134,13 +138,38 @@ class ResFlow(Flow, L.LightningModule):
         # config_dict = OmegaConf.to_container(config, resolve=True)
         hp_config_dict = dict(hp_config)
 
+        # Convert condition_domain tensor to list for saving
+        condition_domain_list = (
+            condition_domain.detach().cpu().tolist()
+            if condition_domain is not None
+            else None
+        )
+
         # save the config and hyperparameter config
-        self.save_hyperparameters({"config": config, "hp_config": hp_config_dict})
+        self.save_hyperparameters(
+            {
+                "config": config,
+                "hp_config": hp_config_dict,
+                "condition_domain": condition_domain_list,
+            }
+        )
 
         self.config = config
         self.nx = self.config.data.nx
         self.nc = self.config.data.nc
         self.nd = self.config.data.nd
+        self.nd_c = self.config.data.nd_c
+
+        # Store the tensor version for use inside the model
+        self.condition_domain = (
+            torch.FloatTensor(condition_domain_list)
+            if condition_domain_list is not None
+            else None
+        )
+        assert self.condition_domain.shape == (
+            self.nc,
+            self.nd,
+        ), "Condition domain shape mismatch"
 
         # flow config
         self.flow_config = self.config.flow.copy()
@@ -158,9 +187,11 @@ class ResFlow(Flow, L.LightningModule):
             nx=self.nx,
             nc=self.nc,
             nd=self.nd,
+            nd_c=self.nd_c,
             latent_dim=self.latent_dim,
             time_embed_freq=self.time_embed_freq,
             num_centers=self.num_centers,
+            condition_domain=self.condition_domain,
         )
         self.state_embedding = embedding.get("state_embedding")
         self.condition_embedding = embedding.get("condition_embedding")
@@ -199,7 +230,11 @@ def train_model(hp_config: dict = None):
         config=config, hp_config=hp_config, checkpointer=checkpointer
     )
     # model
-    model = ResFlow(config=config, hp_config=hp_config)
+    model = ResFlow(
+        config=config,  # general config
+        hp_config=hp_config,  # hyperparameter config
+        condition_domain=data_module.condition_domain,  # condition domain
+    )
     model.apply(init_weights)
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:

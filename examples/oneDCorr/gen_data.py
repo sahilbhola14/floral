@@ -16,7 +16,7 @@ parser.add_argument(
     "-nt",
     "--n_test_samples",
     type=int,
-    default=50,
+    default=200,
     help="Number of samples to generate test",
 )
 
@@ -91,6 +91,7 @@ def generate():
         "field": hf_solution[: args.n_samples],
         "condition": features[: args.n_samples],
         "domain": domain.reshape(-1, 1),
+        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
         "resolution": args.m_high,
     }
 
@@ -98,6 +99,7 @@ def generate():
         "field": lf_solution[: args.n_samples],
         "condition": features[: args.n_samples],
         "domain": domain.reshape(-1, 1),
+        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
         "resolution": args.m_high,
     }
 
@@ -107,6 +109,7 @@ def generate():
         "HF_field": hf_solution[args.n_samples :],
         "condition": features[args.n_samples :],
         "domain": domain.reshape(-1, 1),
+        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
         "resolution": args.m_high,
     }
 

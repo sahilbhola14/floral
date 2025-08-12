@@ -70,6 +70,7 @@ class OpDataModule(L.LightningDataModule):
         nx: int,
         nc: int,
         nd: int,
+        nd_c: int,
         low_fidelity_path: str,
         high_fidelity_path: str,
         n_samples: int,
@@ -95,6 +96,7 @@ class OpDataModule(L.LightningDataModule):
         self.nx = nx  # Dimensionality of the output features
         self.nc = nc  # Dimensionality of the input features
         self.nd = nd  # Dimensionality of the domain (e.g., 2 for 2D data)
+        self.nd_c = nd_c  # Dimensionality of the condition domain
         self.n_samples = n_samples  # Number of samples in the dataset
         self.n_sensors = n_sensors  # Number of sensors in the output field
         self.mfFlow = mfFlow  # If True, use residual learning
@@ -138,6 +140,9 @@ class OpDataModule(L.LightningDataModule):
             "sensor_locations": "sensor_locations_mfFlow.pt"
             if self.mfFlow
             else "sensor_locations.pt",
+            "condition_domain": "condition_domain_mfFlow.pt"
+            if self.mfFlow
+            else "condition_domain.pt",
         }
 
     def _extract_fields(self, data_dict: dict):
@@ -145,6 +150,7 @@ class OpDataModule(L.LightningDataModule):
         field = n2t(data_dict.get("field", None))
         condition = n2t(data_dict.get("condition", None))
         domain = n2t(data_dict.get("domain", None))
+        condition_domain = n2t(data_dict.get("condition_domain", None))
         # Check shapes of the domain and conditions
         # field shape will change afterwards
         assert (
@@ -157,7 +163,12 @@ class OpDataModule(L.LightningDataModule):
             domain.shape[1] == self.nd
         ), f"Domain shape mismatch: expected {self.nd}, got {domain.shape[1]}"
 
-        return field, condition, domain
+        assert condition_domain.shape == (self.nc, self.nd_c,), (
+            f"Condition domain shape mismatch: expected {self.nc, self.nd_c}, "
+            f"got {condition_domain.shape}"
+        )
+
+        return field, condition, domain, condition_domain
 
     def _subselect_samples(self, field: torch.Tensor, condition: torch.Tensor):
         """Sub-select a fixed number of samples from the data."""
@@ -252,9 +263,13 @@ class OpDataModule(L.LightningDataModule):
     def _process_operator_fields(self):
         """Process operator fields for the data module."""
         # Extract fields from low fidelity data
-        LF_field, LF_condition, LF_domain = self._extract_fields(self.LF_data)
+        LF_field, LF_condition, LF_domain, LF_condition_domain = self._extract_fields(
+            self.LF_data
+        )
         # Extract fields from high fidelity data
-        HF_field, HF_condition, HF_domain = self._extract_fields(self.HF_data)
+        HF_field, HF_condition, HF_domain, HF_condition_domain = self._extract_fields(
+            self.HF_data
+        )
         # Assert statements to ensure the shapes are correct
         assert (
             LF_field.shape[0] == HF_field.shape[0]
@@ -315,6 +330,7 @@ class OpDataModule(L.LightningDataModule):
         data_dict["LF_condition"] = LF_condition_sub
         data_dict["HF_domain"] = HF_domain
         data_dict["LF_domain"] = LF_domain
+        data_dict["condition_domain"] = HF_condition_domain
 
         return data_dict
 
@@ -519,12 +535,20 @@ class OpDataModule(L.LightningDataModule):
                 self.file_paths["sensor_locations"], weights_only=False
             )
 
+            # Load condition domain irrespective of self.reload_sensors
+            self.condition_domain = torch.load(
+                self.file_paths["condition_domain"], weights_only=False
+            )
+
         else:
             # Get the processed operator fields
             op_data_dict = self._process_operator_fields()
 
             # Sensor locations
             self.sensor_locations = op_data_dict.get("sensor_locations", None)
+
+            # Condition domain
+            self.condition_domain = op_data_dict.get("condition_domain", None)
 
             # Split the data into training and validation sets
             train_data, val_data = self._split_data(op_data_dict)
@@ -553,6 +577,7 @@ class OpDataModule(L.LightningDataModule):
             torch.save(self.statistics, self.file_paths["statistics"])
             torch.save(self.test_config, self.file_paths["test_config"])
             torch.save(self.sensor_locations, self.file_paths["sensor_locations"])
+            torch.save(self.condition_domain, self.file_paths["condition_domain"])
 
     def train_dataloader(self):
         """Returns the training dataloader."""

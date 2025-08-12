@@ -171,14 +171,11 @@ class RBFFiLM(nn.Module):
 
         # Generate FiLM parameters
         gamma = self.gamma_net(mod_features)  # (batch_size, latent_dim)
-        beta = self.beta_net(mod_features)  # (batch_size, latent_dim) - FIXED
+        beta = self.beta_net(mod_features)  # (batch_size, latent_dim)
 
-        # Apply FiLM modulation properly
-        # Original: torch.sum(x * gamma, dim=-1, keepdim=True) + beta  # WRONG!
-        # Fixed: element-wise modulation
+        # Apply FiLM
         modulated = x * (1 + gamma) + beta  # (batch_size, latent_dim)
 
-        # Project to output dimension - THIS WAS MISSING
         output = self.output_proj(modulated)  # (batch_size, nx)
 
         return output
@@ -478,3 +475,99 @@ class FiLM(nn.Module):
         scale = self.scale(emb).view(-1, self.num_channels, 1, 1)
         shift = self.shift(emb).view(-1, self.num_channels, 1, 1)
         return x * (1 + scale) + shift
+
+
+class CoordModulation(nn.Module):
+    """Modululate the input tensor with the coordinates.
+
+    Given an input tensor of shape (batch_size, nc), this layer modulates
+    the input tensor by scaling and shifting it based on the provided coordinates.
+
+    Attributes:
+        coords (torch.Tensor): Coordinates tensor of shape (in_features, 1)
+        nc (int): Number of input features
+    """
+
+    def __init__(self, coords: torch.Tensor, nc: int, nd_c: int, **kwargs):
+        super(CoordModulation, self).__init__()
+        self.coords = coords
+        self.nc = nc
+        self.nd_c = nd_c
+        self.dropout = kwargs.get("dropout", 0.0)
+        self.num_centers = kwargs.get("num_centers", 10)
+        self.latent_dim = kwargs.get("latent_dim", 64)
+        assert isinstance(self.coords, torch.Tensor), "coords must be a torch.Tensor"
+        assert self.coords.ndim == 2 and self.coords.shape == (
+            self.nc,
+            self.nd_c,
+        ), f"coords must be of shape ({self.nc}, {self.nd_c}), got {self.coords.shape}"
+
+        self.centers = self._initialize_centers()
+        self.log_bandwidth = nn.Parameter(torch.tensor(math.log(10.0)))
+
+        # feature embedding
+        self.feature_embedding = MLP(
+            in_dim=self.num_centers + 1,
+            out_dim=1,
+            width=[32, 32],
+            activations=[nn.SiLU(), nn.SiLU(), None],
+        )
+
+    def _initialize_centers(self):
+        """Better center initialization without much complexity
+        Returns:
+            (torch.nn.Parameter): Initialized centers tensor of shape
+            (num_centers, nd_c)
+        """
+        if self.nd_c == 1:
+            # Chebyshev nodes for better approximation
+            i = torch.arange(1, self.num_centers + 1).float()
+            centers = 0.5 * (
+                1 + torch.cos((2 * i - 1) * math.pi / (2 * self.num_centers))
+            )
+            centers = centers.unsqueeze(1)
+        elif self.nd_c == 2:
+            # Simple grid initialization
+            side = int(math.ceil(math.sqrt(self.num_centers)))
+            x = torch.linspace(0, 1, side)
+            y = torch.linspace(0, 1, side)
+            xx, yy = torch.meshgrid(x, y, indexing="ij")
+            centers = torch.stack([xx.flatten(), yy.flatten()], dim=1)[
+                : self.num_centers
+            ]
+        else:
+            # Random for higher dimensions
+            centers = torch.rand(self.num_centers, self.nd_c)
+
+        assert centers.shape == (self.num_centers, self.nd_c)
+
+        return nn.Parameter(centers, requires_grad=True)
+
+    def _rbf_encoding(self):
+        """Simple RBF encoding - minimal change from original"""
+        # Ensure mod is properly bounded
+        mod = torch.clamp(self.coords, 0, 1)
+
+        # Compute distances
+        delta = mod.unsqueeze(1) - self.centers.unsqueeze(0)
+        distances = torch.norm(delta, dim=-1)
+
+        # RBF with learnable bandwidth
+        bandwidth = torch.exp(self.log_bandwidth)
+        return torch.exp(-bandwidth * distances**2)
+
+    def forward(self, x: torch.Tensor):
+        """forward pass"""
+        assert (
+            x.ndim == 2 and x.shape[1] == self.nc
+        ), "Input tensor must be 2D with shape (batch_size, nc)"
+        # get the modulation coordinates
+        mod_coords = self._rbf_encoding()  # (nc, num_centers)
+        # apped the coordinates to the input tensor
+        x_appended = torch.cat(
+            [x.unsqueeze(-1), mod_coords.unsqueeze(0).expand(x.shape[0], -1, -1)],
+            dim=-1,
+        )
+        # feature embedding
+        feature_embedding = self.feature_embedding(x_appended)  # (batch_size, 1)
+        return x + feature_embedding.squeeze(-1)  # (batch_size, nc) - modulated output
