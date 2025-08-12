@@ -82,7 +82,7 @@ if __name__ == "__main__":
         train_set=data_module.train_set,
         val_set=data_module.val_set,
         device=device,
-        gp_type="vanilla",
+        gp_type="mini_batch_vanilla",
     ).to(device)
     # train the model
     train_GP(model)

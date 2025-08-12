@@ -135,7 +135,6 @@ class ResFlow(Flow, L.LightningModule):
         L.LightningModule.__init__(self)
 
         # convert to dict for saving
-        # config_dict = OmegaConf.to_container(config, resolve=True)
         hp_config_dict = dict(hp_config)
 
         # Convert condition_domain tensor to list for saving
@@ -235,6 +234,9 @@ def train_model(hp_config: dict = None):
         hp_config=hp_config,  # hyperparameter config
         condition_domain=data_module.condition_domain,  # condition domain
     )
+    if hasattr(model, "compile") and torch.cuda.is_available():
+        printer("Compiling the model...")
+        model = torch.compile(model, mode="default")
     model.apply(init_weights)
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:

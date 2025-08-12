@@ -6,7 +6,7 @@ FLOREN:
   weight_decay: 1.0e-4
   latent_dim: 35
   num_centers: 10
-  time_emb_freq: 4
+  time_embed_freq: 64
   scheduler: "exponential"
   exponential_scheduler_gamma: 0.99
   lr_scheduler_step: 5
