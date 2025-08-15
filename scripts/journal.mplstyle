@@ -37,7 +37,8 @@ lines.markersize: 3
 
 # Legend
 legend.fontsize: 15
-legend.frameon: False
+legend.frameon: True
+legend.framealpha: 1
 legend.loc: best
 
 # Figure

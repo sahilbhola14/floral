@@ -7,8 +7,14 @@ plt.style.use("../journal.mplstyle")
 # Begin user input
 n_samples = 50
 n_sensors = 20
+sigma_factor = 4.0  # Number of standard deviations for the error bars
 plot_idx = {"automatic": False, "idx": 6}  # Set to True for automatic index selection
 # End user input
+
+print(
+    f"Plotting {sigma_factor} sigma error bars for {n_samples}"
+    f"samples and {n_sensors} sensors."
+)
 
 
 def find_best_idx(true, prediction):
@@ -36,13 +42,20 @@ def find_worst_idx(true, prediction):
 
 
 # Load data
-data = torch.load(f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results.pt")
-data_mfFlow = torch.load(
-    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt"
+data = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results.pt", weights_only=False
 )
-data_gp = torch.load(f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt")
+data_mfFlow = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt",
+    weights_only=False,
+)
+data_gp = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt",
+    weights_only=False,
+)
 data_gp_mfFlow = torch.load(
-    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt"
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt",
+    weights_only=False,
 )
 
 field = data["field"]
@@ -55,15 +68,10 @@ domain = data_mfFlow["domain"].ravel()
 plot_idx = (
     plot_idx["idx"]
     if not plot_idx["automatic"]
-    else find_best_idx(true=field["HF_field"], prediction=field["Prediction"].mean(1))
+    else find_best_idx(
+        true=field["HF_field"], prediction=field_mfFlow["Prediction"].mean(1)
+    )
 )
-# plot_idx = (
-#     plot_idx["idx"]
-#     if not plot_idx["automatic"]
-#     else find_worst_idx(
-#         true=field["HF_field"], prediction=field_gp["Prediction"]["mean"]
-#     )
-# )
 
 # Extract relevant data
 LF_field = field_mfFlow.get("LF_field")[plot_idx]
@@ -91,9 +99,8 @@ fig, axs = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
 # --- Left subplot: LF vs HF ---
 axs[0].plot(domain, LF_field, label="Low-fidelity", color="grey", alpha=0.6)
 axs[0].plot(domain, HF_field, label="High-fidelity", color="k")
-# axs[0].set_title("Low vs High Fidelity")
 axs[0].set_xlabel(r"$x$")
-axs[0].set_ylabel(r"$w(a)$")
+axs[0].set_ylabel(r"$w[a](x)$")
 axs[0].legend()
 
 # --- Right subplot: Methods ---
@@ -102,43 +109,55 @@ ax_main.plot(domain, HF_field, label="High-fidelity", color="k")
 
 ax_main.plot(domain, mean_flora, label="FLORA", color="green", linestyle="--")
 ax_main.fill_between(
-    domain, mean_flora - std_flora, mean_flora + std_flora, color="green", alpha=0.2
+    domain,
+    mean_flora - sigma_factor * std_flora,
+    mean_flora + sigma_factor * std_flora,
+    color="green",
+    alpha=0.2,
 )
 
 ax_main.plot(domain, mean_floren, label="FLOREN", color="red", linestyle="--")
 ax_main.fill_between(
     domain,
-    mean_floren - std_floren,
-    mean_floren + std_floren,
+    mean_floren - sigma_factor * std_floren,
+    mean_floren + sigma_factor * std_floren,
     color="red",
     alpha=0.2,
 )
 
 ax_main.plot(domain, mean_gp, label="GP", color="orange", linestyle="--")
 ax_main.fill_between(
-    domain, mean_gp - std_gp, mean_gp + std_gp, color="orange", alpha=0.2
+    domain,
+    mean_gp - sigma_factor * std_gp,
+    mean_gp + sigma_factor * std_gp,
+    color="orange",
+    alpha=0.2,
 )
 
 ax_main.plot(domain, mean_regp, label="REGP", color="blue", linestyle="--")
 ax_main.fill_between(
-    domain, mean_regp - std_regp, mean_regp + std_regp, color="blue", alpha=0.2
+    domain,
+    mean_regp - sigma_factor * std_regp,
+    mean_regp + sigma_factor * std_regp,
+    color="blue",
+    alpha=0.2,
 )
 
-# ax_main.set_title("Method Comparison")
 ax_main.set_xlabel(r"$x$")
-ax_main.legend(ncol=2)
+ax_main.legend(ncol=2, loc="upper right")
+
+for ax in axs:
+    ax.set_ylim(-2.5, 2.5)
 
 # --- Inset Zoom-in on Right Plot ---
 
 # Create inset axes
-# axins = inset_axes(ax_main, width="30%", height="50%", loc="best", borderpad=3)
-# axins = inset_axes(ax_main, width="30%", height="50%", loc="center", borderpad=3)
 axins = inset_axes(
     ax_main,
-    width="20%",  # or float (absolute units)
+    width="30%",  # or float (absolute units)
     height="20%",
     bbox_to_anchor=(
-        0.32,
+        0.25,
         0.0000,
         1,
         1,
@@ -150,8 +169,8 @@ axins = inset_axes(
 )
 
 # Define zoom range (you can change this to a region of interest)
-x1, x2 = 0.55, 0.7
-y1, y2 = -1.2, -0.8
+x1, x2 = 0.5, 0.75
+y1, y2 = -1.2, -0.7
 # y1, y2 = (
 #     HF_field[(domain > x1) & (domain < x2)].min(),
 #     HF_field[(domain > x1) & (domain < x2)].max(),
@@ -164,26 +183,38 @@ y2 += y_margin
 axins.plot(domain, HF_field, color="k")
 axins.plot(domain, mean_flora, color="green", linestyle="--")
 axins.fill_between(
-    domain, mean_flora - std_flora, mean_flora + std_flora, color="green", alpha=0.2
+    domain,
+    mean_flora - sigma_factor * std_flora,
+    mean_flora + sigma_factor * std_flora,
+    color="green",
+    alpha=0.2,
 )
 
 axins.plot(domain, mean_floren, color="red", linestyle="--")
 axins.fill_between(
     domain,
-    mean_floren - std_floren,
-    mean_floren + std_floren,
+    mean_floren - sigma_factor * std_floren,
+    mean_floren + sigma_factor * std_floren,
     color="red",
     alpha=0.2,
 )
 
 axins.plot(domain, mean_gp, color="orange", linestyle="--")
 axins.fill_between(
-    domain, mean_gp - std_gp, mean_gp + std_gp, color="orange", alpha=0.2
+    domain,
+    mean_gp - sigma_factor * std_gp,
+    mean_gp + sigma_factor * std_gp,
+    color="orange",
+    alpha=0.2,
 )
 
 axins.plot(domain, mean_regp, color="blue", linestyle="--")
 axins.fill_between(
-    domain, mean_regp - std_regp, mean_regp + std_regp, color="blue", alpha=0.2
+    domain,
+    mean_regp - sigma_factor * std_regp,
+    mean_regp + sigma_factor * std_regp,
+    color="blue",
+    alpha=0.2,
 )
 
 axins.set_xlim(x1, x2)

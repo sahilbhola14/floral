@@ -11,13 +11,20 @@ n_sensors = 20
 # End user input
 
 # Load data
-data = torch.load(f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results.pt")
-data_mfFlow = torch.load(
-    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt"
+data = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results.pt", weights_only=False
 )
-data_gp = torch.load(f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt")
+data_mfFlow = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt",
+    weights_only=False,
+)
+data_gp = torch.load(
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt",
+    weights_only=False,
+)
 data_gp_mfFlow = torch.load(
-    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt"
+    f"oneDCorr_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt",
+    weights_only=False,
 )
 
 

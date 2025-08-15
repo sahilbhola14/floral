@@ -11,13 +11,19 @@ n_sensors = 1
 # End user input
 
 # Load data
-data = torch.load(f"poisson_{n_samples}_samples_{n_sensors}_sensors_results.pt")
-data_mfFlow = torch.load(
-    f"poisson_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt"
+data = torch.load(
+    f"poisson_{n_samples}_samples_{n_sensors}_sensors_results.pt", weights_only=False
 )
-data_gp = torch.load(f"poisson_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt")
+data_mfFlow = torch.load(
+    f"poisson_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt",
+    weights_only=False,
+)
+data_gp = torch.load(
+    f"poisson_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt", weights_only=False
+)
 data_gp_mfFlow = torch.load(
-    f"poisson_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt"
+    f"poisson_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt",
+    weights_only=False,
 )
 
 field = data["field"]
@@ -124,7 +130,7 @@ plt.ylabel("L2 Error")
 # plt.title("L2 Error vs Predictive Uncertainty")
 plt.grid(True, linestyle="--", alpha=0.5)
 plt.xlim(right=0.6)
-# plt.ylim(bottom=0.0, top=12)
+plt.ylim(bottom=1e-2, top=1e1)
 plt.yscale("log")
 plt.tight_layout()
 plt.savefig("L2_vs_Uncertainty.png", dpi=300)
