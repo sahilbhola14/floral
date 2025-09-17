@@ -55,22 +55,25 @@ def sample_input_function(n_samples: int, domain: np.ndarray):
 
 def plot_snapshot(
     domain: np.ndarray,
-    features: np.ndarray,
+    condition: np.ndarray,
     hf_solution: np.ndarray,
     lf_solution: np.ndarray,
 ):
     """Plot a snapshot of the high and low fidelity solutions."""
     idx_plot = 0  # for reproducibility, always plot the first sample
-    features_plot = features[idx_plot, :]
-    lf_solution_plot = lf_solution[idx_plot, :]
-    hf_solution_plot = hf_solution[idx_plot, :]
+    condition_plot = condition[idx_plot, :].ravel()
+    lf_solution_plot = lf_solution[idx_plot, :].ravel()
+    hf_solution_plot = hf_solution[idx_plot, :].ravel()
+    domain_plot = domain.ravel()
 
     fig, axs = plt.subplots(1, 2, figsize=(6, 2.5), sharex=True)
-    axs[0].plot(domain, features_plot, color="k")
+    axs[0].plot(domain_plot, condition_plot, color="k")
     axs[0].set_ylabel(r"$a(x)$")
     axs[0].set_ylim(-10, 10)
-    axs[1].plot(domain, hf_solution_plot, color="k", label="High-fidelity")
-    axs[1].plot(domain, lf_solution_plot, color="grey", alpha=0.6, label="Low-fidelity")
+    axs[1].plot(domain_plot, hf_solution_plot, color="k", label="High-fidelity")
+    axs[1].plot(
+        domain_plot, lf_solution_plot, color="grey", alpha=0.6, label="Low-fidelity"
+    )
     axs[1].legend(fontsize=10)
     axs[1].set_ylabel(r"$w(x)$")
     axs[1].set_ylim(bottom=-2, top=2)
@@ -85,39 +88,53 @@ def plot_snapshot(
 def generate():
     """generate the data"""
     domain = np.linspace(0, 1, args.m_high)  # high fidelity domain
-    features = sample_input_function(
+    condition = sample_input_function(
         args.n_samples, domain
     )  # samples of the input functions
     hf_solution = eval_high_fidelity_model(
-        features, domain
+        condition, domain
     )  # evaluate high fidelity model
     lf_solution = eval_low_fidelity_model(
-        features, domain
+        condition, domain
     )  # evaluate low fidelity model
+
+    # reshape
+    domain = domain.reshape(-1, 1)  # flattened domain
+    condition = np.expand_dims(condition, 1)  # (B, channel_c, *dim_c)
+    hf_solution = np.expand_dims(hf_solution, 1)  # (B, channels_f, *dim_f)
+    lf_solution = np.expand_dims(lf_solution, 1)  # (B, channels_f, *dim_f)
+
+    assert hf_solution.shape == lf_solution.shape, (
+        "Incorrect lf solution shape."
+        "Consider interpolating the low fidelity solution."
+    )
 
     high_data = {
         "field": hf_solution[: args.n_samples],
-        "field_domain": domain.reshape(-1, 1),
-        "condition": features[: args.n_samples],
-        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
+        "field_domain": domain,
+        "condition": condition[: args.n_samples],
+        "condition_domain": domain,  # domain for the input function
         "resolution": args.m_high,
     }
 
     low_data = {
         "field": lf_solution[: args.n_samples],
-        "field_domain": domain.reshape(-1, 1),
-        "condition": features[: args.n_samples],
-        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
+        "field_domain": domain,
+        "condition": condition[: args.n_samples],
+        "condition_domain": domain,  # domain for the input function
         "resolution": args.m_high,
     }
 
     # plot a snapshot
     if args.plot:
-        plot_snapshot(domain, features, hf_solution, lf_solution)
+        plot_snapshot(domain, condition, hf_solution, lf_solution)
 
     # save
     np.savez("high_fidelity.npz", **high_data)
     np.savez("low_fidelity.npz", **low_data)
+
+    print("saved high fidelity data to high_fidelity.npz")
+    print("saved low fidelity data to low_fidelity.npz")
 
 
 if __name__ == "__main__":
