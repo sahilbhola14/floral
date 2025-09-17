@@ -74,6 +74,79 @@ def build_gp(train_set, val_set, gp_type: str = "vanilla", **kwargs):
         raise ValueError(f"Unknown GP type: {gp_type}.")
 
 
+class GPPrior(ExactGP):
+    """GP prior (Non-trainable) model for function sampling"""
+
+    def __init__(self, lengthscale=0.5, outputscale=1.0, device=None):
+        likelihood = GaussianLikelihood()
+        super().__init__(train_inputs=None, train_targets=None, likelihood=likelihood)
+        self.likelihood = likelihood
+        self.lengthscale = lengthscale
+        self.outputscale = outputscale
+        self.mean_module = self._build_mean_function()
+        self.covar_module = self._build_covariance_module()
+
+        # set to eval mode
+        self.eval()
+        # move to device
+        self.device = device
+        self.to(self.device)
+
+    def _build_mean_function(self):
+        """build the mean function"""
+        return ConstantMean()
+
+    def _build_covariance_module(self):
+        """build the covariance module"""
+        base_kernel = RBFKernel(lengthscale=self.lengthscale)
+        return ScaleKernel(base_kernel, outputscale=self.outputscale)
+
+    def forward(self, x):
+        """forward pass"""
+        assert x.ndim == 2 and isinstance(
+            x, torch.Tensor
+        ), "Input should be a 2D tensor."
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return MultivariateNormal(mean_x, covar_x)
+
+    @torch.no_grad()
+    def sample(
+        self, x: torch.Tensor, dims: tuple, n_samples: int = 10, n_channels: int = 1
+    ):
+        """sample functions from the GP prior
+        Args:
+            x (torch.Tensor): input tensor of shape (N, D)
+            dims (tuple): original dimensions of the input (e.g., (H, W) for images).
+            N = H*W
+            n_samples (int): number of function samples to draw
+            n_channels (int): number of output channels (for multi-output GP)
+        Returns:
+            samples (torch.Tensor): sampled functions of shape
+            (n_samples, n_channels, *dims)
+        Note:
+            1. For multiple channels, we assume independence between channels.
+            That is, i.i.d. draws from the same GP prior.
+
+        """
+        assert x.ndim == 2 and isinstance(
+            x, torch.Tensor
+        ), "Input should be a 2D tensor."
+        assert x.shape[1] == len(
+            dims
+        ), "Input feature dimension must match the length of dims."
+        x = x.to(self.device)  # move to device
+
+        distribution = self.forward(x)  # get the GP distribution
+        samples = distribution.sample(
+            torch.Size([n_samples * n_channels])
+        )  # (n_samples * n_channels, N)
+        samples = samples.view(
+            n_samples, n_channels, *dims
+        )  # (n_samples, n_channels, *dims)
+        return samples
+
+
 class VanillaGP(ExactGP):
     """Vanilla Gaussian Process model for regression tasks."""
 

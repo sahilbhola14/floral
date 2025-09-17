@@ -4,7 +4,7 @@ import torch.nn as nn
 import pytorch_lightning as L
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch.utils.data import DataLoader, TensorDataset
-from mfFlow.utils import check_path, get_logger, printer
+from floral.utils import check_path, get_logger, printer
 
 
 def t2n(tensor: torch.Tensor) -> torch.Tensor:
@@ -69,9 +69,10 @@ class OpDataModule(L.LightningDataModule):
     Attributes:
         low_fidelity_path (str): Path to the low fidelity data.
         high_fidelity_path (str): Path to the high fidelity data.
+        n_samples (int): Number of samples in the dataset (Train + Val).
+        This is only done to train model in memory constrained environments.
         dataloader_config (dict): Configuration for the dataloader.
-        test_data_path (str): Path for the test data.
-        mfflow (bool): If True, use residual learning.
+        floral (bool): If True, use residual learning.
     """
 
     def __init__(
@@ -80,20 +81,18 @@ class OpDataModule(L.LightningDataModule):
         high_fidelity_path: str,
         n_samples: int,
         dataloader_config: dict,
-        test_data_path: str,
-        mfflow: bool = False,
+        floral: bool = False,
         **kwargs,
     ):
         self.low_fidelity_path = low_fidelity_path
         self.high_fidelity_path = high_fidelity_path
+        self.n_samples = n_samples
         self.dataloader_config = dataloader_config
-        self.test_data_path = test_data_path
-        self.mfflow = mfflow
+        self.floral = floral
 
         # extract hte dataloader config
         self.train_ratio = self.dataloader_config.get("train_ratio", 0.8)
         self.reload = self.dataloader_config.get("reload", False)
-        self.reload_sensors = self.dataloader_config.get("reload_sensors", False)
         self.batch_size = self.dataloader_config.get("batch_size", 32)
         self.num_workers = self.dataloader_config.get("num_workers", 4)
         self.normalize = self.dataloader_config.get("normalize", None)
@@ -115,23 +114,20 @@ class OpDataModule(L.LightningDataModule):
         # file paths
         file_paths = {
             "datasets": {
-                "train": "trainset_mfFlow.pt" if self.mfflow else "trainset.pt",
-                "val": "valset_mfFlow.pt" if self.mfflow else "valset.pt",
+                "train": "trainset_floral.pt" if self.floral else "trainset.pt",
+                "val": "valset_floral.pt" if self.floral else "valset.pt",
             },
-            "statistics": "statistics_mfFlow.pt" if self.mfflow else "statistics.pt",
-            "condition_domain": "condition_domain_mfFlow.pt"
-            if self.mfflow
-            else "condition_domain.pt",
-            "field_domain": "field_domain_mfFlow.pt"
-            if self.mfflow
-            else "field_domain.pt",
+            "statistics": "statistics_floral.pt" if self.floral else "statistics.pt",
+            "domains": "domains_floral.pt" if self.floral else "domains.pt",
         }
         return file_paths
 
     def _load_data(self, path: str):
         """Load data from the specified path"""
         check_path(path)
-        return self._check_required_data_keys(np.load(path, allow_pickle=True))
+        data = np.load(path, allow_pickle=True)
+        self._check_required_data_keys(data)
+        return data
 
     def _check_required_data_keys(self, data):
         """Check if the data has the required keys"""
@@ -152,31 +148,57 @@ class OpDataModule(L.LightningDataModule):
         condition = n2t(data_dict.get("condition", None))
         condition_domain = n2t(data_dict.get("condition_domain", None))
 
+        # extract shapes
+        _, ch_f, *dim_f = field.shape
+        _, ch_c, *dim_c = condition.shape
+
         # assert statements
         assert (
             field.shape[0] == condition.shape[0]
         ), "Number of samples in field and condition must be the same."
+
+        assert field_domain.ndim == 2, "Field domain must be 2D (flattned)."
+        assert condition_domain.ndim == 2, "Condition domain must be 2D (flattned)."
+
         assert (
-            field.shape == field_domain.shape
-        ), "Field and field_domain must have the same shape."
+            len(dim_f) == field_domain.shape[1]
+        ), "Field and field_domain dimensions must match."
         assert (
-            condition.shape == condition_domain.shape
-        ), "Condition and condition_domain must have the same shape."
+            len(dim_c) == condition_domain.shape[1]
+        ), "Condition and condition_domain dimensions must match."
+
+        assert field_domain.shape[0] == int(
+            np.prod(dim_f)
+        ), "Field domain shape mismatch."
+        assert condition_domain.shape[0] == int(
+            np.prod(dim_c)
+        ), "Condition domain shape mismatch."
+
+        assert isinstance(
+            field, torch.FloatTensor
+        ), "Field must be a torch.FloatTensor."
+        assert isinstance(
+            field_domain, torch.FloatTensor
+        ), "Field domain must be a torch.FloatTensor."
+        assert isinstance(
+            condition, torch.FloatTensor
+        ), "Condition must be a torch.FloatTensor."
+        assert isinstance(
+            condition_domain, torch.FloatTensor
+        ), "Condition domain must be a torch.FloatTensor."
 
         return field, field_domain, condition, condition_domain
 
-    def _subselect_samples(self, field, field_domain, condition, condition_domain):
+    def _subselect_samples(self, field, condition):
         assert len(field) >= self.n_samples, "Not enough samples in the data."
         field_sub = field[: self.n_samples]
-        field_domain_sub = field_domain[: self.n_samples]
         condition_sub = condition[: self.n_samples]
-        condition_domain_sub = condition_domain[: self.n_samples]
-        return field_sub, field_domain_sub, condition_sub, condition_domain_sub
+        return field_sub, condition_sub
 
     def _process_operator_fields(self):
         """
         process the operator fields by subselecting samples (for tractability)
-        and applying mfFlow if needed
+        and applying floral if needed
         """
         # extract the fields
         (
@@ -191,25 +213,22 @@ class OpDataModule(L.LightningDataModule):
             HF_condition,
             HF_condition_domain,
         ) = self._extract_fields(self.HF_data)
+
         # subselect samples
-        (
-            LF_field_sub,
-            LF_field_domain_sub,
-            LF_condition_sub,
-            LF_condition_domain_sub,
-        ) = self._subselect_samples(
-            LF_field, LF_field_domain, LF_condition, LF_condition_domain
-        )
-        (
-            HF_field_sub,
-            HF_field_domain_sub,
-            HF_condition_sub,
-            HF_condition_domain_sub,
-        ) = self._subselect_samples(
-            HF_field, HF_field_domain, HF_condition, HF_condition_domain
+        LF_field_sub, LF_condition_sub = self._subselect_samples(
+            field=LF_field, condition=LF_condition
         )
 
-        if self.mfflow:
+        HF_field_sub, HF_condition_sub = self._subselect_samples(
+            field=HF_field, condition=HF_condition
+        )
+
+        assert LF_field_sub.shape == HF_field_sub.shape, "incompatible field shapes"
+        assert (
+            LF_condition_sub.shape == HF_condition_sub.shape
+        ), "incompatible cond shapes"
+
+        if self.floral:
             field = HF_field_sub - LF_field_sub
         else:
             field = HF_field_sub
@@ -217,9 +236,9 @@ class OpDataModule(L.LightningDataModule):
         # create the data dict
         data_dict = {}
         data_dict["field"] = field
-        data_dict["field_domain"] = HF_field_domain_sub
+        data_dict["field_domain"] = HF_field_domain
         data_dict["condition"] = HF_condition_sub
-        data_dict["condition_domain"] = HF_condition_domain_sub
+        data_dict["condition_domain"] = HF_condition_domain
         data_dict[
             "LF_field"
         ] = LF_field_sub  # to add back the low fidelity field during inference
@@ -238,81 +257,156 @@ class OpDataModule(L.LightningDataModule):
         n_train = int(self.train_ratio * len(field))
 
         field_train, field_val = field[:n_train], field[n_train:]
-        field_domain_train, field_domain_val = (
-            field_domain[:n_train],
-            field_domain[n_train:],
-        )
         condition_train, condition_val = condition[:n_train], condition[n_train:]
-        condition_domain_train, condition_domain_val = (
-            condition_domain[:n_train],
-            condition_domain[n_train:],
-        )
         LF_field_train, LF_field_val = LF_field[:n_train], LF_field[n_train:]
 
         # create the data dicts
         train_data = {
             "field": field_train,
-            "field_domain": field_domain_train,
+            "field_domain": field_domain,
             "condition": condition_train,
-            "condition_domain": condition_domain_train,
-            "LF_field": LF_field_train,  # ONLY to add back during infer. (mfflow=True)
+            "condition_domain": condition_domain,
+            "LF_field": LF_field_train,  # ONLY to add back during infer. (=True)
         }
 
         val_data = {
             "field": field_val,
-            "field_domain": field_domain_val,
+            "field_domain": field_domain,
             "condition": condition_val,
-            "condition_domain": condition_domain_val,
-            "LF_field": LF_field_val,  # ONLY to add back during infer. (mfflow=True)
+            "condition_domain": condition_domain,
+            "LF_field": LF_field_val,  # ONLY to add back during infer. (=True)
         }
 
         return train_data, val_data
+
+    def _normalize_field(self, field_train: torch.Tensor, field_val: torch.Tensor):
+        """Normalize the field"""
+        _, ch_f, *dim_f = field_train.shape
+
+        if self.normalize.field.enabled:
+            if self.normalize.field.auto:
+                field_mean = field_train.mean(dim=None, keepdim=True)
+                field_std = field_train.std(dim=None, keepdim=True)
+            else:
+                field_mean = self.normalize.field.mean
+                field_std = self.normalize.field.std
+                assert field_mean is not None, "Field mean must be provided."
+                assert field_std is not None, "Field std must be provided."
+                assert len(field_mean) == ch_f, "Provide mean for each channel."
+                assert len(field_std) == ch_f, "Provide std for each channel."
+                field_mean = torch.tensor(field_mean).reshape(
+                    1, ch_f, *([1] * len(dim_f))
+                )
+                field_std = torch.tensor(field_std).reshape(
+                    1, ch_f, *([1] * len(dim_f))
+                )
+
+            assert field_std > 0, "Field std must be positive."
+            assert (
+                field_mean.ndim == field_std.ndim == field_train.ndim
+            ), "Field mean, std, and train data must have the same number of dim."
+            assert (
+                field_mean.shape[1] == field_std.shape[1] == ch_f
+            ), "Field mean, std, and train data must have the same number of channels."
+
+            # normalize
+            field_train_norm = (field_train - field_mean) / field_std
+            field_val_norm = (field_val - field_mean) / field_std
+
+        else:
+            field_mean = torch.zeros(1, ch_f, *([1] * len(dim_f)))
+            field_std = torch.ones(1, ch_f, *([1] * len(dim_f)))
+
+            assert field_std > 0, "Field std must be positive."
+            assert (
+                field_mean.ndim == field_std.ndim == field_train.ndim
+            ), "Field mean, std, and train data must have the same number of dim."
+            assert (
+                field_mean.shape[1] == field_std.shape[1] == ch_f
+            ), "Field mean, std, and train data must have the same number of channels."
+
+            # no normalization
+            field_train_norm = field_train
+            field_val_norm = field_val
+
+        return field_train_norm, field_val_norm, field_mean, field_std
+
+    def _normalize_condition(
+        self, condition_train: torch.Tensor, condition_val: torch.Tensor
+    ):
+        """Normalize the condition"""
+        _, ch_c, *dim_c = condition_train.shape
+
+        if self.normalize.condition.enabled:
+            if self.normalize.condition.auto:
+                condition_mean = condition_train.mean(dim=None, keepdim=True)
+                condition_std = condition_train.std(dim=None, keepdim=True)
+            else:
+                condition_mean = self.normalize.condition.mean
+                condition_std = self.normalize.condition.std
+                assert condition_mean is not None, "Condition mean must be provided."
+                assert condition_std is not None, "Condition std must be provided."
+                assert len(condition_mean) == ch_c, "Provide mean for each channel."
+                assert len(condition_std) == ch_c, "Provide std for each channel."
+                condition_mean = torch.tensor(condition_mean).reshape(
+                    1, ch_c, *([1] * len(dim_c))
+                )
+                condition_std = torch.tensor(condition_std).reshape(
+                    1, ch_c, *([1] * len(dim_c))
+                )
+
+            assert condition_std > 0, "Field std must be positive."
+            assert (
+                condition_mean.ndim == condition_std.ndim == condition_train.ndim
+            ), "Condition mean, std, and train data must have the same number of dim."
+            assert condition_mean.shape[1] == condition_std.shape[1] == ch_c, (
+                "Condition mean, std, and train data must have the "
+                "same number of channels."
+            )
+
+            # normalize
+            condition_train_norm = (condition_train - condition_mean) / condition_std
+            condition_val_norm = (condition_val - condition_mean) / condition_std
+
+        else:
+            condition_mean = torch.zeros(1, ch_c, *([1] * len(dim_c)))
+            condition_std = torch.ones(1, ch_c, *([1] * len(dim_c)))
+
+            assert condition_std > 0, "Field std must be positive."
+            assert (
+                condition_mean.ndim == condition_std.ndim == condition_train.ndim
+            ), "Field mean, std, and train data must have the same number "
+            "of dimensions."
+            assert (
+                condition_mean.shape[1] == condition_std.shape[1] == ch_c
+            ), "Field mean, std, and train data must have the same number of channels."
+
+            # no normalization
+            condition_train_norm = condition_train
+            condition_val_norm = condition_val
+
+        return condition_train_norm, condition_val_norm, condition_mean, condition_std
 
     def _normalize_data(self, train_data: dict, val_data: dict):
         """Normalize the data"""
         # normalize the fields
         field_train = train_data["field"]
         field_val = val_data["field"]
-        if self.normalize.field.enabled:
-            field_mean = field_train.mean(dim=0, keepdim=True)
-            field_std = field_train.std(dim=0, keepdim=True)
-
-            # avoid division by zero
-            field_std = torch.where(
-                field_std < 1e-10, torch.ones_like(field_std), field_std
-            )
-
-            field_train_norm = (field_train - field_mean) / field_std
-            field_val_norm = (field_val - field_mean) / field_std
-        else:
-            _, *dim = field_train.shape
-            field_mean = torch.zeros(1, *dim)
-            field_std = torch.ones(1, *dim)
-
-            field_train_norm = field_train
-            field_val_norm = field_val
+        field_train_norm, field_val_norm, field_mean, field_std = self._normalize_field(
+            field_train=field_train, field_val=field_val
+        )
 
         # normalize the conditions
         condition_train = train_data["condition"]
         condition_val = val_data["condition"]
-        if self.normalize.condition.enabled:
-            field_mean = condition_train.mean(dim=0, keepdim=True)
-            field_std = condition_train.std(dim=0, keepdim=True)
-
-            # avoid division by zero
-            field_std = torch.where(
-                field_std < 1e-10, torch.ones_like(field_std), field_std
-            )
-
-            condition_train_norm = (condition_train - field_mean) / field_std
-            condition_val_norm = (condition_val - field_mean) / field_std
-        else:
-            _, *dim = condition_train.shape
-            field_mean = torch.zeros(1, *dim)
-            field_std = torch.ones(1, *dim)
-
-            condition_train_norm = condition_train
-            condition_val_norm = condition_val
+        (
+            condition_train_norm,
+            condition_val_norm,
+            condition_mean,
+            condition_std,
+        ) = self._normalize_condition(
+            condition_train=condition_train, condition_val=condition_val
+        )
 
         # check for NaNs and Infs
         assert not torch.isnan(
@@ -331,16 +425,18 @@ class OpDataModule(L.LightningDataModule):
         # create the normalized data dicts
         train_data_norm = {
             "field": field_train_norm,
-            "field_domain": train_data["field_domain"],
+            "field_domain": train_data["field_domain"],  # same for train and val
             "condition": condition_train_norm,
-            "condition_domain": train_data["condition_domain"],
+            "condition_domain": train_data[
+                "condition_domain"
+            ],  # same for train and val
         }
 
         val_data_norm = {
             "field": field_val_norm,
-            "field_domain": val_data["field_domain"],
+            "field_domain": val_data["field_domain"],  # same for train and val
             "condition": condition_val_norm,
-            "condition_domain": val_data["condition_domain"],
+            "condition_domain": val_data["condition_domain"],  # same for train and val
         }
 
         # statistics
@@ -364,31 +460,36 @@ class OpDataModule(L.LightningDataModule):
             train_data_norm, val_data_norm, statistics = self._normalize_data(
                 train_data, val_data
             )
+            # set the statistics attribute
             self.statistics = statistics
             # create the datasets
             self.train_set = TensorDataset(
                 train_data_norm["field"],
-                train_data_norm["field_domain"],
                 train_data_norm["condition"],
-                train_data_norm["condition_domain"],
                 train_data[
                     "LF_field"
                 ],  # to add back the low fidelity field during inference
             )
             self.val_set = TensorDataset(
                 val_data_norm["field"],
-                val_data_norm["field_domain"],
                 val_data_norm["condition"],
-                val_data_norm["condition_domain"],
                 val_data[
                     "LF_field"
                 ],  # to add back the low fidelity field during inference
             )
+            # create the domain tensors
+            self.domains = {
+                "field": train_data_norm["field_domain"],  # same for train and val
+                "condition": train_data_norm[
+                    "condition_domain"
+                ],  # same for train and val
+            }
 
             # save
             torch.save(self.train_set, self.file_paths["datasets"]["train"])
             torch.save(self.val_set, self.file_paths["datasets"]["val"])
             torch.save(self.statistics, self.file_paths["statistics"])
+            torch.save(self.domains, self.file_paths["domains"])
 
     def train_dataloader(self):
         """Returns the training dataloader."""
@@ -421,7 +522,7 @@ class GPDataModule:
         high_fidelity_path: str,
         n_samples: int,
         n_sensors: int,
-        mfFlow: bool,
+        floral: bool,
         dataloader_config: dict,
         test_data_path: str,
     ):
@@ -432,7 +533,7 @@ class GPDataModule:
             nd (int): Dimensionality of the domain, for e.g., 2 for 2D data
             low_fidelity_path (str): Path to the low fidelity data.
             high_fidelity_path (str): Path to the high fidelity data.
-            mfFlow (bool): If True, use residual learning
+            floral (bool): If True, use residual learning
         """
         super(GPDataModule, self).__init__()
         self.nx = nx  # Dimensionality of the output features
@@ -440,7 +541,7 @@ class GPDataModule:
         self.nd = nd  # Dimensionality of the domain (e.g., 2 for 2D data)
         self.n_samples = n_samples  # Number of samples in the dataset
         self.n_sensors = n_sensors  # Number of sensors in the output field
-        self.mfFlow = mfFlow  # If True, use residual learning
+        self.floral = floral  # If True, use residual learning
         self.dataloader_config = dataloader_config  # Configuration for the dataloader
         self.test_data_path = test_data_path  # Path for the test data
         self.train_ratio = self.dataloader_config.get(
@@ -467,17 +568,17 @@ class GPDataModule:
 
         self.file_paths = {
             "datasets": {
-                "train": "trainset_mfFlow_GP.pt" if self.mfFlow else "trainset_GP.pt",
-                "val": "valset_mfFlow_GP.pt" if self.mfFlow else "valset_GP.pt",
+                "train": "trainset_floral_GP.pt" if self.floral else "trainset_GP.pt",
+                "val": "valset_floral_GP.pt" if self.floral else "valset_GP.pt",
             },
-            "statistics": "statistics_mfFlow_GP.pt"
-            if self.mfFlow
+            "statistics": "statistics_floral_GP.pt"
+            if self.floral
             else "statistics_GP.pt",
-            "test_config": "test_config_mfFlow_GP.pt"
-            if self.mfFlow
+            "test_config": "test_config_floral_GP.pt"
+            if self.floral
             else "test_config_GP.pt",
-            "sensor_locations": "sensor_locations_mfFlow_GP.pt"
-            if self.mfFlow
+            "sensor_locations": "sensor_locations_floral_GP.pt"
+            if self.floral
             else "sensor_locations_GP.pt",
         }
 
@@ -575,7 +676,7 @@ class GPDataModule:
         # Process the conditions
         condition = HF_condition_sub.gather(1, sensor_locations).ravel().unsqueeze(1)
         # Process the field
-        if self.mfFlow:
+        if self.floral:
             field = HF_field_flat - LF_field_flat
         else:
             field = HF_field_flat

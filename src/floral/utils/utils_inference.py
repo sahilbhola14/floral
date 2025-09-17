@@ -2,7 +2,7 @@ import torch
 import pytorch_lightning as L
 import gpytorch
 import warnings
-from mfFlow.utils import printer
+from floral.utils import printer
 from tqdm import tqdm
 from gpytorch.models import ExactGP
 from contextlib import nullcontext
@@ -18,7 +18,7 @@ class OptimizedInference:
         test_config: dict,
         statistics: dict,
         job_name: str,
-        mfFlow: bool,
+        floral: bool,
         generate_config: dict,
     ):
         # Initialize the model with the best_model_path
@@ -32,7 +32,7 @@ class OptimizedInference:
         self.test_config = test_config  # Configuration for the inference task
         self.statistics = statistics  # Statistics of the data
         self.job_name = job_name  # Name of the inference job
-        self.mfFlow = mfFlow  # Flag for multi-flow processing
+        self.floral = floral  # Flag for multi-flow processing
         self.generate_config = generate_config  # Configuration for generation settings
 
         # Extract generate config
@@ -103,7 +103,7 @@ class OptimizedInference:
                 true_residual = HF_field - LF_field
 
                 # perform the prediction
-                if self.mfFlow:
+                if self.floral:
                     pred_residual = self._get_prediction(c_eval)
                     # Denormalize in-place
                     pred_residual = pred_residual * self.field_std + self.field_mean
@@ -154,7 +154,7 @@ class OptimizedInference:
         }
 
         # Save the results to a file
-        save_path = f"{self.job_name}_results{'_mfFlow' if self.mfFlow else ''}.pt"
+        save_path = f"{self.job_name}_results{'_floral' if self.floral else ''}.pt"
         printer(f"Saving results to {save_path}")
         torch.save(results, save_path)
         pbar.close()
@@ -206,7 +206,7 @@ class Inference:
         test_config: dict,
         statistics: dict,
         job_name: str,
-        mfFlow: bool,
+        floral: bool,
         generate_config: dict,
     ):
         # Initialize the model with the best_model_path
@@ -217,7 +217,7 @@ class Inference:
         self.test_config = test_config  # Configuration for the inference task
         self.statistics = statistics  # Statistics of the data
         self.job_name = job_name  # Name of the inference job
-        self.mfFlow = mfFlow  # Flag for multi-flow processing
+        self.floral = floral  # Flag for multi-flow processing
         self.generate_config = generate_config  # Configuration for generation settings
         # Extract generate config
         self.minibatch_size = generate_config.get("minibatch_size", None)
@@ -249,7 +249,7 @@ class Inference:
             HF_field = self.test_config["HF_field"][ii]
             true_residual = (HF_field - LF_field).unsqueeze(0)
             # Perform the prediction
-            if self.mfFlow:
+            if self.floral:
                 # compute the prediction for multi-flow
                 pred_residual = self._get_prediction(c_eval, d_eval)
                 # denormalize the prediction
@@ -296,7 +296,7 @@ class Inference:
 
         # Save the results to a file
         path = self.job_name + "_results"
-        save_path = path + "_mfFlow" if self.mfFlow else path
+        save_path = path + "_floral" if self.floral else path
         save_path += ".pt"
         printer("Saving results to {}".format(save_path))
         torch.save(
@@ -340,7 +340,7 @@ class InferenceGP:
         test_config: dict,
         statistics: dict,
         job_name: str,
-        mfFlow: bool,
+        floral: bool,
         device: torch.device,
     ):
         # Initialize the model with the best_model_path
@@ -353,7 +353,7 @@ class InferenceGP:
         self.test_config = test_config  # Configuration for the inference task
         self.statistics = statistics  # Statistics of the data
         self.job_name = job_name  # Name of the inference job
-        self.mfFlow = mfFlow  # Flag for multi-flow processing
+        self.floral = floral  # Flag for multi-flow processing
         self.device = device
 
     @torch.no_grad()
@@ -394,7 +394,7 @@ class InferenceGP:
         pred_std = pred_std.reshape(LF_field.shape)
 
         # Compute the final prediction
-        if self.mfFlow:
+        if self.floral:
             pred_residual = pred_mean
             pred_field = pred_residual + LF_field
         else:
@@ -423,7 +423,7 @@ class InferenceGP:
 
         # Save the results to a file
         path = self.job_name + "_GP_results"
-        save_path = path + "_mfFlow" if self.mfFlow else path
+        save_path = path + "_floral" if self.floral else path
         save_path += ".pt"
         printer("Saving results to {}".format(save_path))
         torch.save(

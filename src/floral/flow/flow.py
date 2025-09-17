@@ -2,7 +2,7 @@ import math
 import torch
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint
-from mfFlow.utils import printer
+from floral.utils import printer
 
 
 class Flow(ABC):

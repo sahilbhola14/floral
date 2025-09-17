@@ -8,7 +8,7 @@ import argparse
 import pytorch_lightning as L
 import yaml
 from omegaconf import OmegaConf
-from mfFlow.utils import (
+from floral.utils import (
     printer,
     OpDataModule,
     get_checkpointer,
@@ -16,9 +16,10 @@ from mfFlow.utils import (
     init_weights,
     check_path,
 )
-from mfFlow.utils import OptimizedInference as Inference
-from mfFlow.flow import Flow
-from mfFlow.archs import get_embedding_modules
+from floral.utils import OptimizedInference as Inference
+from floral.flow import Flow
+
+# from floral.archs import get_embedding_modules
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
@@ -40,12 +41,12 @@ def print_header(config: dict):
         config (dict): Configuration dictionary parameters.
     """
     printer("==" * 50)
-    printer(f"Running oneDCorr with FLOREN ({config.job_name})")
+    printer("Running oneDCorr")
+    printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
-    printer(f"Multi-fidelity Flow: {config.mfFlow}")
-    printer(f"Number of samples: {config.data.high_fidelity.n_samples}")
-    printer(f"Number of sensors: {config.data.high_fidelity.n_sensors}")
+    printer(f"Multi-fidelity Flow: {config.floral}")
+    printer(f"Number of samples: {config.data.n_samples}")
     printer("==" * 50)
 
 
@@ -63,18 +64,11 @@ def build_data_module(
     dataloader_config["batch_size"] = hp_config["batch_size"]
 
     data_module = OpDataModule(
-        nx=config.data.nx,
-        nc=config.data.nc,
-        nd=config.data.nd,
-        nd_c=config.data.nd_c,
         low_fidelity_path=config.data.low_fidelity.path,
         high_fidelity_path=config.data.high_fidelity.path,
-        n_samples=config.data.high_fidelity.n_samples,
-        n_sensors=config.data.high_fidelity.n_sensors,
-        mfFlow=config.mfFlow,
-        sensing_strategy=config.data.sensing_strategy,
+        n_samples=config.data.n_samples,
         dataloader_config=dataloader_config,
-        test_data_path=config.data.test_data_path,
+        floral=config.floral,
     )
 
     # Setup the data module
@@ -88,7 +82,7 @@ def build_checkpointer(config: dict):
     # get the checkpointer
     ckp_save_path = config.checkpoint_save_path
     checkpointer = get_checkpointer(
-        ckp_save_path + "/mfFlow" if config.mfFlow else ckp_save_path
+        ckp_save_path + "/floral" if config.floral else ckp_save_path
     )
     return checkpointer
 
@@ -114,7 +108,7 @@ def build_trainer(
 
     trainer = get_trainer(
         checkpointer=checkpointer,
-        logger_name=logger_name + "_mfFlow" if config.mfFlow else logger_name,
+        logger_name=logger_name + "_floral" if config.floral else logger_name,
         train_config=train_config,
     )
 
@@ -128,74 +122,75 @@ class ResFlow(Flow, L.LightningModule):
         self,
         config: dict,
         hp_config: wandb.sdk.wandb_config.Config | dict = None,
-        condition_domain: torch.Tensor = None,
+        domains: dict = None,
     ):
         # Initialize the Flow and LightningModule
         Flow.__init__(self, hp_config=hp_config)
         L.LightningModule.__init__(self)
+        raise NotImplementedError("ResFlow is not implemented yet.")
 
-        # convert to dict for saving
-        hp_config_dict = dict(hp_config)
+        # # convert to dict for saving
+        # hp_config_dict = dict(hp_config)
 
-        # Convert condition_domain tensor to list for saving
-        condition_domain_list = (
-            condition_domain.detach().cpu().tolist()
-            if isinstance(condition_domain, torch.Tensor)
-            else condition_domain
-        )
+        # # Convert condition_domain tensor to list for saving
+        # condition_domain_list = (
+        #     condition_domain.detach().cpu().tolist()
+        #     if isinstance(condition_domain, torch.Tensor)
+        #     else condition_domain
+        # )
 
-        # save the config and hyperparameter config
-        self.save_hyperparameters(
-            {
-                "config": config,
-                "hp_config": hp_config_dict,
-                "condition_domain": condition_domain_list,
-            }
-        )
+        # # save the config and hyperparameter config
+        # self.save_hyperparameters(
+        #     {
+        #         "config": config,
+        #         "hp_config": hp_config_dict,
+        #         "condition_domain": condition_domain_list,
+        #     }
+        # )
 
-        self.config = config
-        self.nx = self.config.data.nx
-        self.nc = self.config.data.nc
-        self.nd = self.config.data.nd
-        self.nd_c = self.config.data.nd_c
+        # self.config = config
+        # self.nx = self.config.data.nx
+        # self.nc = self.config.data.nc
+        # self.nd = self.config.data.nd
+        # self.nd_c = self.config.data.nd_c
 
-        # Store the tensor version for use inside the model
-        self.condition_domain = (
-            torch.FloatTensor(condition_domain_list)
-            if condition_domain_list is not None
-            else None
-        )
-        assert self.condition_domain.shape == (self.nc, self.nd_c,), (
-            "Condition domain shape mismatch."
-            f"Expected ({self.nc, self.nd_c}), got {self.condition_domain.shape}"
-        )
+        # # Store the tensor version for use inside the model
+        # self.condition_domain = (
+        #     torch.FloatTensor(condition_domain_list)
+        #     if condition_domain_list is not None
+        #     else None
+        # )
+        # assert self.condition_domain.shape == (self.nc, self.nd_c,), (
+        #     "Condition domain shape mismatch."
+        #     f"Expected ({self.nc, self.nd_c}), got {self.condition_domain.shape}"
+        # )
 
-        # flow config
-        self.flow_config = self.config.flow.copy()
-        self.flow_config["time_embed_freq"] = hp_config["time_embed_freq"]
-        self.flow_config["latent_dim"] = hp_config["latent_dim"]
-        self.flow_config["num_centers"] = hp_config["num_centers"]
+        # # flow config
+        # self.flow_config = self.config.flow.copy()
+        # self.flow_config["time_embed_freq"] = hp_config["time_embed_freq"]
+        # self.flow_config["latent_dim"] = hp_config["latent_dim"]
+        # self.flow_config["num_centers"] = hp_config["num_centers"]
 
-        self.sig_min = self.flow_config.sig_min
-        self.time_embed_freq = self.flow_config.time_embed_freq
-        self.latent_dim = self.flow_config.latent_dim
-        self.num_centers = self.flow_config.num_centers
+        # self.sig_min = self.flow_config.sig_min
+        # self.time_embed_freq = self.flow_config.time_embed_freq
+        # self.latent_dim = self.flow_config.latent_dim
+        # self.num_centers = self.flow_config.num_centers
 
-        # embedding modules
-        embedding = get_embedding_modules(
-            nx=self.nx,
-            nc=self.nc,
-            nd=self.nd,
-            nd_c=self.nd_c,
-            latent_dim=self.latent_dim,
-            time_embed_freq=self.time_embed_freq,
-            num_centers=self.num_centers,
-            condition_domain=self.condition_domain,
-        )
-        self.state_embedding = embedding.get("state_embedding")
-        self.condition_embedding = embedding.get("condition_embedding")
-        self.fusion_embedding = embedding.get("fusion_embedding")
-        self.domain_embedding = embedding.get("domain_embedding")
+        # # embedding modules
+        # embedding = get_embedding_modules(
+        #     nx=self.nx,
+        #     nc=self.nc,
+        #     nd=self.nd,
+        #     nd_c=self.nd_c,
+        #     latent_dim=self.latent_dim,
+        #     time_embed_freq=self.time_embed_freq,
+        #     num_centers=self.num_centers,
+        #     condition_domain=self.condition_domain,
+        # )
+        # self.state_embedding = embedding.get("state_embedding")
+        # self.condition_embedding = embedding.get("condition_embedding")
+        # self.fusion_embedding = embedding.get("fusion_embedding")
+        # self.domain_embedding = embedding.get("domain_embedding")
 
     def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
         """sample from the base density"""
@@ -232,7 +227,7 @@ def train_model(hp_config: dict = None):
     model = ResFlow(
         config=config,  # general config
         hp_config=hp_config,  # hyperparameter config
-        condition_domain=data_module.condition_domain,  # condition domain
+        domains=data_module.domains,  # field and condition domains
     )
     if hasattr(model, "compile") and torch.cuda.is_available():
         printer("Compiling the model...")
@@ -262,6 +257,7 @@ def train_model(hp_config: dict = None):
 
 def infer_model(best_model_path, data_module):
     """Infererence task"""
+    raise NotImplementedError("Inference for oneDCorr is not implemented yet.")
     printer("Inference...")
     # load the best model
     best_model = ResFlow.load_from_checkpoint(
@@ -281,7 +277,7 @@ def infer_model(best_model_path, data_module):
         test_config=data_module.test_config,
         statistics=data_module.statistics,
         job_name=config.job_name,
-        mfFlow=config.mfFlow,
+        floral=config.floral,
         generate_config=config.generate,
     )
 

@@ -6,7 +6,9 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mfFlow"
+# FLORAL: Flow-matching Operator for Residual-Augmented Learning
+# FLORA: Flow-matching Operator for Residual-Free Approximation
+name = "floral"
 version = "0.1.0"
 description = "A python package for probabilistic neural operators using flow matching"
 authors = [{name="Sahil Bhola", email="sbhola@umich.edu"}, {name="Karthik Duraisamy", email="kdur@umich.edu"}]
