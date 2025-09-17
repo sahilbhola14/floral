@@ -1,4 +1,4 @@
-name: floren
+name: floral
 channels:
   - pytorch
   - conda-forge
@@ -15,8 +15,9 @@ dependencies:
   - joblib=1.4.2
   - pip
   - pip:
-    - torch==2.6.0 # NOTE: For GPU backend, uninstall and reinstall.
+    - torch==2.6.0
     - gpytorch==1.14
     - tensorboard==2.20.0
     - torchdiffeq==0.2.5
     - wandb==0.21.0
+    - neuraloperator==1.0.2
