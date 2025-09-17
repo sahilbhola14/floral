@@ -30,6 +30,8 @@ parser.add_argument(
 parser.add_argument(
     "--k_range", type=list, default=[10, 14], help="Range of k values to sample from"
 )
+parser.add_argument("--plot", action="store_true", help="Plot a snapshot of the data")
+
 args = parser.parse_args()
 
 print(f"Generating {args.n_samples} samples for training and validation")
@@ -66,16 +68,18 @@ def plot_snapshot(
     fig, axs = plt.subplots(1, 2, figsize=(6, 2.5), sharex=True)
     axs[0].plot(domain, features_plot, color="k")
     axs[0].set_ylabel(r"$a(x)$")
+    axs[0].set_ylim(-10, 10)
     axs[1].plot(domain, hf_solution_plot, color="k", label="High-fidelity")
     axs[1].plot(domain, lf_solution_plot, color="grey", alpha=0.6, label="Low-fidelity")
-    axs[1].legend(fontsize=10, loc="upper right")
+    axs[1].legend(fontsize=10)
     axs[1].set_ylabel(r"$w(x)$")
+    axs[1].set_ylim(bottom=-2, top=2)
     for ax in axs:
         ax.set_xlabel("$x$")
 
     plt.legend(fontsize=10, loc="upper right")
     plt.tight_layout()
-    plt.savefig("snapshot.png")
+    plt.savefig("data_snapshot.png")
 
 
 def generate():
@@ -108,7 +112,8 @@ def generate():
     }
 
     # plot a snapshot
-    plot_snapshot(domain, features, hf_solution, lf_solution)
+    if args.plot:
+        plot_snapshot(domain, features, hf_solution, lf_solution)
 
     # save
     np.savez("high_fidelity.npz", **high_data)
