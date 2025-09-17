@@ -20,8 +20,6 @@ parameters:
     distribution: log_uniform_values
     min: 1.0e-6
     max: 1.0e-2
-  latent_dim: # latent dim for flow model
-    values: [5, 10, 15, 20, 30]
   num_centers: # number of centers for RBF encoding
     values: [10, 20, 30, 35, 40]
   time_emb_freq: # time embedding freqency

@@ -19,7 +19,7 @@ from floral.utils import (
 from floral.utils import OptimizedInference as Inference
 from floral.flow import Flow
 
-# from floral.archs import get_embedding_modules
+# from floral.archs import get_operator_modules
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
@@ -125,63 +125,61 @@ class ResFlow(Flow, L.LightningModule):
         domains: dict = None,
     ):
         # Initialize the Flow and LightningModule
-        Flow.__init__(self, hp_config=hp_config)
+        Flow.__init__(self, hp_config=hp_config, domains=domains)
         L.LightningModule.__init__(self)
-        raise NotImplementedError("ResFlow is not implemented yet.")
 
-        # # convert to dict for saving
-        # hp_config_dict = dict(hp_config)
+        # convert to dict for saving
+        hp_config_dict = dict(hp_config)
 
-        # # Convert condition_domain tensor to list for saving
-        # condition_domain_list = (
-        #     condition_domain.detach().cpu().tolist()
-        #     if isinstance(condition_domain, torch.Tensor)
-        #     else condition_domain
-        # )
+        # convert domains dict to dict of lists for saving
+        field_domain = domains.get("field_domain", None)
+        condition_domain = domains.get("condition_domain", None)
+        field_domain_list = (
+            field_domain.detach().cpu().tolist()
+            if isinstance(field_domain, torch.Tensor)
+            else field_domain
+        )
+        condition_domain_list = (
+            condition_domain.detach().cpu().tolist()
+            if isinstance(condition_domain, torch.Tensor)
+            else condition_domain
+        )
 
-        # # save the config and hyperparameter config
-        # self.save_hyperparameters(
-        #     {
-        #         "config": config,
-        #         "hp_config": hp_config_dict,
-        #         "condition_domain": condition_domain_list,
-        #     }
-        # )
+        # save the config and hyperparameter config
+        self.save_hyperparameters(
+            {
+                "config": config,
+                "hp_config": hp_config_dict,
+                "field_domain_list": field_domain_list,
+                "condition_domain": condition_domain_list,
+            }
+        )
 
-        # self.config = config
-        # self.nx = self.config.data.nx
-        # self.nc = self.config.data.nc
-        # self.nd = self.config.data.nd
-        # self.nd_c = self.config.data.nd_c
+        self.config = config
 
-        # # Store the tensor version for use inside the model
-        # self.condition_domain = (
-        #     torch.FloatTensor(condition_domain_list)
-        #     if condition_domain_list is not None
-        #     else None
-        # )
-        # assert self.condition_domain.shape == (self.nc, self.nd_c,), (
-        #     "Condition domain shape mismatch."
-        #     f"Expected ({self.nc, self.nd_c}), got {self.condition_domain.shape}"
-        # )
+        # store the tensor version for use inside the model
+        self.field_domain = (
+            torch.FloatTensor(field_domain_list)
+            if field_domain_list is not None
+            else None
+        )
+        self.condition_domain = (
+            torch.FloatTensor(condition_domain_list)
+            if condition_domain_list is not None
+            else None
+        )
 
-        # # flow config
-        # self.flow_config = self.config.flow.copy()
-        # self.flow_config["time_embed_freq"] = hp_config["time_embed_freq"]
-        # self.flow_config["latent_dim"] = hp_config["latent_dim"]
-        # self.flow_config["num_centers"] = hp_config["num_centers"]
+        # flow config
+        self.flow_config = self.config.flow.copy()
+        self.flow_config["time_embed_freq"] = hp_config["time_embed_freq"]
+        self.flow_config["num_centers"] = hp_config["num_centers"]
 
-        # self.sig_min = self.flow_config.sig_min
-        # self.time_embed_freq = self.flow_config.time_embed_freq
-        # self.latent_dim = self.flow_config.latent_dim
-        # self.num_centers = self.flow_config.num_centers
+        self.sig_min = self.flow_config.sig_min
+        self.time_embed_freq = self.flow_config.time_embed_freq
+        self.num_centers = self.flow_config.num_centers
 
         # # embedding modules
-        # embedding = get_embedding_modules(
-        #     nx=self.nx,
-        #     nc=self.nc,
-        #     nd=self.nd,
-        #     nd_c=self.nd_c,
+        # operators = get_operator_modules(
         #     latent_dim=self.latent_dim,
         #     time_embed_freq=self.time_embed_freq,
         #     num_centers=self.num_centers,

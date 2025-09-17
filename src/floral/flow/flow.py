@@ -8,9 +8,19 @@ from floral.utils import printer
 class Flow(ABC):
     """Base class for flow models."""
 
-    def __init__(self, hp_config):
+    def __init__(self, hp_config, domains: dict):
         """Initialize the flow model."""
         self.hp_config = dict(hp_config)
+        # extract domains and register buffers
+        assert isinstance(domains, dict), "domains should be a dictionary"
+        field_domain = domains.get("field", None)
+        condition_domain = domains.get("condition", None)
+        assert (
+            field_domain is not None and condition_domain is not None
+        ), "Both field and condition domains are required"
+        self.register_buffer("field_domain", field_domain)
+        self.register_buffer("condition_domain", condition_domain)
+
         self.stepper_config = {
             "learning_rate": self.hp_config["learning_rate"],
             "optimizer": self.hp_config["optimizer"].lower().strip(),
