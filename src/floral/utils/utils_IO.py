@@ -4,9 +4,9 @@ import torch
 import json
 import time
 
-from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.utilities import rank_zero_only
-from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.utilities import rank_zero_only
+from lightning.pytorch.callbacks import ModelCheckpoint
 from datetime import datetime
 from typing import Callable, Any, Tuple, Dict
 

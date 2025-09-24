@@ -13,13 +13,20 @@ data:
     path: "./low_fidelity.npz"
   high_fidelity:
     path: "./high_fidelity.npz"
+  shape:
+    field:
+      dims: 1
+      ch_in: 1
+    condition:
+      dims: 1
+      ch_in: 1
 
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   train_ratio: 0.7 # percentage of {n_samples} to train
   num_workers: 6 # Number of workers
   normalize:
-    # nromalization: (x - mu) * sigma_t / sigma
+    # normalization: (x - mu) * sigma_t / sigma
     field:
       enabled: True # True: normalize the field
       auto: True # If True, mean and std are computed.
@@ -35,11 +42,20 @@ train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'cpu'
   devices: 1
-  strategy: 'ddp'
   precision: 'bf16-mixed'
 
 flow:
   sig_min: 1.0e-5 # gaussian std for the data
+  field_sub_sample_factor: [2, 4, 5] # field_resolution / field_sub_sample_factor
+  condition_sub_sample_factor: [2, 4, 5] # condition_resolution / condition_sub_sample_factor
+  operator:
+    field:
+      ch_hidden: 32 # hidden channels in field operator
+      n_modes: 32 # number of modes to keep in the field operator
+    condition:
+      ch_out: 16 # output channels for the condition operator
+      ch_hidden: 32 # hidden channels in the condition operator
+      n_modes: 32 # number of modes ot keep in the condition operator
 
 generate:
   minibatch_size: 100 # number of domain points to process at a time (increase if memory is available)

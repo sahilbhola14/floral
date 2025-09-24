@@ -77,7 +77,7 @@ def build_gp(train_set, val_set, gp_type: str = "vanilla", **kwargs):
 class GPPrior(ExactGP):
     """GP prior (Non-trainable) model for function sampling"""
 
-    def __init__(self, lengthscale=0.5, outputscale=1.0, device=None):
+    def __init__(self, lengthscale=0.001, outputscale=0.1):
         likelihood = GaussianLikelihood()
         super().__init__(train_inputs=None, train_targets=None, likelihood=likelihood)
         self.likelihood = likelihood
@@ -89,8 +89,8 @@ class GPPrior(ExactGP):
         # set to eval mode
         self.eval()
         # move to device
-        self.device = device
-        self.to(self.device)
+        # self.device = device
+        # self.to(self.device)
 
     def _build_mean_function(self):
         """build the mean function"""
@@ -112,37 +112,40 @@ class GPPrior(ExactGP):
 
     @torch.no_grad()
     def sample(
-        self, x: torch.Tensor, dims: tuple, n_samples: int = 10, n_channels: int = 1
+        self,
+        domain: torch.Tensor,
+        grid: tuple,
+        n_samples: int = 10,
+        n_channels: int = 1,
     ):
         """sample functions from the GP prior
         Args:
-            x (torch.Tensor): input tensor of shape (N, D)
-            dims (tuple): original dimensions of the input (e.g., (H, W) for images).
+            domain (torch.Tensor): input tensor of shape (N, D)
+            grid (tuple): original dimensions of the input (e.g., (H, W) for images).
             N = H*W
             n_samples (int): number of function samples to draw
             n_channels (int): number of output channels (for multi-output GP)
         Returns:
             samples (torch.Tensor): sampled functions of shape
-            (n_samples, n_channels, *dims)
+            (n_samples, n_channels, *grid)
         Note:
             1. For multiple channels, we assume independence between channels.
             That is, i.i.d. draws from the same GP prior.
 
         """
-        assert x.ndim == 2 and isinstance(
-            x, torch.Tensor
+        assert domain.ndim == 2 and isinstance(
+            domain, torch.Tensor
         ), "Input should be a 2D tensor."
-        assert x.shape[1] == len(
-            dims
+        assert domain.shape[1] == len(
+            grid
         ), "Input feature dimension must match the length of dims."
-        x = x.to(self.device)  # move to device
 
-        distribution = self.forward(x)  # get the GP distribution
+        distribution = self.forward(domain)  # get the GP distribution
         samples = distribution.sample(
             torch.Size([n_samples * n_channels])
         )  # (n_samples * n_channels, N)
         samples = samples.view(
-            n_samples, n_channels, *dims
+            n_samples, n_channels, *grid
         )  # (n_samples, n_channels, *dims)
         return samples
 

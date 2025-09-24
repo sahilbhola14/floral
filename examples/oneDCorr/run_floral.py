@@ -1,11 +1,11 @@
-# examples/oneDCorr/run_FLOREN.py
+# examples/oneDCorr/run_floral.py
 """
-Flow-matching Residual Embedded Neural Operator for One D problem
+Flow-matching operator for residual-augmented learning for 1D toy problem
 """
 import torch
 import wandb
 import argparse
-import pytorch_lightning as L
+import lightning as L
 import yaml
 from omegaconf import OmegaConf
 from floral.utils import (
@@ -18,14 +18,14 @@ from floral.utils import (
 )
 from floral.utils import OptimizedInference as Inference
 from floral.flow import Flow
-
-# from floral.archs import get_operator_modules
+from floral.archs import get_operator_modules
+from floral.GP import GPPrior
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
     "--config",
     type=str,
-    default="config_FLOREN.yml",
+    default="config_floral.yml",
     help="Path to the configuration file.",
 )
 
@@ -51,7 +51,9 @@ def print_header(config: dict):
 
 
 def build_data_module(
-    config: dict, hp_config: wandb.sdk.wandb_config.Config | dict = None
+    config: dict,
+    hp_config: wandb.sdk.wandb_config.Config | dict = None,
+    verbose: bool = False,
 ):
     """Get the data module for the oneDCorr problem.
     Args:
@@ -69,6 +71,7 @@ def build_data_module(
         n_samples=config.data.n_samples,
         dataloader_config=dataloader_config,
         floral=config.floral,
+        verbose=verbose,
     )
 
     # Setup the data module
@@ -91,6 +94,7 @@ def build_trainer(
     config: dict,
     hp_config: wandb.sdk.wandb_config.Config | dict = None,
     checkpointer=None,
+    verbose: bool = False,
 ):
     """Get the trainer for training the model.
     Args:
@@ -110,6 +114,7 @@ def build_trainer(
         checkpointer=checkpointer,
         logger_name=logger_name + "_floral" if config.floral else logger_name,
         train_config=train_config,
+        verbose=verbose,
     )
 
     return trainer
@@ -124,79 +129,101 @@ class ResFlow(Flow, L.LightningModule):
         hp_config: wandb.sdk.wandb_config.Config | dict = None,
         domains: dict = None,
     ):
-        # Initialize the Flow and LightningModule
-        Flow.__init__(self, hp_config=hp_config, domains=domains)
+        # create flow config
+        flow_config = config.flow.copy()
+        flow_config["time_embed_freq"] = hp_config.get("time_embed_freq", 4)
+
+        # initialize the Flow and LightningModule
+        Flow.__init__(
+            self, hp_config=hp_config, domains=domains, flow_config=flow_config
+        )
         L.LightningModule.__init__(self)
 
         # convert to dict for saving
         hp_config_dict = dict(hp_config)
-
-        # convert domains dict to dict of lists for saving
-        field_domain = domains.get("field_domain", None)
-        condition_domain = domains.get("condition_domain", None)
-        field_domain_list = (
-            field_domain.detach().cpu().tolist()
-            if isinstance(field_domain, torch.Tensor)
-            else field_domain
-        )
-        condition_domain_list = (
-            condition_domain.detach().cpu().tolist()
-            if isinstance(condition_domain, torch.Tensor)
-            else condition_domain
-        )
 
         # save the config and hyperparameter config
         self.save_hyperparameters(
             {
                 "config": config,
                 "hp_config": hp_config_dict,
-                "field_domain_list": field_domain_list,
-                "condition_domain": condition_domain_list,
             }
         )
 
         self.config = config
 
-        # store the tensor version for use inside the model
-        self.field_domain = (
-            torch.FloatTensor(field_domain_list)
-            if field_domain_list is not None
-            else None
-        )
-        self.condition_domain = (
-            torch.FloatTensor(condition_domain_list)
-            if condition_domain_list is not None
-            else None
+        # operator params
+        self.operator_params = self._get_operator_params()
+
+        # operator modules
+        operator_modules = get_operator_modules(
+            operator_params=self.operator_params, time_embed_dim=self.time_embed_dim
         )
 
-        # flow config
-        self.flow_config = self.config.flow.copy()
-        self.flow_config["time_embed_freq"] = hp_config["time_embed_freq"]
-        self.flow_config["num_centers"] = hp_config["num_centers"]
+        # extract operator modules
+        self.field_operator = operator_modules.get("field_operator")
+        self.condition_operator = operator_modules.get("condition_operator")
 
-        self.sig_min = self.flow_config.sig_min
-        self.time_embed_freq = self.flow_config.time_embed_freq
-        self.num_centers = self.flow_config.num_centers
+        # prior
+        self.prior = GPPrior()
 
-        # # embedding modules
-        # operators = get_operator_modules(
-        #     latent_dim=self.latent_dim,
-        #     time_embed_freq=self.time_embed_freq,
-        #     num_centers=self.num_centers,
-        #     condition_domain=self.condition_domain,
-        # )
-        # self.state_embedding = embedding.get("state_embedding")
-        # self.condition_embedding = embedding.get("condition_embedding")
-        # self.fusion_embedding = embedding.get("fusion_embedding")
-        # self.domain_embedding = embedding.get("domain_embedding")
+    def _get_operator_params(self):
+        """extract the operator params"""
+        dims = {
+            "field": self.config.data.shape.field.get("dims", 1),
+            "condition": self.config.data.shape.condition.get("dims", 1),
+        }
+        ch_in = {
+            "field": self.config.data.shape.field.get("ch_in", 1),
+            "condition": self.config.data.shape.condition.get("ch_in", 1),
+        }
+        ch_out = {
+            "field": self.config.data.shape.field.get("ch_in", 1),  # same as ch_in
+            "condition": self.config.flow.operator.condition.get("ch_out", 1),
+        }
+        ch_hidden = {
+            "field": self.config.flow.operator.field.get("ch_hidden", 32),
+            "condition": self.config.flow.operator.condition.get("ch_hidden", 32),
+        }
+        n_modes = {
+            "field": self.config.flow.operator.field.get("field", 32),
+            "condition": self.config.flow.operator.condition.get("condition", 32),
+        }
 
-    def sample_base_density(self, x1: torch.Tensor, c: torch.Tensor):
-        """sample from the base density"""
-        return torch.randn_like(x1, device=x1.device)
+        operator_params = {
+            "dims": dims,
+            "ch_in": ch_in,
+            "ch_out": ch_out,
+            "ch_hidden": ch_hidden,
+            "n_modes": n_modes,
+        }
 
-    def sample_initial_condition(self, c: torch.Tensor, batch_size: int, n_gen: int):
-        """get the initial condition for the flow"""
-        return torch.randn(batch_size, n_gen, self.nx, device=self.device)
+        return operator_params
+
+    def _sample_base_measure(
+        self,
+        field_domain: torch.Tensor,
+        field_grid: tuple,
+        field_ch: int,
+        n_samples: int,
+    ):
+        # flatten domain
+        domain_flat = field_domain.squeeze(0).flatten(start_dim=1).T
+        # sample from prior
+        prior_samples = self.prior.sample(
+            domain=domain_flat,
+            grid=field_grid,
+            n_channels=field_ch,
+            n_samples=n_samples,
+        )
+        # check shape
+        B, ch, *grid = prior_samples.shape
+        dim_flag = all([ii == jj for ii, jj in zip(grid, field_grid)])
+        assert B == n_samples, f"Batch mismatch: {B} vs {n_samples}"
+        assert ch == field_ch, f"Channel mismatch: {ch} vs {field_ch}"
+        assert dim_flag, f"Dimension mismatch: {grid} vs {field_grid}"
+
+        return prior_samples
 
 
 def train_model(hp_config: dict = None):
@@ -204,7 +231,6 @@ def train_model(hp_config: dict = None):
     Returns:
         best_model_path (str): Path to the best model checkpoint after training.
     """
-    printer("Training ...")
     if config.tune_hyperparameters:
         # initialize wandb with the hyperparameter config
         wandb.init()
@@ -227,9 +253,9 @@ def train_model(hp_config: dict = None):
         hp_config=hp_config,  # hyperparameter config
         domains=data_module.domains,  # field and condition domains
     )
-    if hasattr(model, "compile") and torch.cuda.is_available():
-        printer("Compiling the model...")
-        model = torch.compile(model, mode="default")
+    # if hasattr(model, "compile") and torch.cuda.is_available():
+    #     printer("Compiling the model...")
+    #     model = torch.compile(model, mode="default")
     model.apply(init_weights)
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:

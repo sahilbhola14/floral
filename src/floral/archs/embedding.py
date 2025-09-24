@@ -1,6 +1,11 @@
+# src/floral/archs/embedding.py
+"""
+contains different types of embedding that can be used to modulate data.
+"""
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def conv_nd(dims, *args, **kwargs):
@@ -440,147 +445,80 @@ class SpatialAdaptivePooling(nn.Module):
         return self.proj(out.flatten(1))  # (B, latent_dim)
 
 
-class FiLM(nn.Module):
-    """Vanilla Feature Layer Modulation (FiLM) layer
-
-    Give an embedding vector of size (batch_size, emb_dim), this layer modulates a
-    tensor of size (batch_size, num_channels, H, W) by scaling and shifting it.
-
+class SpatialFiLM(nn.Module):
+    """Give a mod of shape (B, ch_mod, *grid) and target of shape
+    (B, ch_target, *grid), apply the modulation across each dim
+    (with same across channels).
+    Args:
+        mod_ch (int):
+            Number of channels in the modulating tensor
+        target_ch (int):
+            Number of chanenls in the target tensor
     """
 
-    def __init__(self, emb_dim: int, num_channels: int):
-        """
-        Args:
-            emb_dim (int): Dimension of the embedding vector
-            num_channels (int): Number of channels in the output tensor, which is
-                                modulated.
-        """
-        super(FiLM, self).__init__()
-        self.emb_dim = emb_dim
-        self.num_channels = num_channels
-        self.scale = nn.Linear(self.emb_dim, self.num_channels)
-        self.shift = nn.Linear(self.emb_dim, self.num_channels)
+    def __init__(
+        self,
+        mod_ch: int,
+        target_ch: int,
+        **kwargs,
+    ):
+        super(SpatialFiLM, self).__init__()
+        self.mod_ch = mod_ch
+        self.target_ch = target_ch
 
-    def forward(self, x: torch.Tensor, emb: torch.Tensor):
-        """forward pass of the FiLM layer
-        Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, num_channels, H, W)
-                            that will be modulated.
-            emb (torch.Tensor): Embedding tensor of shape (batch_size, emb_dim) that
-                                will be used to modulate the input tensor.
-        """
-        assert (
-            emb.shape[-1] == self.emb_dim
-        ), f"Embedding dimension mismatch: {emb.shape[-1]} != {self.emb_dim}"
-        assert emb.ndim == 2, "Embedding tensor must be 2D (batch_size, emb_dim)"
-        assert (
-            x.shape[1] == self.num_channels
-        ), f"Number of channels mismatch: {x.shape[1]} != {self.num_channels}"
-        assert x.ndim == 4, "Input tensor must be 4D (batch_size, num_channels, H, W)"
-        scale = self.scale(emb).view(-1, self.num_channels, 1, 1)
-        shift = self.shift(emb).view(-1, self.num_channels, 1, 1)
-        return x * (1 + scale) + shift
+        width = kwargs.get("width", [64, 64])
+        dropout = kwargs.get("dropout", 0.0)
+        activation = nn.SiLU()
 
-
-class CoordModulation(nn.Module):
-    """Modululate the input tensor with the coordinates.
-
-    Given an input tensor of shape (batch_size, nc), this layer modulates
-    the input tensor by scaling and shifting it based on the provided coordinates.
-
-    Attributes:
-        coords (torch.Tensor): Coordinates tensor of shape (in_features, 1)
-        nc (int): Number of input features
-    """
-
-    def __init__(self, coords: torch.Tensor, nc: int, nd_c: int, **kwargs):
-        super(CoordModulation, self).__init__()
-        self.nc = nc
-        self.nd_c = nd_c
-        self.dropout = kwargs.get("dropout", 0.0)
-        self.num_centers = kwargs.get("num_centers", 10)
-        self.latent_dim = kwargs.get("latent_dim", 64)
-
-        # register coords
-        self.register_buffer("coords", coords)
-
-        assert isinstance(self.coords, torch.Tensor), "coords must be a torch.Tensor"
-        assert self.coords.ndim == 2 and self.coords.shape == (
-            self.nc,
-            self.nd_c,
-        ), f"coords must be of shape ({self.nc}, {self.nd_c}), got {self.coords.shape}"
-
-        centers = self._initialize_centers().to(coords.dtype).to(coords.device)
-        self.centers = nn.Parameter(centers, requires_grad=True)
-
-        self.log_bandwidth = nn.Parameter(torch.ones(self.num_centers) * math.log(10.0))
-
-        # feature embedding
-        self.feature_embedding = MLP(
-            in_dim=self.num_centers + 1,
-            out_dim=2,
-            width=[32, 32],
-            activations=[nn.SiLU(), nn.SiLU(), None],
-            dropout=self.dropout,
+        # film layer
+        self.film_net = MLP(
+            in_dim=self.mod_ch,
+            out_dim=2 * self.target_ch,
+            width=width,
+            activations=[activation for _ in range(len(width))] + [None],
+            dropout=dropout,
         )
 
-    def _initialize_centers(self):
-        """Better center initialization without much complexity
-        Returns:
-            (torch.nn.Parameter): Initialized centers tensor of shape
-            (num_centers, nd_c)
-        """
-        if self.nd_c == 1:
-            # Chebyshev nodes for better approximation
-            i = torch.arange(1, self.num_centers + 1).float()
-            centers = 0.5 * (
-                1 + torch.cos((2 * i - 1) * math.pi / (2 * self.num_centers))
-            )
-            centers = centers.unsqueeze(1)
-        elif self.nd_c == 2:
-            # Simple grid initialization
-            side = int(math.ceil(math.sqrt(self.num_centers)))
-            x = torch.linspace(0, 1, side)
-            y = torch.linspace(0, 1, side)
-            xx, yy = torch.meshgrid(x, y, indexing="ij")
-            centers = torch.stack([xx.flatten(), yy.flatten()], dim=1)[
-                : self.num_centers
-            ]
-        else:
-            # Random for higher dimensions
-            centers = torch.rand(self.num_centers, self.nd_c)
+    def _check_input(self, target: torch.Tensor, mod: torch.Tensor):
+        """check the input"""
+        _, target_ch, *target_grid = target.shape
+        _, mod_ch, *mod_grid = mod.shape
 
-        assert centers.shape == (self.num_centers, self.nd_c)
+        assert target_ch == self.target_ch, "incorrect target channels."
+        assert mod_ch == self.mod_ch, "incorrect mod channels."
 
-        return centers
+        assert all([ii == jj for ii, jj in zip(target_grid, mod_grid)]), "invalid input"
 
-    def _rbf_encoding(self):
-        """Simple RBF encoding - minimal change from original"""
-        # Ensure mod is properly bounded
-        mod = torch.clamp(self.coords, 0, 1)
-        # Compute distances
-        delta = mod.unsqueeze(1) - self.centers.unsqueeze(0)
-        sq_dist = (delta * delta).sum(-1)
+    def forward(self, target: torch.Tensor, mod: torch.Tensor):
+        # check input
+        self._check_input(target, mod)
 
-        # RBF with learnable bandwidth
-        bandwidth = self.log_bandwidth.exp().unsqueeze(0)  # (1, num_centers)
-        return torch.exp(-bandwidth * sq_dist)
+        _, mod_ch, *mod_grid = mod.shape
 
-    def forward(self, x: torch.Tensor):
-        """forward pass"""
-        assert (
-            x.ndim == 2 and x.shape[1] == self.nc
-        ), "Input tensor must be 2D with shape (batch_size, nc)"
-        # get the modulation coordinates
-        rbf = self._rbf_encoding()  # (nc, num_centers)
+        mod_flat = mod.flatten(start_dim=2).transpose(1, 2)  # (B, ..., mod_ch)
 
-        # concat raw feature value per location as an extra basis fn
-        B = x.shape[0]
-        x_app = torch.cat(
-            [x.unsqueeze(-1), rbf.unsqueeze(0).expand(B, -1, -1)], dim=-1
-        )  # (B,nc,K+1)
-        gamma_beta = self.feature_embedding(x_app)  # (B, nc, 2)
-        gamma, beta = torch.chunk(gamma_beta, 2, dim=-1)
-        gamma, beta = gamma.squeeze(-1), beta.squeeze(-1)
+        gamma, beta = torch.chunk(self.film_net(mod_flat), chunks=2, dim=-1)
+        gamma, beta = gamma.transpose(1, 2), beta.transpose(1, 2)  # (B, mod_ch, ...)
+        gamma = gamma.view(-1, mod_ch, *mod_grid)  # (B, mod_ch, *mod_grid)
+        beta = beta.view(-1, mod_ch, *mod_grid)  # (B, mod_ch, *mod_grid)
+        return target * (1 + gamma) + beta  # (B, ch_target, dim_target)
 
-        return (1 + gamma) * x + beta
+
+class AttentionPool(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.attn_proj = nn.Linear(in_channels, 1)
+
+    def forward(self, x):
+        # x: (B, C, *grid) -> flatten
+        B, C, *grid = x.shape
+        N = int(torch.tensor(grid).prod())
+        x_flat = x.view(B, C, N).transpose(1, 2)  # (B, N, C)
+
+        # scores -> (B, N, 1)
+        scores = self.attn_proj(x_flat)
+        weights = F.softmax(scores, dim=1)  # (B, N, 1)
+
+        # weighted sum -> (B, C)
+        pooled = torch.sum(weights * x_flat, dim=1)
+        return pooled

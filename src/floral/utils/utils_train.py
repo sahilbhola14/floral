@@ -1,10 +1,14 @@
+# src/floral/utils/utils_train.py
+"""
+Utilities for model training
+"""
 import numpy as np
 import torch
 import torch.nn as nn
-import pytorch_lightning as L
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+import lightning as L
+from lightning.pytorch.callbacks import EarlyStopping
 from torch.utils.data import DataLoader, TensorDataset
-from floral.utils import check_path, get_logger, printer
+from .utils_IO import check_path, get_logger, printer
 
 
 def t2n(tensor: torch.Tensor) -> torch.Tensor:
@@ -19,34 +23,52 @@ def n2t(array: np.ndarray) -> torch.Tensor:
     return torch.FloatTensor(array)
 
 
-def get_trainer(checkpointer, logger_name: str, train_config: dict):
+def get_trainer(
+    checkpointer, logger_name: str, train_config: dict, verbose: bool = False
+):
     """Get a PyTorch Lightning Trainer with the specified configuration."""
     assert isinstance(train_config, dict), "train_config must be a dictionary."
     # get the logger
     logger = get_logger(logger_name)
+
+    # extract train config
+    max_epochs = train_config.get("max_epochs", 100)
+    devices = train_config.get("devices", 1)
+    accelerator = train_config.get("accelerator", "cpu")
 
     # early stopping
     early_stop_callback = EarlyStopping(
         monitor="val_loss",  # Metric to monitor
         min_delta=1e-4,  # Minimum change to qualify as improvement
         patience=int(
-            0.2 * train_config["max_epochs"]
+            0.2 * max_epochs
         ),  # Number of epochs with no improvement after which training will stop
         verbose=True,
         mode="min",  # "min" for loss, "max" for accuracy
     )
 
+    assert devices == 1, "Currently, multi-device FNO is not supported."
+
     # trainer
     trainer = L.Trainer(
         logger=logger,
-        max_epochs=train_config["max_epochs"],
-        devices=train_config["devices"],
-        accelerator=train_config["accelerator"],
-        strategy=train_config["strategy"],
+        max_epochs=max_epochs,
+        devices=devices,
+        accelerator=accelerator,
+        strategy="single_device",
         callbacks=[checkpointer, early_stop_callback],
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
     )
+
+    if verbose:
+        printer("==" * 50)
+        printer("**" * 10 + "Trainer config" + "**" * 10)
+        printer(f"Logger file: {logger_name}")
+        printer(f"Max epochs: {max_epochs}")
+        printer(f"Number of devices: {devices}")
+        printer(f"Running on : {accelerator}")
+        printer("==" * 50)
 
     return trainer
 
@@ -84,15 +106,17 @@ class OpDataModule(L.LightningDataModule):
         floral: bool = False,
         **kwargs,
     ):
+        super(OpDataModule, self).__init__()
         self.low_fidelity_path = low_fidelity_path
         self.high_fidelity_path = high_fidelity_path
         self.n_samples = n_samples
         self.dataloader_config = dataloader_config
         self.floral = floral
+        self.verbose = kwargs.get("verbose", False)
 
         # extract hte dataloader config
-        self.train_ratio = self.dataloader_config.get("train_ratio", 0.8)
         self.reload = self.dataloader_config.get("reload", False)
+        self.train_ratio = self.dataloader_config.get("train_ratio", 0.8)
         self.batch_size = self.dataloader_config.get("batch_size", 32)
         self.num_workers = self.dataloader_config.get("num_workers", 4)
         self.normalize = self.dataloader_config.get("normalize", None)
@@ -108,6 +132,27 @@ class OpDataModule(L.LightningDataModule):
         assert isinstance(
             self.dataloader_config, dict
         ), "dataloader_config must be a dictionary."
+
+        if self.verbose:
+            self._print_header()
+
+    def _print_header(self):
+        """print the header for the dataloader"""
+        printer("==" * 50)
+        printer("**" * 10 + "Dataloader config" + "**" * 10)
+        printer(f"Reload datasets: {self.reload}")
+        printer(f"Train/Val ratio: {self.train_ratio}")
+        printer(f"Batch size: {self.batch_size}")
+        printer(f"Num workers: {self.num_workers}")
+        printer(
+            f"Normalize field: {self.normalize.field.enabled}"
+            f"with Auto: {self.normalize.field.auto}"
+        )
+        printer(
+            f"Normalize condition: {self.normalize.condition.enabled}"
+            f"with Auto: {self.normalize.condition.auto}"
+        )
+        printer("==" * 50)
 
     def _get_file_paths(self):
         """Get the file paths for saving/loading datasets and statistics"""
@@ -149,8 +194,8 @@ class OpDataModule(L.LightningDataModule):
         condition_domain = n2t(data_dict.get("condition_domain", None))
 
         # extract shapes
-        _, ch_f, *dim_f = field.shape
-        _, ch_c, *dim_c = condition.shape
+        _, fields_ch, *field_grid = field.shape
+        _, condition_ch, *condition_grid = condition.shape
 
         # assert statements
         assert (
@@ -161,17 +206,17 @@ class OpDataModule(L.LightningDataModule):
         assert condition_domain.ndim == 2, "Condition domain must be 2D (flattned)."
 
         assert (
-            len(dim_f) == field_domain.shape[1]
+            len(field_grid) == field_domain.shape[1]
         ), "Field and field_domain dimensions must match."
         assert (
-            len(dim_c) == condition_domain.shape[1]
+            len(condition_grid) == condition_domain.shape[1]
         ), "Condition and condition_domain dimensions must match."
 
         assert field_domain.shape[0] == int(
-            np.prod(dim_f)
+            np.prod(field_grid)
         ), "Field domain shape mismatch."
         assert condition_domain.shape[0] == int(
-            np.prod(dim_c)
+            np.prod(condition_grid)
         ), "Condition domain shape mismatch."
 
         assert isinstance(
@@ -223,6 +268,7 @@ class OpDataModule(L.LightningDataModule):
             field=HF_field, condition=HF_condition
         )
 
+        # check field shape (low fidelity MUST be interpolated to the high fidelity dim)
         assert LF_field_sub.shape == HF_field_sub.shape, "incompatible field shapes"
         assert (
             LF_condition_sub.shape == HF_condition_sub.shape
@@ -281,7 +327,7 @@ class OpDataModule(L.LightningDataModule):
 
     def _normalize_field(self, field_train: torch.Tensor, field_val: torch.Tensor):
         """Normalize the field"""
-        _, ch_f, *dim_f = field_train.shape
+        _, field_ch, *field_grid = field_train.shape
 
         if self.normalize.field.enabled:
             if self.normalize.field.auto:
@@ -292,13 +338,13 @@ class OpDataModule(L.LightningDataModule):
                 field_std = self.normalize.field.std
                 assert field_mean is not None, "Field mean must be provided."
                 assert field_std is not None, "Field std must be provided."
-                assert len(field_mean) == ch_f, "Provide mean for each channel."
-                assert len(field_std) == ch_f, "Provide std for each channel."
+                assert len(field_mean) == field_ch, "Provide mean for each channel."
+                assert len(field_std) == field_ch, "Provide std for each channel."
                 field_mean = torch.tensor(field_mean).reshape(
-                    1, ch_f, *([1] * len(dim_f))
+                    1, field_ch, *([1] * len(field_grid))
                 )
                 field_std = torch.tensor(field_std).reshape(
-                    1, ch_f, *([1] * len(dim_f))
+                    1, field_ch, *([1] * len(field_grid))
                 )
 
             assert field_std > 0, "Field std must be positive."
@@ -306,7 +352,7 @@ class OpDataModule(L.LightningDataModule):
                 field_mean.ndim == field_std.ndim == field_train.ndim
             ), "Field mean, std, and train data must have the same number of dim."
             assert (
-                field_mean.shape[1] == field_std.shape[1] == ch_f
+                field_mean.shape[1] == field_std.shape[1] == field_ch
             ), "Field mean, std, and train data must have the same number of channels."
 
             # normalize
@@ -314,15 +360,15 @@ class OpDataModule(L.LightningDataModule):
             field_val_norm = (field_val - field_mean) / field_std
 
         else:
-            field_mean = torch.zeros(1, ch_f, *([1] * len(dim_f)))
-            field_std = torch.ones(1, ch_f, *([1] * len(dim_f)))
+            field_mean = torch.zeros(1, field_ch, *([1] * len(field_grid)))
+            field_std = torch.ones(1, field_ch, *([1] * len(field_grid)))
 
             assert field_std > 0, "Field std must be positive."
             assert (
                 field_mean.ndim == field_std.ndim == field_train.ndim
             ), "Field mean, std, and train data must have the same number of dim."
             assert (
-                field_mean.shape[1] == field_std.shape[1] == ch_f
+                field_mean.shape[1] == field_std.shape[1] == field_ch
             ), "Field mean, std, and train data must have the same number of channels."
 
             # no normalization
@@ -335,7 +381,7 @@ class OpDataModule(L.LightningDataModule):
         self, condition_train: torch.Tensor, condition_val: torch.Tensor
     ):
         """Normalize the condition"""
-        _, ch_c, *dim_c = condition_train.shape
+        _, condition_ch, *condition_grid = condition_train.shape
 
         if self.normalize.condition.enabled:
             if self.normalize.condition.auto:
@@ -346,20 +392,24 @@ class OpDataModule(L.LightningDataModule):
                 condition_std = self.normalize.condition.std
                 assert condition_mean is not None, "Condition mean must be provided."
                 assert condition_std is not None, "Condition std must be provided."
-                assert len(condition_mean) == ch_c, "Provide mean for each channel."
-                assert len(condition_std) == ch_c, "Provide std for each channel."
+                assert (
+                    len(condition_mean) == condition_ch
+                ), "Provide mean for each channel."
+                assert (
+                    len(condition_std) == condition_ch
+                ), "Provide std for each channel."
                 condition_mean = torch.tensor(condition_mean).reshape(
-                    1, ch_c, *([1] * len(dim_c))
+                    1, condition_ch, *([1] * len(condition_grid))
                 )
                 condition_std = torch.tensor(condition_std).reshape(
-                    1, ch_c, *([1] * len(dim_c))
+                    1, condition_ch, *([1] * len(condition_grid))
                 )
 
             assert condition_std > 0, "Field std must be positive."
             assert (
                 condition_mean.ndim == condition_std.ndim == condition_train.ndim
             ), "Condition mean, std, and train data must have the same number of dim."
-            assert condition_mean.shape[1] == condition_std.shape[1] == ch_c, (
+            assert condition_mean.shape[1] == condition_std.shape[1] == condition_ch, (
                 "Condition mean, std, and train data must have the "
                 "same number of channels."
             )
@@ -369,8 +419,8 @@ class OpDataModule(L.LightningDataModule):
             condition_val_norm = (condition_val - condition_mean) / condition_std
 
         else:
-            condition_mean = torch.zeros(1, ch_c, *([1] * len(dim_c)))
-            condition_std = torch.ones(1, ch_c, *([1] * len(dim_c)))
+            condition_mean = torch.zeros(1, condition_ch, *([1] * len(condition_grid)))
+            condition_std = torch.ones(1, condition_ch, *([1] * len(condition_grid)))
 
             assert condition_std > 0, "Field std must be positive."
             assert (
@@ -378,7 +428,7 @@ class OpDataModule(L.LightningDataModule):
             ), "Field mean, std, and train data must have the same number "
             "of dimensions."
             assert (
-                condition_mean.shape[1] == condition_std.shape[1] == ch_c
+                condition_mean.shape[1] == condition_std.shape[1] == condition_ch
             ), "Field mean, std, and train data must have the same number of channels."
 
             # no normalization
@@ -447,7 +497,7 @@ class OpDataModule(L.LightningDataModule):
 
         return train_data_norm, val_data_norm, statistics
 
-    def setup(self, state=None):
+    def setup(self, stage=None):
         """Setup the data module"""
         if self.reload:
             raise NotImplementedError("Under construction. Please wait...")
@@ -484,7 +534,6 @@ class OpDataModule(L.LightningDataModule):
                     "condition_domain"
                 ],  # same for train and val
             }
-
             # save
             torch.save(self.train_set, self.file_paths["datasets"]["train"])
             torch.save(self.val_set, self.file_paths["datasets"]["val"])
