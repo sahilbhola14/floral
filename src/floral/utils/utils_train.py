@@ -331,8 +331,13 @@ class OpDataModule(L.LightningDataModule):
 
         if self.normalize.field.enabled:
             if self.normalize.field.auto:
-                field_mean = field_train.mean(dim=None, keepdim=True)
-                field_std = field_train.std(dim=None, keepdim=True)
+                # compute mean and std
+                field_mean = field_train.mean(
+                    dim=(0, *range(2, field_train.ndim)), keepdim=True
+                )  # mean per channel
+                field_std = field_train.std(
+                    dim=(0, *range(2, field_train.ndim)), keepdim=True
+                )
             else:
                 field_mean = self.normalize.field.mean
                 field_std = self.normalize.field.std
@@ -340,40 +345,32 @@ class OpDataModule(L.LightningDataModule):
                 assert field_std is not None, "Field std must be provided."
                 assert len(field_mean) == field_ch, "Provide mean for each channel."
                 assert len(field_std) == field_ch, "Provide std for each channel."
+                # build from specified mean and std
                 field_mean = torch.tensor(field_mean).reshape(
                     1, field_ch, *([1] * len(field_grid))
                 )
                 field_std = torch.tensor(field_std).reshape(
                     1, field_ch, *([1] * len(field_grid))
                 )
-
-            assert field_std > 0, "Field std must be positive."
-            assert (
-                field_mean.ndim == field_std.ndim == field_train.ndim
-            ), "Field mean, std, and train data must have the same number of dim."
-            assert (
-                field_mean.shape[1] == field_std.shape[1] == field_ch
-            ), "Field mean, std, and train data must have the same number of channels."
-
-            # normalize
-            field_train_norm = (field_train - field_mean) / field_std
-            field_val_norm = (field_val - field_mean) / field_std
-
         else:
+            # no normalization
             field_mean = torch.zeros(1, field_ch, *([1] * len(field_grid)))
             field_std = torch.ones(1, field_ch, *([1] * len(field_grid)))
 
-            assert field_std > 0, "Field std must be positive."
-            assert (
-                field_mean.ndim == field_std.ndim == field_train.ndim
-            ), "Field mean, std, and train data must have the same number of dim."
-            assert (
-                field_mean.shape[1] == field_std.shape[1] == field_ch
-            ), "Field mean, std, and train data must have the same number of channels."
+        # assert statements
+        assert all(field_std > 0), "Field std must be positive."
 
-            # no normalization
-            field_train_norm = field_train
-            field_val_norm = field_val
+        assert (
+            field_mean.ndim == field_std.ndim == field_train.ndim
+        ), "Field mean, std, and train data must have the same number "
+        "of dimensions."
+        assert (
+            field_mean.shape[1] == field_std.shape[1] == field_ch
+        ), "Field mean, std, and train data must have the same number of channels."
+
+        # normalize
+        field_train_norm = (field_train - field_mean) / field_std
+        field_val_norm = (field_val - field_mean) / field_std
 
         return field_train_norm, field_val_norm, field_mean, field_std
 
@@ -385,8 +382,13 @@ class OpDataModule(L.LightningDataModule):
 
         if self.normalize.condition.enabled:
             if self.normalize.condition.auto:
-                condition_mean = condition_train.mean(dim=None, keepdim=True)
-                condition_std = condition_train.std(dim=None, keepdim=True)
+                # compute the mean and std
+                condition_mean = condition_train.mean(
+                    dim=(0, *range(2, condition_train.ndim)), keepdim=True
+                )  # mean per channel
+                condition_std = condition_train.std(
+                    dim=(0, *range(2, condition_train.ndim)), keepdim=True
+                )
             else:
                 condition_mean = self.normalize.condition.mean
                 condition_std = self.normalize.condition.std
@@ -398,42 +400,33 @@ class OpDataModule(L.LightningDataModule):
                 assert (
                     len(condition_std) == condition_ch
                 ), "Provide std for each channel."
+
+                # build using specified mean and std
                 condition_mean = torch.tensor(condition_mean).reshape(
                     1, condition_ch, *([1] * len(condition_grid))
                 )
                 condition_std = torch.tensor(condition_std).reshape(
                     1, condition_ch, *([1] * len(condition_grid))
                 )
-
-            assert condition_std > 0, "Field std must be positive."
-            assert (
-                condition_mean.ndim == condition_std.ndim == condition_train.ndim
-            ), "Condition mean, std, and train data must have the same number of dim."
-            assert condition_mean.shape[1] == condition_std.shape[1] == condition_ch, (
-                "Condition mean, std, and train data must have the "
-                "same number of channels."
-            )
-
-            # normalize
-            condition_train_norm = (condition_train - condition_mean) / condition_std
-            condition_val_norm = (condition_val - condition_mean) / condition_std
-
         else:
+            # no normalization
             condition_mean = torch.zeros(1, condition_ch, *([1] * len(condition_grid)))
             condition_std = torch.ones(1, condition_ch, *([1] * len(condition_grid)))
 
-            assert condition_std > 0, "Field std must be positive."
-            assert (
-                condition_mean.ndim == condition_std.ndim == condition_train.ndim
-            ), "Field mean, std, and train data must have the same number "
-            "of dimensions."
-            assert (
-                condition_mean.shape[1] == condition_std.shape[1] == condition_ch
-            ), "Field mean, std, and train data must have the same number of channels."
+        # assert statements
+        assert all(condition_std > 0), "Field std must be positive."
 
-            # no normalization
-            condition_train_norm = condition_train
-            condition_val_norm = condition_val
+        assert (
+            condition_mean.ndim == condition_std.ndim == condition_train.ndim
+        ), "Field mean, std, and train data must have the same number "
+        "of dimensions."
+        assert (
+            condition_mean.shape[1] == condition_std.shape[1] == condition_ch
+        ), "Field mean, std, and train data must have the same number of channels."
+
+        # normalize
+        condition_train_norm = (condition_train - condition_mean) / condition_std
+        condition_val_norm = (condition_val - condition_mean) / condition_std
 
         return condition_train_norm, condition_val_norm, condition_mean, condition_std
 
