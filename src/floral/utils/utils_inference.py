@@ -63,8 +63,8 @@ class Inference:
         self.n_gen = generate_config.get("n_gen", 10)
 
         # pre-extract normalization factors
-        self.field_mean = self.statistics["field"]["mean"]
-        self.field_std = self.statistics["field"]["std"]
+        self.field_mean = self.statistics["field"]["mean"].to(self.device)
+        self.field_std = self.statistics["field"]["std"].to(self.device)
 
         # prepare inference input dict
         self.inference_input_dict = self._get_inference_input_dict(val_set, domains)
@@ -165,7 +165,9 @@ class Inference:
         }
 
         # use mixed precision if available for faster inference
-        use_amp = torch.cuda.is_available() and hasattr(torch.cuda.amp, "autocast")
+        # use_amp = torch.cuda.is_available() and hasattr(torch.cuda.amp, "autocast")
+        # TODO: Make FNO 16-bit friendly
+        use_amp = False  # FNO does not work out of the box with 16-bit
         printer(f"Using automatic mixed-precision: {use_amp}")
         autocast_context = autocast("cuda") if use_amp else nullcontext()
 

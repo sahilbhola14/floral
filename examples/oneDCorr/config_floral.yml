@@ -1,5 +1,7 @@
-# Configutations for 1-D Correlation
+# examples/oneDCorr/config_floral.yml
+# configutations for 1-D toy problem
 
+# general configuration
 job_name: "oneDCorr_50_samples" # Unique identifier for each run
 floral: True # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
@@ -7,6 +9,7 @@ checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "oneDCorr" # Logger folder
 
+# configuration for data
 data:
   n_samples: 50 # total samples for training + validation (for tractability)
   low_fidelity:
@@ -21,6 +24,7 @@ data:
       dims: 1
       ch_in: 1
 
+# configuration for dataloader
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   train_ratio: 0.7 # percentage of {n_samples} to train
@@ -38,12 +42,14 @@ dataloader:
       mean: [2.0] # For example, [0.5] if want specified (per channel)
       std: [3.5] # For example, [0.5] if want specified (per channel)
 
+# configuration for training
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
-  accelerator: 'cpu'
-  devices: 1
-  precision: 'bf16-mixed'
+  accelerator: 'gpu'
+  devices: 4
+  precision: '32-true'
 
+# configuration for flow-matching
 flow:
   sig_min: 1.0e-5 # gaussian std for the data
   field_sub_sample_factor: [2, 4, 5] # field_resolution / field_sub_sample_factor
@@ -57,6 +63,7 @@ flow:
       ch_hidden: 32 # hidden channels in the condition operator
       n_modes: 32 # number of modes ot keep in the condition operator
 
+# configuration for PDE solution generation
 generate:
   minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
   n_gen: 5 # number of samples generated (for UQ purposes)
@@ -64,7 +71,3 @@ generate:
   method: "dopri5" # method for ODE solver
   atol: 1.0e-4 # absolute tolerance for ODE solver
   rtol: 1.0e-4 # relative tolerance for ODE solver
-
-plot:
-  visualize: False
-  save: True

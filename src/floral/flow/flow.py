@@ -36,7 +36,9 @@ class Flow(nn.Module):
         # hyper parameters
         self.hp_config = dict(hp_config)
         # get the domain info for the field and condition
-        self.field_domain, self.condition_domain = self._get_domain_info(domains)
+        field_domain, condition_domain = self._get_domain_info(domains)
+        self.register_buffer("field_domain", field_domain)
+        self.register_buffer("condition_domain", condition_domain)
         # flow config
         self.flow_config = self.config.flow
         self.flow_config["time_embed_freq"] = self.hp_config.get("time_embed_freq", 4)
@@ -132,12 +134,14 @@ class Flow(nn.Module):
 
     def training_step(self, batch, batch_idx):
         """training step"""
+        assert len(batch) == 3, "Expected (field, condition, field_low_fidelity)"
         field, condition, _ = batch  # (target samples, condition, low fidelity)
         loss = self._comp_loss(field=field, condition=condition)
         return loss
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
+        assert len(batch) == 3, "Expected (field, condition, field_low_fidelity)"
         field, condition, _ = batch  # (target samples, condition, low fidelity)
         loss = self._comp_loss(field=field, condition=condition)
         return loss
@@ -194,6 +198,7 @@ class Flow(nn.Module):
         ), "invalid target and model vector field shape"
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
+
         return loss
 
     def _comp_conditional_flow(
@@ -536,7 +541,7 @@ class Flow(nn.Module):
         condition_eval = condition.reshape(
             B * n_gen, *condition_shape
         )  # (batch_size, condition_ch_in, *condition_grid)
-        t_eval = torch.ones(B * n_gen, 1) * t  # (batch_size, 1)
+        t_eval = torch.ones(B * n_gen, 1, device=t.device) * t  # (batch_size, 1)
 
         with torch.no_grad():
             vt = self._evaluate_vector_field(

@@ -32,9 +32,16 @@ def get_trainer(
     logger = get_logger(logger_name)
 
     # extract train config
-    max_epochs = train_config.get("max_epochs", 100)
-    devices = train_config.get("devices", 1)
     accelerator = train_config.get("accelerator", "cpu")
+    devices = train_config.get("devices", 1)
+    precision = train_config.get("precision", "bf16-mixed")
+    max_epochs = train_config.get("max_epochs", 100)
+
+    # assert
+    assert precision == "32-true", (
+        "Model currently uses FNO and does not account for cuFFT pow(2)"
+        "requirement for half precision"
+    )
 
     # early stopping
     early_stop_callback = EarlyStopping(
@@ -47,15 +54,13 @@ def get_trainer(
         mode="min",  # "min" for loss, "max" for accuracy
     )
 
-    assert devices == 1, "Currently, multi-device FNO is not supported."
-
     # trainer
     trainer = L.Trainer(
         logger=logger,
         max_epochs=max_epochs,
-        devices=devices,
+        devices=devices,  # currently FNO supports single device
         accelerator=accelerator,
-        strategy="single_device",
+        precision=precision,
         callbacks=[checkpointer, early_stop_callback],
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
@@ -65,9 +70,10 @@ def get_trainer(
         printer("==" * 50)
         printer("**" * 10 + "Trainer config" + "**" * 10)
         printer(f"Logger file: {logger_name}")
-        printer(f"Max epochs: {max_epochs}")
-        printer(f"Number of devices: {devices}")
         printer(f"Running on : {accelerator}")
+        printer(f"Number of devices: {devices}")
+        printer(f"Precision: {precision}")
+        printer(f"Max epochs: {max_epochs}")
         printer("==" * 50)
 
     return trainer

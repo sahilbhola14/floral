@@ -13,7 +13,6 @@ from floral.utils import (
     OpDataModule,
     get_checkpointer,
     get_trainer,
-    init_weights,
     check_path,
 )
 from floral.utils import Inference
@@ -207,7 +206,6 @@ def train_model(hp_config: dict = None):
     # if hasattr(model, "compile") and torch.cuda.is_available():
     #     printer("Compiling the model...")
     #     model = torch.compile(model, mode="default")
-    model.apply(init_weights)
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:
         check_path(config.checkpoint_load_path)
@@ -234,7 +232,9 @@ def infer_model(best_model_path, data_module):
     """Infererence task"""
     printer("Inference...")
     # load the best model
-    best_model = ResFlow.load_from_checkpoint(best_model_path)
+    best_model = ResFlow.load_from_checkpoint(
+        best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
+    )
     # set model to eval mode
     best_model.eval()
     # enable inference model optimizations
@@ -243,7 +243,7 @@ def infer_model(best_model_path, data_module):
         printer("Compiling the model...")
         best_model = torch.compile(best_model, mode="max-autotune")
 
-    # infer the mode
+    # create inference object
     infer = Inference(
         model=best_model,
         val_set=data_module.val_set,
@@ -253,7 +253,7 @@ def infer_model(best_model_path, data_module):
         floral=config.floral,
         generate_config=config.generate,
     )
-
+    # infer the model
     infer()
 
 
