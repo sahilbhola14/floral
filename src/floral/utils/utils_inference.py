@@ -1,21 +1,39 @@
+import math
 import torch
 import lightning as L
 import gpytorch
-import warnings
-from floral.utils import printer
+from .utils_IO import printer, check_tensor_blowup
 from tqdm import tqdm
 from gpytorch.models import ExactGP
 from contextlib import nullcontext
 from torch.amp import autocast
 
 
-class OptimizedInference:
-    """Inference class for handling inference operations."""
+class Inference:
+    """Inference class for handling inference operations.
+    Attributes:
+        model (L.LightningModule):
+            Best model for inference tasks
+        val_set (torch.utils.data.TensorDataset):
+            Tensor dataset (field, condition, LF_field)
+        domains (dict):
+            Domain information for the field and the condition.
+            Contains the full domain for inference
+        statistics (dict):
+            statistics for the training data, used to denormalize the prediction
+        job_name (str):
+            job name identifier for saving
+        floral (bool):
+            True means model predicts the residual correction
+        generate_config (dict):
+            Configurations for the generative process
+    """
 
     def __init__(
         self,
         model: L.LightningModule,
-        test_config: dict,
+        val_set: torch.utils.data.TensorDataset,
+        domains: dict,
         statistics: dict,
         job_name: str,
         floral: bool,
@@ -25,54 +43,124 @@ class OptimizedInference:
         self.model = model
         # Set the model to evaluation mode
         self.model.eval()
+        # Device
+        self.device = self.model.device
         # Enable inference optimizations
         torch.backends.cudnn.benchmark = True  # Optimize for fixed input sizes
 
         # Store the test configuration, statistics, job name, and number of samples
-        self.test_config = test_config  # Configuration for the inference task
-        self.statistics = statistics  # Statistics of the data
-        self.job_name = job_name  # Name of the inference job
-        self.floral = floral  # Flag for multi-flow processing
-        self.generate_config = generate_config  # Configuration for generation settings
+        self.statistics = statistics  # statistics of the data
+        self.job_name = job_name  # name of the inference job
+        self.floral = floral  # flag for multi-flow processing
+        self.generate_config = generate_config  # configuration for generation settings
 
-        # Extract generate config
-        self.minibatch_size = generate_config.get("minibatch_size", None)
-        self.nT = generate_config.get("nT", None)  # Number of time steps
-        self.n_gen = generate_config.get(
-            "n_gen", None
-        )  # Number of generations (for UQ)
+        # extract generate config
+        # number of conditions to be evaluated at once
+        self.minibatch_size = generate_config.get("minibatch_size", 10)
+        # number of time steps
+        self.nT = generate_config.get("nT", 10)  # Number of time steps
+        # number of samples for the field per condition (for forward UQ)
+        self.n_gen = generate_config.get("n_gen", 10)
 
-        # Pre-comptue normalization facotrs
-        self.field_mean = self.statistics["field"]["mean"].item()
-        self.field_std = self.statistics["field"]["std"].item()
+        # pre-extract normalization factors
+        self.field_mean = self.statistics["field"]["mean"]
+        self.field_std = self.statistics["field"]["std"]
 
-        # Pre-move the domain to device
-        self.d_eval = self.test_config["domain"].to(self.model.device)
+        # prepare inference input dict
+        self.inference_input_dict = self._get_inference_input_dict(val_set, domains)
+
+    def _get_inference_input_dict(
+        self, val_set: torch.utils.data.TensorDataset, domains: dict
+    ):
+        """prepare the input(s) for the inference"""
+        # get domain info
+        field_domain, condition_domain = self._get_domain_info(domains)
+
+        assert len(val_set.tensors) == 3, "expected (field, condition, LF_field)"
+        field, condition, LF_field = val_set.tensors
+        # check shapes
+        field_B, field_ch_in, *field_grid = field.shape
+        condition_B, condition_ch_in, *condition_grid = condition.shape
+        LF_field_B, LF_field_ch_in, *LF_field_grid = LF_field.shape
+        assert field_B == condition_B == LF_field_B, "incorrect number of samples"
+        assert math.prod(field_grid) == len(
+            field_domain
+        ), "inconsistent field domain and field"
+        assert math.prod(condition_grid) == len(
+            condition_domain
+        ), "inconsistent condition domain and condition"
+        assert math.prod(LF_field_grid) == len(
+            field_domain
+        ), "inconsistent field domain and field"
+        assert field_domain.shape[1] == len(field_grid), "invalid domain"
+        assert condition_domain.shape[1] == len(condition_grid), "invalid domain"
+
+        # reshape domain
+        field_domain = field_domain.T.view(-1, *field_grid).unsqueeze(0)
+        condition_domain = condition_domain.T.view(-1, *condition_grid).unsqueeze(0)
+
+        # build dict
+        inference_input_dict = {
+            "field": field,
+            "field_domain": field_domain,
+            "condition": condition,
+            "condition_domain": condition_domain,
+            "LF_field": LF_field,
+            "field_ch": field_ch_in,
+            "field_grid": field_grid,
+            "n_samples": len(field),
+        }
+
+        return inference_input_dict
+
+    def _get_domain_info(self, domains: dict):
+        """extract the domain dict
+        Args:
+            domains (dict):
+                Dictionary with field and condition domain info.
+        Returns:
+            field_domain (torch.Tensor):
+                Flattened field domain. For example if the field if of shape
+                (B, num_channels, *dim), then field_domain is of shape
+                (np.prod(dim), len(dim))
+            condition_domain (torch.Tensor):
+                Flattened condition domain. For example if the condition if of shape
+                (B, num_channels, *dim), then condition_domain is of shape
+                (np.prod(dim), len(dim))
+        """
+        assert (
+            "field" in domains.keys() and "condition" in domains.keys()
+        ), "field/condition domain key unavailable. Check domains dict."
+        field_domain = domains.get("field", None)
+        condition_domain = domains.get("condition", None)
+        assert isinstance(
+            field_domain, torch.Tensor
+        ), "Expected torch.Tensor, got {type(field_domain).__name__}"
+        assert isinstance(
+            condition_domain, torch.Tensor
+        ), "Expected torch.Tensor, got {type(condition_domain).__name__}"
+
+        return field_domain, condition_domain
 
     @torch.no_grad()
     def __call__(self):
         """Perform the inference task"""
-        n_samples = self.test_config.get("n_samples")
+        # pre-allocate tensors
+        n_samples = self.inference_input_dict.get("n_samples")
+        field_ch = self.inference_input_dict.get("field_ch")
+        field_grid = self.inference_input_dict.get("field_grid")
 
-        # Pre-allocate tensors
-        device = self.model.device
-        field = {
-            "LF_field": torch.empty(
-                n_samples, *self.test_config["LF_field"][0].shape, device="cpu"
+        result_dict = {
+            "field": self.inference_input_dict.get("field"),
+            "field_domain": self.inference_input_dict.get("field_domain"),
+            "condition": self.inference_input_dict.get("condition"),
+            "condition_domain": self.inference_input_dict.get("condition_domain"),
+            "LF_field": self.inference_input_dict.get("LF_field"),
+            "field_prediction": torch.empty(
+                n_samples, self.n_gen, field_ch, *field_grid, device="cpu"
             ),
-            "HF_field": torch.empty(
-                n_samples, *self.test_config["HF_field"][0].shape, device="cpu"
-            ),
-            "Prediction": torch.empty(
-                n_samples, self.n_gen, len(self.d_eval), device="cpu"
-            ),
-        }
-        residual = {
-            "True": torch.empty(
-                n_samples, *self.test_config["LF_field"][0].shape, device="cpu"
-            ),
-            "Prediction": torch.empty(
-                n_samples, self.n_gen, len(self.d_eval), device="cpu"
+            "residual_prediction": torch.empty(
+                n_samples, self.n_gen, field_ch, *field_grid, device="cpu"
             ),
         }
 
@@ -81,254 +169,115 @@ class OptimizedInference:
         printer(f"Using automatic mixed-precision: {use_amp}")
         autocast_context = autocast("cuda") if use_amp else nullcontext()
 
+        n_batches = (n_samples // self.minibatch_size) + 1
+
         pbar = tqdm(
-            range(n_samples),
+            range(n_batches),
             desc="Inference",
             ncols=150,
             leave=True,
         )
 
         for ii in pbar:
+            # field (high-precision)
+            field = result_dict.get("field")[
+                ii * self.minibatch_size : (ii + 1) * self.minibatch_size
+            ]
+            field = field.unsqueeze(1).to(self.device)  # (B, 1, field_ch, *field_grid)
+            # low-precision result
+            LF_field = result_dict.get("LF_field")[
+                ii * self.minibatch_size : (ii + 1) * self.minibatch_size
+            ]
+            LF_field = LF_field.unsqueeze(1).to(
+                self.device
+            )  # (B, 1, field_ch, *field_grid)
             with autocast_context:
-                # get the condition
-                c_eval = (
-                    self.test_config["condition"][ii]
-                    .unsqueeze(0)
-                    .to(device, non_blocking=True)
-                )
-
-                # true field
-                LF_field = self.test_config["LF_field"][ii]
-                HF_field = self.test_config["HF_field"][ii]
-                true_residual = HF_field - LF_field
+                # get the condition mini-batch
+                c_eval = result_dict.get("condition")[
+                    ii * self.minibatch_size : (ii + 1) * self.minibatch_size
+                ]
+                c_eval = c_eval.to(self.device)
 
                 # perform the prediction
                 if self.floral:
-                    pred_residual = self._get_prediction(c_eval)
+                    pred_residual = self._get_prediction(c_eval=c_eval).view(
+                        -1, field_ch, *field_grid
+                    )
                     # Denormalize in-place
                     pred_residual = pred_residual * self.field_std + self.field_mean
+                    pred_residual = pred_residual.view(
+                        -1, self.n_gen, field_ch, *field_grid
+                    )
                     # Get the high fidelity field prediction
-                    pred_field = pred_residual + LF_field.unsqueeze(0).to(device)
+                    pred_field = pred_residual + LF_field
                     pred_field = pred_field.to(
                         "cpu", non_blocking=True
                     )  # Move back to CPU
                     pred_residual = pred_residual.to("cpu", non_blocking=True)
                 else:
-                    pred_field = self._get_prediction(c_eval)
+                    pred_field = self._get_prediction(c_eval=c_eval).view(
+                        -1, field_ch, *field_grid
+                    )
                     # Denormalize in-place
                     pred_field = pred_field * self.field_std + self.field_mean
+                    pred_field = pred_field.view(-1, self.n_gen, field_ch, *field_grid)
                     pred_field_cpu = pred_field.to("cpu", non_blocking=True)
                     # Compute the residual
-                    pred_residual = (pred_field - LF_field.unsqueeze(0).to(device)).to(
-                        "cpu", non_blocking=True
-                    )
+                    pred_residual = (pred_field - LF_field).to("cpu", non_blocking=True)
                     pred_field = pred_field_cpu
 
-            # Store results
-            field["LF_field"][ii] = LF_field
-            field["HF_field"][ii] = HF_field
-            field["Prediction"][ii] = (
-                pred_field.squeeze(0) if pred_field.dim() > 2 else pred_field
-            )
-            residual["True"][ii] = true_residual
-            residual["Prediction"][ii] = (
-                pred_residual.squeeze(0) if pred_residual.dim() > 2 else pred_residual
-            )
+            # store the fieeld
+            result_dict["field_prediction"][
+                ii * self.minibatch_size : (ii + 1) * self.minibatch_size
+            ] = pred_field
+            # store the residual
+            result_dict["residual_prediction"][
+                ii * self.minibatch_size : (ii + 1) * self.minibatch_size
+            ] = pred_residual
 
         # Ensure all async transfers are complete
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
         # check for nans
-        if torch.isnan(field["Prediction"]).any():
-            warnings.warn("Nans found in prediction.", RuntimeWarning)
-
-        # Save the results
-        results = {
-            "field": field,
-            "residual": residual,
-            "statistics": self.statistics,
-            "domain": self.test_config["domain"],
-            "job_name": self.job_name,
-            "test_config": self.test_config,
-        }
+        check_tensor_blowup(result_dict["field_prediction"], "predicted field")
+        check_tensor_blowup(result_dict["residual_prediction"], "predicted residual")
 
         # Save the results to a file
         save_path = f"{self.job_name}_results{'_floral' if self.floral else ''}.pt"
         printer(f"Saving results to {save_path}")
-        torch.save(results, save_path)
+        torch.save(result_dict, save_path)
+
         pbar.close()
 
     def _get_prediction(self, c_eval: torch.Tensor):
-        """Get the model prediction for a given conditon over the entire domain"""
-        total_size = len(self.d_eval)
-        pred = torch.empty(
-            self.n_gen, total_size, device=c_eval.device, dtype=torch.float32
-        )  # adjust dtype as needed
-
-        start_idx = 0
-
-        for ii in range(0, total_size, self.minibatch_size):
-            d_batch = self.d_eval[ii : ii + self.minibatch_size]
-
-            batch_pred = (
-                self.model.interpolate(
-                    c_eval=c_eval,
-                    d_eval=d_batch,
-                    n_gen=self.n_gen,
-                    nT=self.nT,
-                    method="dopri5",
-                    atol=1e-4,
-                    rtol=1e-4,
-                    max_n_gen_per_batch=20,
-                )
-                .squeeze(-1)
-                .T.detach()
-            )  # shape: (n_gen, batch_size)
-
-            batch_size = batch_pred.shape[1]
-            pred[
-                :, start_idx : start_idx + batch_size
-            ] = batch_pred  # copy batch into pre-allocated tensor
-            start_idx += batch_size
-
-        assert pred.shape == (self.n_gen, total_size)
-
-        return pred
-
-
-class Inference:
-    """Inference class for handling inference operations."""
-
-    def __init__(
-        self,
-        model: L.LightningModule,
-        test_config: dict,
-        statistics: dict,
-        job_name: str,
-        floral: bool,
-        generate_config: dict,
-    ):
-        # Initialize the model with the best_model_path
-        self.model = model
-        # Set the model to evaluation mode
-        self.model.eval()
-        # Store the test configuration, statistics, job name, and number of samples
-        self.test_config = test_config  # Configuration for the inference task
-        self.statistics = statistics  # Statistics of the data
-        self.job_name = job_name  # Name of the inference job
-        self.floral = floral  # Flag for multi-flow processing
-        self.generate_config = generate_config  # Configuration for generation settings
-        # Extract generate config
-        self.minibatch_size = generate_config.get("minibatch_size", None)
-        self.nT = generate_config.get("nT", None)  # Number of time steps
-        self.n_gen = generate_config.get(
-            "n_gen", None
-        )  # Number of generations (for UQ)
-
-    def __call__(self):
-        """Perform the inference task"""
-        n_samples = self.test_config.get("n_samples")
-        field = {"LF_field": [], "HF_field": [], "Prediction": []}
-        residual = {"True": [], "Prediction": []}
-        pbar = tqdm(
-            range(n_samples),
-            desc="Inference",
-            ncols=150,
-            leave=True,
-        )
-        for ii in pbar:
-            # Get the condition
-            c_eval = (
-                self.test_config["condition"][ii].unsqueeze(0).to(self.model.device)
-            )
-            # Get the domain
-            d_eval = self.test_config["domain"].to(self.model.device)
-            # True fields
-            LF_field = self.test_config["LF_field"][ii]
-            HF_field = self.test_config["HF_field"][ii]
-            true_residual = (HF_field - LF_field).unsqueeze(0)
-            # Perform the prediction
-            if self.floral:
-                # compute the prediction for multi-flow
-                pred_residual = self._get_prediction(c_eval, d_eval)
-                # denormalize the prediction
-                pred_residual = (
-                    pred_residual * self.statistics["field"]["std"].item()
-                    + self.statistics["field"]["mean"].item()
-                )
-                # get the high fidelity field prediction
-                pred_field = pred_residual + LF_field.unsqueeze(0)
-            else:
-                # compute the prediction for single-flow
-                pred_field = self._get_prediction(c_eval, d_eval)
-                # denormalize the prediction
-                pred_field = (
-                    pred_field * self.statistics["field"]["std"].item()
-                    + self.statistics["field"]["mean"].item()
-                )
-                # compute the residual
-                pred_residual = pred_field - LF_field.unsqueeze(0)
-
-            # updated the results to the dictionary
-            field["LF_field"].append(LF_field.unsqueeze(0))
-            field["HF_field"].append(HF_field.unsqueeze(0))
-            field["Prediction"].append(pred_field)
-            residual["True"].append(true_residual)
-            residual["Prediction"].append(pred_residual)
-
-        # Convert lists to tensors
-        field["LF_field"] = torch.vstack(field["LF_field"])
-        field["HF_field"] = torch.vstack(field["HF_field"])
-        field["Prediction"] = torch.stack(field["Prediction"])
-        residual["True"] = torch.vstack(residual["True"])
-        residual["Prediction"] = torch.stack(residual["Prediction"])
-
-        # Save the results
-        results = {
-            "field": field,
-            "residual": residual,
-            "statistics": self.statistics,
-            "domain": self.test_config["domain"],
-            "job_name": self.job_name,
-            "test_config": self.test_config,
-        }
-
-        # Save the results to a file
-        path = self.job_name + "_results"
-        save_path = path + "_floral" if self.floral else path
-        save_path += ".pt"
-        printer("Saving results to {}".format(save_path))
-        torch.save(
-            results,
-            save_path,
+        """Get the model prediction for a given conditon over the entire domain
+        Args:
+            c_eval (torch.Tensor): Input conditons to generate the solution
+        Returns:
+            prediction (torch.Tensor): Model prediction
+        """
+        # domains
+        field_domain = self.inference_input_dict.get("field_domain").to(self.device)
+        condition_domain = self.inference_input_dict.get("condition_domain").to(
+            self.device
         )
 
-        pbar.close()
+        # get the prediction for c_eval conditions
+        prediction = self.model.flow.interpolate(
+            condition=c_eval,
+            condition_domain=condition_domain,
+            field_domain=field_domain,
+            field_ch=self.inference_input_dict.get("field_ch"),
+            field_grid=self.inference_input_dict.get("field_grid"),
+            n_gen=self.n_gen,
+            nT=self.nT,
+            method=self.generate_config.get("method", "dopri5"),
+            atol=self.generate_config.get("atol", 1e-4),
+            rtol=self.generate_config.get("rtol", 1e-4),
+        )
 
-    def _get_prediction(self, c_eval: torch.Tensor, d_eval: torch.Tensor):
-        """Get the model prediction"""
-        pred = []
-        for ii in range(0, len(d_eval), self.minibatch_size):
-            d_batch = d_eval[ii : ii + self.minibatch_size]
-            batch_pred = (
-                self.model.interpolate(
-                    c_eval=c_eval,
-                    d_eval=d_batch,
-                    n_gen=self.n_gen,
-                    nT=self.nT,
-                )
-                .squeeze(-1)
-                .T.detach()
-                .to("cpu")
-            )
-            pred.append(batch_pred)
-
-        pred = torch.hstack(pred)
-
-        assert pred.shape == (self.n_gen, len(d_eval))
-
-        return pred
+        return prediction
 
 
 class InferenceGP:

@@ -75,6 +75,24 @@ def save_checkpoint(state, path: str) -> None:
     torch.save(state, path)
 
 
+def check_tensor_blowup(t: torch.Tensor, name: str = "tensor"):
+    """
+    Check if a tensor has NaN or Inf values and raise an error if so.
+
+    Args:
+        t (torch.Tensor): Tensor to check.
+        name (str): Optional name to include in the error message.
+    """
+    if not torch.isfinite(t).all():
+        n_nan = torch.isnan(t).sum().item()
+        n_inf = torch.isinf(t).sum().item()
+        raise ValueError(
+            f"{name} has blown up! "
+            f"NaNs: {n_nan}, Infs: {n_inf}, "
+            f"min={t.min().item()}, max={t.max().item()}"
+        )
+
+
 class Timer:
     def __init__(self):
         self.elapsed = 0.0

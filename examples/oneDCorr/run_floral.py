@@ -16,10 +16,8 @@ from floral.utils import (
     init_weights,
     check_path,
 )
-from floral.utils import OptimizedInference as Inference
+from floral.utils import Inference
 from floral.flow import Flow
-from floral.archs import get_operator_modules
-from floral.GP import GPPrior
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
@@ -63,7 +61,7 @@ def build_data_module(
     # data loader config
     dataloader_config = dict(config.dataloader.copy())
     # set batch size from hyperparameter config
-    dataloader_config["batch_size"] = hp_config["batch_size"]
+    dataloader_config["batch_size"] = hp_config.get("batch_size", 64)
 
     data_module = OpDataModule(
         low_fidelity_path=config.data.low_fidelity.path,
@@ -108,7 +106,7 @@ def build_trainer(
     logger_name = config.logger_name.lower().strip()
     # train config
     train_config = dict(config.train.copy())
-    train_config["max_epochs"] = hp_config["max_epochs"]
+    train_config["max_epochs"] = hp_config.get("max_epochs", 100)
 
     trainer = get_trainer(
         checkpointer=checkpointer,
@@ -120,24 +118,28 @@ def build_trainer(
     return trainer
 
 
-class ResFlow(Flow, L.LightningModule):
+class ResFlow(L.LightningModule):
     """Class for the residual flow model."""
 
     def __init__(
         self,
         config: dict,
-        hp_config: wandb.sdk.wandb_config.Config | dict = None,
-        domains: dict = None,
+        hp_config: wandb.sdk.wandb_config.Config | dict,
+        domains: dict,
     ):
-        # create flow config
-        flow_config = config.flow.copy()
-        flow_config["time_embed_freq"] = hp_config.get("time_embed_freq", 4)
+        super(ResFlow, self).__init__()
 
-        # initialize the Flow and LightningModule
-        Flow.__init__(
-            self, hp_config=hp_config, domains=domains, flow_config=flow_config
-        )
-        L.LightningModule.__init__(self)
+        # normalize domains
+        field_domain = domains.get("field", None)
+        condition_domain = domains.get("condition", None)
+        if field_domain is not None and not torch.is_tensor(field_domain):
+            field_domain = torch.tensor(field_domain)
+        if condition_domain is not None and not torch.is_tensor(condition_domain):
+            condition_domain = torch.tensor(condition_domain)
+        domains = {"field": field_domain, "condition": condition_domain}
+
+        # initialize the flow
+        self.flow = Flow(config=config, hp_config=hp_config, domains=domains)
 
         # convert to dict for saving
         hp_config_dict = dict(hp_config)
@@ -147,83 +149,32 @@ class ResFlow(Flow, L.LightningModule):
             {
                 "config": config,
                 "hp_config": hp_config_dict,
+                "domains": {
+                    "field": field_domain.tolist(),
+                    "condition": condition_domain.tolist(),
+                },
             }
         )
 
-        self.config = config
+    def configure_optimizers(self, verbose=False):
+        return self.flow.configure_optimizers(verbose=verbose)
 
-        # operator params
-        self.operator_params = self._get_operator_params()
+    def training_step(self, batch, batch_idx):
+        """training step"""
+        loss = self.flow.training_step(batch, batch_idx)
+        self.log("train_loss", loss)
+        return loss
 
-        # operator modules
-        operator_modules = get_operator_modules(
-            operator_params=self.operator_params, time_embed_dim=self.time_embed_dim
-        )
+    def validation_step(self, batch, batch_idx):
+        """validation step"""
+        loss = self.flow.validation_step(batch, batch_idx)
+        self.log("val_loss", loss, prog_bar=True, sync_dist=True)
+        return loss
 
-        # extract operator modules
-        self.field_operator = operator_modules.get("field_operator")
-        self.condition_operator = operator_modules.get("condition_operator")
-
-        # prior
-        self.prior = GPPrior()
-
-    def _get_operator_params(self):
-        """extract the operator params"""
-        dims = {
-            "field": self.config.data.shape.field.get("dims", 1),
-            "condition": self.config.data.shape.condition.get("dims", 1),
-        }
-        ch_in = {
-            "field": self.config.data.shape.field.get("ch_in", 1),
-            "condition": self.config.data.shape.condition.get("ch_in", 1),
-        }
-        ch_out = {
-            "field": self.config.data.shape.field.get("ch_in", 1),  # same as ch_in
-            "condition": self.config.flow.operator.condition.get("ch_out", 1),
-        }
-        ch_hidden = {
-            "field": self.config.flow.operator.field.get("ch_hidden", 32),
-            "condition": self.config.flow.operator.condition.get("ch_hidden", 32),
-        }
-        n_modes = {
-            "field": self.config.flow.operator.field.get("field", 32),
-            "condition": self.config.flow.operator.condition.get("condition", 32),
-        }
-
-        operator_params = {
-            "dims": dims,
-            "ch_in": ch_in,
-            "ch_out": ch_out,
-            "ch_hidden": ch_hidden,
-            "n_modes": n_modes,
-        }
-
-        return operator_params
-
-    def _sample_base_measure(
-        self,
-        field_domain: torch.Tensor,
-        field_grid: tuple,
-        field_ch: int,
-        n_samples: int,
-    ):
-        # flatten domain
-        domain_flat = field_domain.squeeze(0).flatten(start_dim=1).T
-        # sample from prior
-        prior_samples = self.prior.sample(
-            domain=domain_flat,
-            grid=field_grid,
-            n_channels=field_ch,
-            n_samples=n_samples,
-        )
-        # check shape
-        B, ch, *grid = prior_samples.shape
-        dim_flag = all([ii == jj for ii, jj in zip(grid, field_grid)])
-        assert B == n_samples, f"Batch mismatch: {B} vs {n_samples}"
-        assert ch == field_ch, f"Channel mismatch: {ch} vs {field_ch}"
-        assert dim_flag, f"Dimension mismatch: {grid} vs {field_grid}"
-
-        return prior_samples
+    def load_state_dict(self, state_dict, strict=True):
+        # drop PyTorch-internal metadata if present
+        state_dict.pop("_metadata", None)
+        return super().load_state_dict(state_dict, strict)
 
 
 def train_model(hp_config: dict = None):
@@ -281,12 +232,9 @@ def train_model(hp_config: dict = None):
 
 def infer_model(best_model_path, data_module):
     """Infererence task"""
-    raise NotImplementedError("Inference for oneDCorr is not implemented yet.")
     printer("Inference...")
     # load the best model
-    best_model = ResFlow.load_from_checkpoint(
-        best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
-    )
+    best_model = ResFlow.load_from_checkpoint(best_model_path)
     # set model to eval mode
     best_model.eval()
     # enable inference model optimizations
@@ -298,7 +246,8 @@ def infer_model(best_model_path, data_module):
     # infer the mode
     infer = Inference(
         model=best_model,
-        test_config=data_module.test_config,
+        val_set=data_module.val_set,
+        domains=data_module.domains,
         statistics=data_module.statistics,
         job_name=config.job_name,
         floral=config.floral,
@@ -322,7 +271,7 @@ if __name__ == "__main__":
     else:
         # load the hyperparameter config
         with open("config_hyperparameters.yml", "r") as file:
-            hp_config = yaml.safe_load(file)["FLOREN"]
+            hp_config = yaml.safe_load(file)
         # get the best model path (training or evaluation)
         if config.train.stage == "train":
             best_model_path, data_module = train_model(hp_config)
@@ -342,5 +291,6 @@ if __name__ == "__main__":
             # load the checkpoint
             check_path(config.checkpoint_load_path)
             best_model_path = config.checkpoint_load_path
+
         # infer
         infer_model(best_model_path, data_module)

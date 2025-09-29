@@ -21,7 +21,8 @@ def get_operator_modules(
         required_params = ["dims", "ch_in", "ch_out", "ch_hidden", "n_modes"]
         required_keys = ["field", "condition"]
         missing_params = [k for k in required_params if k not in operator_params]
-        print(f"missing params: {', '.join(missing_params)}")
+        if len(missing_params) > 0:
+            print(f"missing params: {', '.join(missing_params)}")
         for param in operator_params:
             assert all(
                 [k in operator_params.get(param).keys() for k in required_keys]
