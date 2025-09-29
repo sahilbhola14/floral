@@ -140,7 +140,7 @@ class ConditionOperator(torch.nn.Module):
         _, condition_domain_ch_in, *condition_domain_grid = condition_domain.shape
         assert (
             condition_domain_ch_in == self.condition_dims
-        ), f"incorrect domain channels. expected {self.condition_domain},"
+        ), f"incorrect domain channels. expected {self.condition_domain}, "
         f"got {condition_domain_ch_in}"
         assert all(
             [ii == jj for ii, jj in zip(condition_grid, condition_domain_grid)]
@@ -269,7 +269,7 @@ class FieldOperator(torch.nn.Module):
         _, field_domain_ch_in, *field_domain_grid = field_domain.shape
         assert (
             field_domain_ch_in == self.field_dims
-        ), f"incorrect domain channels. expected {self.field_domain},"
+        ), f"incorrect domain channels. expected {self.field_domain}, "
         f"got {field_domain_ch_in}"
         assert all(
             [ii == jj for ii, jj in zip(field_grid, field_domain_grid)]
@@ -338,7 +338,7 @@ class FieldOperator(torch.nn.Module):
             inp.shape[1]
             == self.field_ch_in + self.time_embed_dim + self.condition_ch_out
         ), "incorrect channels, expected"
-        f"{self.field_ch_in + self.time_embed_dim + self.condition_ch_out},"
+        f"{self.field_ch_in + self.time_embed_dim + self.condition_ch_out}, "
         f"got {inp.shape[1]}"
         # pass through operator
         output = self.model(inp)
