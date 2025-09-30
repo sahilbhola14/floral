@@ -24,7 +24,7 @@ parser.add_argument(
     "-mh",
     "--m_high",
     type=int,
-    default=100,
+    default=128,
     help="Number of discretization points for high fidelity",
 )
 parser.add_argument(
@@ -111,18 +111,14 @@ def generate():
 
     high_data = {
         "field": hf_solution[: args.n_samples],
-        "field_domain": domain,
         "condition": condition[: args.n_samples],
-        "condition_domain": domain,  # domain for the input function
-        "resolution": args.m_high,
+        "domain": domain,
     }
 
     low_data = {
         "field": lf_solution[: args.n_samples],
-        "field_domain": domain,
         "condition": condition[: args.n_samples],
-        "condition_domain": domain,  # domain for the input function
-        "resolution": args.m_high,
+        "domain": domain,  # low fidelity must be interpoalted to the same domain as HF
     }
 
     # plot a snapshot
