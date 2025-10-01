@@ -41,6 +41,18 @@ class GPPrior(ExactGP):
         # set to eval mode
         self.eval()
 
+        # freeze mean
+        for p in self.mean_module.parameters():
+            p.requires_grad = False
+
+        # freeze covariance kernel (outputscale + lengthscale)
+        for p in self.covar_module.parameters():
+            p.requires_grad = False
+
+        #  freeze likelihood (prior sampling does not required likelihood)
+        for p in self.likelihood.parameters():
+            p.requires_grad = False
+
     def _build_mean_module(self, mean=None):
         """build the mean module
         Args:

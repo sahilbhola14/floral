@@ -260,7 +260,7 @@ class Flow(L.LightningModule):
         loss = torch.mean((vt - psi_prime) ** 2)
         return loss
 
-    def check_unused_parameters(self):
+    def _check_unused_parameters(self):
         """Check which parameters or buffers have no gradients after backward."""
         unused = []
         for name, param in self.named_parameters():
@@ -277,8 +277,9 @@ class Flow(L.LightningModule):
         else:
             print("\n[All parameters that require grad received gradients]")
 
-    def on_after_backward(self):
-        self.check_unused_parameters()
+    # def on_after_backward(self):
+    #     """ for debugging of unused parameters """
+    #     self._check_unused_parameters()
 
     def load_state_dict(self, state_dict, strict=True):
         # drop PyTorch-internal metadata if present
