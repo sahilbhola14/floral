@@ -2,60 +2,76 @@
 import lightning as L
 import wandb
 import torch
-from floral.utils import printer, omega_to_dict, make_grid, check_tensor_blowup
+from floral.utils import printer, omega_to_dict, check_tensor_blowup, check_keys
 from floral.archs import get_operator_modules
 from floral.gp import get_gp_prior
 from torchdiffeq import odeint
 
 
 class Flow(L.LightningModule):
+    """Multi-fidelity flow class"""
+
     def __init__(
         self,
         config: dict,
         hp_config: wandb.sdk.wandb_config.Config | dict,
+        domain_dict: dict[str, torch.Tensor],
+        shape_dict: dict[str, int],
     ):
         super(Flow, self).__init__()
+        # convert
         self.config = config if isinstance(config, dict) else omega_to_dict(config)
         self.hp_config = (
             hp_config if isinstance(hp_config, dict) else omega_to_dict(hp_config)
         )
+        assert isinstance(domain_dict, dict)
+        for (k, v) in domain_dict.items():
+            domain_dict[k] = v.tolist() if isinstance(v, torch.Tensor) else v
+        # shape dict
+        self.shape_dict = shape_dict
+
         # save hyperparameters
         self.save_hyperparameters(
             {
                 "config": self.config,
                 "hp_config": self.hp_config,
+                "shape_dict": self.shape_dict,
+                "domain_dict": domain_dict,
             }
         )
+
+        # save domain buffer
+        for k, v in domain_dict.items():
+            # conver value to tensors
+            v_tensor = torch.Tensor(v)
+            self.register_buffer(f"{k}_domain", v_tensor, persistent=True)
+
         # extract flow config
         flow_config = self.config["flow"]
         self.sig_min = flow_config.get("sig_min", 1e-5)
+        # build operator config
+        operator_config = self._get_operator_config(flow_config=flow_config)
         # build the operator modules for the vector field
-        self.vector_field = get_operator_modules(
-            operator_config=flow_config["operator"]
-        )
+        self.vector_field = get_operator_modules(operator_config=operator_config)
         # build the prior (eval mode implicit)
         self.prior = get_gp_prior(prior_config=flow_config["prior"])
 
     def training_step(self, batch, batch_idx):
         """training step"""
-        assert len(batch) == 4, "expected: (target_field, condition, domain, LF_field)"
-        target_field, condition, domain, _ = batch
+        assert len(batch) == 3, "expected: (target_field, condition, LF_field)"
+        target_field, condition, _ = batch
         # compute the loss
-        loss = self._comp_loss(
-            target_field=target_field, condition=condition, domain=domain
-        )
+        loss = self._comp_loss(target_field=target_field, condition=condition)
         # log the training loss
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
-        assert len(batch) == 4, "expected: (target_field, condition, domain, LF_field)"
-        target_field, condition, domain, _ = batch
+        assert len(batch) == 3, "expected: (target_field, condition, LF_field)"
+        target_field, condition, _ = batch
         # compute the loss
-        loss = self._comp_loss(
-            target_field=target_field, condition=condition, domain=domain
-        )
+        loss = self._comp_loss(target_field=target_field, condition=condition)
         # log the validation loss
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
@@ -144,6 +160,20 @@ class Flow(L.LightningModule):
 
         return stepper
 
+    def _get_operator_config(self, flow_config):
+        """get the operator config"""
+        operator_config = flow_config.get("operator")
+        # check required keys in flow config
+        required_keys = ["hidden_channels", "proj_channels", "modes"]
+        check_keys(operator_config, required_keys)
+        # add channel details
+        operator_config["field_channels"] = self.shape_dict["target_field"]["channels"]
+        operator_config["condition_channels"] = self.shape_dict["condition"]["channels"]
+        # add field ndim
+        operator_config["field_ndim"] = self.shape_dict["target_field"]["ndim"]
+
+        return operator_config
+
     def _get_stepper_config(self):
         """build the stepper config
         Returns:
@@ -190,17 +220,24 @@ class Flow(L.LightningModule):
 
         return stepper_config
 
-    def _sample_prior_measure(self, n_samples: int, n_channels: int, dims: int):
+    def _sample_prior_measure(self, batch_size: int):
         """sample prior measure"""
-        # create query points based on the dims
-        query_points = make_grid(dims).to(self.device)
+        # prepare flattened domain
+        domain_eval = (
+            self.target_field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
+        )
+        # field shape
+        field_channels = self.shape_dict["target_field"]["channels"]
+        field_dims = self.shape_dict["target_field"]["dims"]
         # sample prior
         prior_samples = self.prior.sample(
-            x=query_points,
-            dims=dims,
-            n_samples=n_samples,
-            n_channels=n_channels,
+            domain=domain_eval,
+            batch_size=batch_size,
+            field_channels=field_channels,
+            field_dims=field_dims,
         )
+        assert prior_samples.shape == (batch_size, field_channels, *field_dims)
+
         return prior_samples
 
     def _sample_conditional_flow(
@@ -211,16 +248,21 @@ class Flow(L.LightningModule):
             prior.shape == target_field.shape
         ), "prior sample shape not same as field shape"
         # extract shape
-        batch_size, field_channels, *field_dims = target_field.shape
+        batch_size = target_field.shape[0]
+        field_ndim = self.shape_dict["target_field"]["ndim"]
         # reshape t
-        t_expand = t.view(batch_size, 1, *([1] * len(field_dims)))
-        # sample noise (fresh draw from priro measure)
-        noise = self._sample_prior_measure(
-            n_samples=batch_size, n_channels=field_channels, dims=field_dims
-        )
-        return (
+        t_expand = t.view(batch_size, 1, *([1] * field_ndim))
+        # sample noise (fresh draw from prior measure)
+        noise = self._sample_prior_measure(batch_size)
+        # sample conditional flow
+        psi = (
             t_expand * target_field + (1.0 - t_expand) * prior
         ) + self.sig_min * noise
+
+        assert (
+            psi.shape == target_field.shape
+        ), "incorrect conditional flow sample shape"
+        return psi
 
     def _comp_conditional_flow_derivative(
         self,
@@ -231,20 +273,20 @@ class Flow(L.LightningModule):
         assert (
             prior.shape == target_field.shape
         ), "prior sample shape not same as field shape"
-        return target_field - prior
+        psi_prime = target_field - prior
+        assert (
+            psi_prime.shape == target_field.shape
+        ), "incorrect conditional flow derivative"
+        return psi_prime
 
-    def _comp_loss(
-        self, target_field: torch.Tensor, condition: torch.Tensor, domain: torch.Tensor
-    ):
+    def _comp_loss(self, target_field: torch.Tensor, condition: torch.Tensor):
         """compute the flow-matching loss"""
         # extract shape
         batch_size, field_channels, *field_dims = target_field.shape
         # sample time from U[0, 1]
         t = torch.rand(batch_size, 1, device=self.device)
         # sample prior measure
-        prior = self._sample_prior_measure(
-            n_samples=batch_size, n_channels=field_channels, dims=field_dims
-        )
+        prior = self._sample_prior_measure(batch_size=batch_size)
         # sample the conditional flow
         psi = self._sample_conditional_flow(target_field=target_field, prior=prior, t=t)
         # compute conditional flow derivative
@@ -252,10 +294,11 @@ class Flow(L.LightningModule):
             target_field=target_field, prior=prior
         )
         # compute the model vector field
-        vt = self.vector_field(psi=psi, condition=condition, t=t)
+        vt = self.vector_field(
+            psi=psi, condition=condition, field_domain=self.target_field_domain, t=t
+        )
 
         assert vt.shape == psi_prime.shape, "incorrect target and model vector field"
-
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
         return loss
@@ -287,8 +330,14 @@ class Flow(L.LightningModule):
         return super().load_state_dict(state_dict, strict)
 
     def _wrapper(self, field: torch.Tensor, condition: torch.Tensor, t: torch.Tensor):
-        batch_size, n_gen, field_channels, *field_dims = field.shape
-        batch_size, n_gen, condition_channels, *condition_dims = condition.shape
+        # sizes
+        batch_size = field.shape[0]
+        n_gen = field.shape[1]
+        field_channels = self.shape_dict["target_field"]["channels"]
+        field_dims = self.shape_dict["target_field"]["dims"]
+        condition_channels = self.shape_dict["condition"]["channels"]
+        condition_dims = self.shape_dict["condition"]["dims"]
+
         # create eval field and condition
         field_eval = field.view(batch_size * n_gen, field_channels, *field_dims)
         condition_eval = condition.reshape(
@@ -301,17 +350,15 @@ class Flow(L.LightningModule):
             vt = self.vector_field(
                 psi=field_eval,
                 condition=condition_eval,
+                field_domain=self.target_field_domain,
                 t=t_eval,
             )
-
         return vt.view(batch_size, n_gen, field_channels, *field_dims)
 
     @torch.no_grad()
     def integrate_flow(
         self,
         condition: torch.Tensor,
-        field_channels: int,
-        field_dims: list,
         n_gen: int = 10,
         nT: int = 10,
         method: str = "dopri5",
@@ -320,15 +367,21 @@ class Flow(L.LightningModule):
         **kwargs,
     ):
         """integrate the flow"""
+        # sizes
+        batch_size = condition.shape[0]
+        field_channels = self.shape_dict["target_field"]["channels"]
+        field_dims = self.shape_dict["target_field"]["dims"]
+        condition_channels = self.shape_dict["condition"]["channels"]
+        condition_dims = self.shape_dict["condition"]["dims"]
+
         # create condition batch
-        batch_size, condition_channels, *condition_dims = condition.shape
         condition_batch = condition.unsqueeze(1).expand(
             -1, n_gen, condition_channels, *condition_dims
         )
         # sample prior
-        prior = self._sample_prior_measure(
-            n_samples=batch_size * n_gen, n_channels=field_channels, dims=field_dims
-        ).view(batch_size, n_gen, field_channels, *field_dims)
+        prior = self._sample_prior_measure(batch_size=batch_size * n_gen).view(
+            batch_size, n_gen, field_channels, *field_dims
+        )
 
         prior = prior.to(self.device)
 

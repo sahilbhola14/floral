@@ -103,36 +103,34 @@ class GPPrior(ExactGP):
         return MultivariateNormal(mean_x, covar_x)
 
     @torch.no_grad()
-    def sample(self, x, dims, n_samples: int = 1, n_channels: int = 1):
+    def sample(
+        self,
+        domain: torch.Tensor,
+        batch_size: int,
+        field_channels: int,
+        field_dims: list,
+    ):
         """sample functions from the GP prior
         Args:
-            x (torch.Tensor):
-                Flattened input domain
-            n_samples (int):
-                number of function samples to draw
-            n_channels (int):
+            domain (torch.Tensor):
+                input domain (flattened)
+            batch_size (int):
+                number of batches to sample
+            field_channels (int):
                 number of output channels (for multi-output GP)
+            field_dims (list):
+                shape of the field
         Returns:
             samples (torch.Tensor): sampled functions of shape
-            (n_samples, n_channels, *grid)
+            (batch_size, n_channels, *dims)
         Note:
             1. For multiple channels, we assume independence between channels.
             That is, i.i.d. draws from the same GP prior.
 
         """
-        assert x.ndim == 2 and isinstance(
-            x, torch.Tensor
-        ), "Input should be a 2D tensor."
-        assert x.shape[1] == len(
-            dims
-        ), "Input feature dimension must match the length of dims."
-
-        distribution = self.forward(x)  # get the GP distribution
-        samples = distribution.sample(
-            torch.Size([n_samples * n_channels])
-        )  # (n_samples * n_channels, N)
-        samples = samples.view(
-            n_samples, n_channels, *dims
-        )  # (n_samples, n_channels, *dims)
-        assert samples.shape == (n_samples, n_channels, *dims), "incorrect samples"
+        # get the GP distribution
+        distribution = self.forward(domain)
+        # generate samples
+        samples = distribution.sample(torch.Size([batch_size * field_channels]))
+        samples = samples.view(batch_size, field_channels, *field_dims)
         return samples

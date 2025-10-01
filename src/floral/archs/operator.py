@@ -22,7 +22,7 @@ def get_operator_modules(operator_config: dict):
         "hidden_channels",
         "proj_channels",
         "modes",
-        "x_dim",
+        "field_ndim",
     ]
     check_keys(operator_config, required_keys)
     # create model
@@ -107,16 +107,16 @@ class FNO(torch.nn.Module):
         condition_channels: int,
         hidden_channels: int,
         proj_channels: int,
-        x_dim: int = 1,
+        field_ndim: int = 1,
         t_scaling: float = 1.0,
         **kwargs,
     ):
         super(FNO, self).__init__()
         self.t_scaling = t_scaling
         # same modes in each dimension
-        n_modes = (modes,) * x_dim
-        # in_channels = (visual channels + spatial embedding + time embedding)
-        in_channels = field_channels + condition_channels + x_dim + 1
+        n_modes = (modes,) * field_ndim
+        # in_channels = (field + domain + t + condition)
+        in_channels = field_channels + field_ndim + condition_channels + 1
         # model
         self.model = _FNO(
             n_modes=n_modes,
@@ -126,26 +126,36 @@ class FNO(torch.nn.Module):
             out_channels=field_channels,
         )
 
-    def forward(self, psi: torch.Tensor, condition: torch.Tensor, t: torch.Tensor):
+    def forward(
+        self,
+        psi: torch.Tensor,
+        condition: torch.Tensor,
+        field_domain: torch.Tensor,
+        t: torch.Tensor,
+    ):
         """forward pass
         Args:
             psi (torch.Tensor):
                 samples from the condition path of shape
-                (batch_size, field_channels, *field_dim)
+                (batch_size, field_channels, *field_dims)
             condition (torch.Tensor):
-                conditions of shape (batch_size, condition_channels, *condition_dim)
+                conditions of shape (batch_size, condition_channels, *condition_dims)
+            field_domain (torch.Tensor):
+                domain of shape (1, domain_channels, *domain_dims)
             t (torch.Tensor):
                 samples of time of shape (batch_size, 1)
         """
+        # extract shape
         batch_size, field_channels, *field_dims = psi.shape
+        field_ndim = len(field_dims)
         # scale the time
         t = t / self.t_scaling
         # reshape time
-        t = t.view(batch_size, 1, *([1] * len(field_dims))).expand(-1, -1, *field_dims)
-        # position embedding
-        posn_emb = make_posn_embed(batch_size, field_dims).to(psi.device)
+        t = t.view(batch_size, 1, *([1] * field_ndim)).expand(-1, -1, *field_dims)
+        # reshape domain
+        field_domain = field_domain.expand(batch_size, *field_domain.shape[1:])
         # create input to the FNO
-        inp = torch.cat((psi, posn_emb, t, condition), dim=1)
+        inp = torch.cat((psi, field_domain, t, condition), dim=1)
         # compute output
         out = self.model(inp)
         return out

@@ -121,7 +121,12 @@ def train_model(hp_config: dict = None):
         config=config, hp_config=hp_config, checkpointer=checkpointer
     )
     # model
-    flow = Flow(config=config, hp_config=hp_config)
+    flow = Flow(
+        config=config,
+        hp_config=hp_config,
+        domain_dict=data_module.domain_dict,
+        shape_dict=data_module.shape_dict,
+    )
     # if hasattr(flow, "compile") and torch.cuda.is_available():
     #     printer("Compiling the model...")
     #     flow = torch.compile(flow, mode="default")

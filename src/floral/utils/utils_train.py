@@ -28,7 +28,7 @@ def get_trainer(
     devices = config.train.get("devices", 1)
     accelerator = config.train.get("accelerator", "cpu")
     logger_name = config.get("logger_name", "default_logger").lower().strip()
-    precision = config.train.get("precision", "16-mixed")
+    precision = config.train.get("precision", "32-true")
 
     logger_name = logger_name + "_floral" if config.floral else logger_name
     max_epochs = hp_config.get("max_epochs", 100)

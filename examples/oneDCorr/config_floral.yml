@@ -39,7 +39,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 1
+  devices: 3
   precision: '32-true'
 
 # configuration for flow-matching
@@ -47,12 +47,9 @@ flow:
   sig_min: 1.0e-5 # gaussian std for the data
   operator:
     # operator parameters
-    field_channels: 1
-    condition_channels: 1
     hidden_channels: 128
     proj_channels: 128
     modes: 32
-    x_dim: 1
   prior:
     # prior GP measure parameters
     lengthscale: 1.0e-3

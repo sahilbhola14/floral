@@ -44,11 +44,13 @@ class Inference:
         """prepare the input(s) for the inference"""
         # check val set size
         assert (
-            len(val_set.tensors) == 4
-        ), "expected: (target_field, condition, domain, LF_field)"
+            len(val_set.tensors) == 3
+        ), "expected: (target_field, condition, LF_field)"
         # extract
-        target_field, condition, domain, LF_field = val_set.tensors
-        _, field_channels, *field_dims = target_field.shape
+        target_field, condition, LF_field = val_set.tensors
+        # get shape
+        field_channels = self.model.shape_dict["target_field"]["channels"]
+        field_dims = self.model.shape_dict["target_field"]["dims"]
         # compute HF_field
         denormal_target_field = (
             target_field * self.target_field_std + self.target_field_mean
@@ -59,16 +61,21 @@ class Inference:
         else:
             HF_field = denormal_target_field
 
+        # domains
+        field_domain = self.model.target_field_domain
+        condition_domain = self.model.condition_domain
+
         # build the dict
         inference_input_dict = {
             "target_field": target_field,
             "condition": condition,
-            "domain": domain,
             "LF_field": LF_field,
             "HF_field": HF_field,
             "n_samples": len(target_field),
             "field_channels": field_channels,
             "field_dims": field_dims,
+            "field_domain": field_domain,
+            "condition_domain": condition_domain,
         }
         return inference_input_dict
 
@@ -82,7 +89,8 @@ class Inference:
         result_dict = {
             "target_field": self.inference_input_dict.get("target_field"),
             "condition": self.inference_input_dict.get("condition"),
-            "domain": self.inference_input_dict.get("domain"),
+            "field_domain": self.inference_input_dict.get("field_domain"),
+            "condition_domain": self.inference_input_dict.get("condition_domain"),
             "LF_field": self.inference_input_dict.get("LF_field"),
             "HF_field": self.inference_input_dict.get("HF_field"),
             "HF_field_prediction": torch.empty(
@@ -123,7 +131,7 @@ class Inference:
                 if self.floral:
                     # normalized prediction
                     residual_prediction_batch = self._get_prediction(
-                        condition=condition_batch
+                        condition=condition_batch,
                     ).view(-1, field_channels, *field_dims)
                     # denormalize
                     residual_prediction_batch = (
@@ -161,8 +169,6 @@ class Inference:
         """integrate the ODE"""
         prediction = self.model.integrate_flow(
             condition=condition,
-            field_channels=self.inference_input_dict.get("field_channels"),
-            field_dims=self.inference_input_dict.get("field_dims"),
             **self.generate_config,
         )
         return prediction.cpu()

@@ -96,8 +96,8 @@ class OpDataModule(L.LightningDataModule):
         condition = data_dict.get("condition")
         domain = data_dict.get("domain")
         # assert statements
-        batch_size_field, n_channels_field, *dims_field = field.shape
-        batch_size_condition, n_channels_condition, *dims_condition = condition.shape
+        field_batch_size, field_channels, *field_dims = field.shape
+        condition_batch_size, condition_channels, *condition_dims = condition.shape
         assert isinstance(
             field, np.ndarray
         ), f"Expected numpy array, got {type(field).__name__}"
@@ -108,17 +108,17 @@ class OpDataModule(L.LightningDataModule):
             domain, np.ndarray
         ), f"Expected numpy array, got {type(domain).__name__}"
         assert (
-            batch_size_field == batch_size_condition
+            field_batch_size == condition_batch_size
         ), "incorrect number of field and condition samples"
         assert all(
             [
                 domain.ndim == 2,
-                domain.shape[1] == len(dims_field),
-                domain.shape[1] == len(dims_condition),
+                domain.shape[1] == len(field_dims),
+                domain.shape[1] == len(condition_dims),
             ]
         ), "domain dims inconsistent with the field and condition"
-        assert len(domain) == math.prod(dims_field) and len(domain) == math.prod(
-            dims_condition
+        assert len(domain) == math.prod(field_dims) and len(domain) == math.prod(
+            condition_dims
         ), "inconsistent domain points"
 
         # convert to float tensor
@@ -127,11 +127,7 @@ class OpDataModule(L.LightningDataModule):
         domain_tensor = n2t(domain)
 
         # convert domain shape to match field
-        domain_tensor = (
-            domain_tensor.T.view(-1, *dims_field)
-            .unsqueeze(0)
-            .expand(batch_size_field, -1, *([-1] * len(dims_field)))
-        )
+        domain_tensor = domain_tensor.T.view(-1, *field_dims).unsqueeze(0)
 
         return field_tensor, condition_tensor, domain_tensor
 
@@ -157,17 +153,39 @@ class OpDataModule(L.LightningDataModule):
         else:
             target_field = HF_field
 
-        # create operator data dict
+        # check availabe samples
         assert self.n_samples <= len(
             target_field
         ), f"Requested samples: {self.n_samples} > "
         f"available samples: {len(target_field)}"
+        # create operator data dict
         op_data_dict = {}
         op_data_dict["target_field"] = target_field[: self.n_samples]
         op_data_dict["condition"] = HF_condition[: self.n_samples]
-        op_data_dict["domain"] = HF_domain[: self.n_samples]
         op_data_dict["LF_field"] = LF_field[: self.n_samples]
-        return op_data_dict
+        # create data shape dict
+        shape_dict = {}
+        shape_dict["target_field"] = {
+            "channels": target_field.shape[1],
+            "dims": list(target_field.shape[2:]),
+            "ndim": len(target_field.shape[2:]),
+        }
+        shape_dict["condition"] = {
+            "channels": HF_condition.shape[1],
+            "dims": list(HF_condition.shape[2:]),
+            "ndim": len(HF_condition.shape[2:]),
+        }
+        shape_dict["domain"] = {
+            "channels": HF_domain.shape[1],
+            "dims": list(HF_domain.shape[2:]),
+            "ndim": len(HF_domain.shape[2:]),
+        }
+        # create domain dict
+        domain_dict = {
+            "target_field": HF_domain,
+            "condition": HF_domain,
+        }
+        return op_data_dict, shape_dict, domain_dict
 
     def _get_split_data_dict(self, op_data_dict):
         """split the operator data dict to train and validation"""
@@ -244,9 +262,6 @@ class OpDataModule(L.LightningDataModule):
             statistics[k]["mean"] = mean
             statistics[k]["std"] = std
 
-        # add domain keys
-        train_norm_data_dict["domain"] = train_data_dict["domain"]
-        val_norm_data_dict["domain"] = val_data_dict["domain"]
         # add LF_field
         train_norm_data_dict["LF_field"] = train_data_dict["LF_field"]
         val_norm_data_dict["LF_field"] = val_data_dict["LF_field"]
@@ -268,7 +283,11 @@ class OpDataModule(L.LightningDataModule):
             raise NotImplementedError
         else:
             # prepare the operator fields
-            op_data_dict = self._get_operator_data_dict()
+            op_data_dict, shape_dict, domain_dict = self._get_operator_data_dict()
+            # set shape dict attribute
+            self._set_attribute("shape_dict", shape_dict)
+            # set domain dict attribute
+            self._set_attribute("domain_dict", domain_dict)
             # split
             train_data_dict, val_data_dict = self._get_split_data_dict(op_data_dict)
             # normalize
@@ -286,13 +305,11 @@ class OpDataModule(L.LightningDataModule):
             self.train_set = TensorDataset(
                 train_norm_data_dict.get("target_field"),
                 train_norm_data_dict.get("condition"),
-                train_norm_data_dict.get("domain"),
                 train_norm_data_dict.get("LF_field"),
             )
             self.val_set = TensorDataset(
                 val_norm_data_dict.get("target_field"),
                 val_norm_data_dict.get("condition"),
-                val_norm_data_dict.get("domain"),
                 val_norm_data_dict.get("LF_field"),
             )
 
