@@ -239,9 +239,8 @@ class OpDataModule(L.LightningDataModule):
         train_norm_data_dict = {}
         val_norm_data_dict = {}
         for k in normalize_keys:
-            assert (
-                k in train_data_dict and k in val_data_dict
-            ), f"{k} not found in train and val data dict"
+            assert k in train_data_dict, f"{k} missing in train data dict"
+            assert k in val_data_dict, f"{k} missing in val data dict"
             # load the data
             train_data = train_data_dict[k]
             val_data = val_data_dict[k]
