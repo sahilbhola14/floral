@@ -1,3 +1,4 @@
+# installation: conda env create -f environment.yml
 name: floral
 channels:
   - pytorch
