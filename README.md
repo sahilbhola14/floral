@@ -1,9 +1,9 @@
-<h1 align="center">FLOREN 🌸</h1>
-<h3 align="center">Flow-matching Residual Embedded Neural Operator</h3>
+<h1 align="center">FLORAL 🌸</h1>
+<h3 align="center">Flow-matching Operator for Residual-Augmented Learning</h3>
 
 ---
 
-FLOREN is a novel method for learning neural operators by combining **flow matching** with **residual embeddings**, enabling efficient and scalable surrogate modeling of high-dimensional physical fields.
+FLORAL is a novel method for learning neural operators by combining **flow matching** with **residual embeddings**, enabling efficient and scalable surrogate modeling of high-dimensional physical fields.
 
 ---
 
@@ -22,5 +22,5 @@ FLOREN is a novel method for learning neural operators by combining **flow match
 git clone git@github.com:sahilbhola14/mfFlow.git
 cd mfFlow
 conda env create -f environment.yml
-conda activate floren
+conda activate floral
 ./build.sh

@@ -1,3 +1,11 @@
+# /examples/oneDCorr/gen_data.py
+"""
+Generate synthetic data for a 1D model with correlation between the
+low and high fidelity models.
+Reference: Thakur, A., Tripura, T. and Chakraborty, S., 2022. Multi-fidelity wavelet
+neural operator with application to uncertainty quantification.
+arXiv preprint arXiv:2208.05606.
+"""
 import numpy as np
 import argparse
 import matplotlib.pyplot as plt
@@ -13,29 +21,20 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "-nt",
-    "--n_test_samples",
-    type=int,
-    default=200,
-    help="Number of samples to generate test",
-)
-
-parser.add_argument(
     "-mh",
     "--m_high",
     type=int,
-    default=100,
+    default=128,
     help="Number of discretization points for high fidelity",
 )
 parser.add_argument(
     "--k_range", type=list, default=[10, 14], help="Range of k values to sample from"
 )
+parser.add_argument("--plot", action="store_true", help="Plot a snapshot of the data")
+
 args = parser.parse_args()
 
-print(
-    f"Generating {args.n_samples} samples for training and validation, "
-    f"and {args.n_test_samples} for testing."
-)
+print(f"Generating {args.n_samples} samples for training and validation")
 
 
 def eval_high_fidelity_model(a: np.ndarray, x: np.ndarray):
@@ -56,70 +55,82 @@ def sample_input_function(n_samples: int, domain: np.ndarray):
 
 def plot_snapshot(
     domain: np.ndarray,
-    features: np.ndarray,
+    condition: np.ndarray,
     hf_solution: np.ndarray,
     lf_solution: np.ndarray,
 ):
     """Plot a snapshot of the high and low fidelity solutions."""
     idx_plot = 0  # for reproducibility, always plot the first sample
-    plt.figure(figsize=(8, 4))
-    plt.plot(
-        domain, lf_solution[idx_plot, :], label="Low-fidelity", color="grey", alpha=0.6
+    condition_plot = condition[idx_plot, :].ravel()
+    lf_solution_plot = lf_solution[idx_plot, :].ravel()
+    hf_solution_plot = hf_solution[idx_plot, :].ravel()
+    domain_plot = domain.ravel()
+
+    fig, axs = plt.subplots(1, 2, figsize=(6, 2.5), sharex=True)
+    axs[0].plot(domain_plot, condition_plot, color="k")
+    axs[0].set_ylabel(r"$a(x)$")
+    axs[0].set_ylim(-10, 10)
+    axs[1].plot(domain_plot, hf_solution_plot, color="k", label="High-fidelity")
+    axs[1].plot(
+        domain_plot, lf_solution_plot, color="grey", alpha=0.6, label="Low-fidelity"
     )
-    plt.plot(domain, hf_solution[idx_plot, :], label="High-fidelity", color="k")
-    plt.xlabel("$x$")
-    plt.ylabel("$w(a)$")
+    axs[1].legend(fontsize=10)
+    axs[1].set_ylabel(r"$w(x)$")
+    axs[1].set_ylim(bottom=-2, top=2)
+    for ax in axs:
+        ax.set_xlabel("$x$")
+
     plt.legend(fontsize=10, loc="upper right")
     plt.tight_layout()
-    plt.savefig("snapshot.png")
+    plt.savefig("data_snapshot.png")
 
 
 def generate():
     """generate the data"""
     domain = np.linspace(0, 1, args.m_high)  # high fidelity domain
-    features = sample_input_function(
-        args.n_samples + args.n_test_samples, domain
+    condition = sample_input_function(
+        args.n_samples, domain
     )  # samples of the input functions
     hf_solution = eval_high_fidelity_model(
-        features, domain
+        condition, domain
     )  # evaluate high fidelity model
     lf_solution = eval_low_fidelity_model(
-        features, domain
+        condition, domain
     )  # evaluate low fidelity model
+
+    # reshape
+    domain = domain.reshape(-1, 1)  # flattened domain
+    condition = np.expand_dims(condition, 1)  # (B, channel_c, *dim_c)
+    hf_solution = np.expand_dims(hf_solution, 1)  # (B, channels_f, *dim_f)
+    lf_solution = np.expand_dims(lf_solution, 1)  # (B, channels_f, *dim_f)
+
+    assert hf_solution.shape == lf_solution.shape, (
+        "Incorrect lf solution shape."
+        "Consider interpolating the low fidelity solution."
+    )
 
     high_data = {
         "field": hf_solution[: args.n_samples],
-        "condition": features[: args.n_samples],
-        "domain": domain.reshape(-1, 1),
-        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
-        "resolution": args.m_high,
+        "condition": condition[: args.n_samples],
+        "domain": domain,
     }
 
     low_data = {
         "field": lf_solution[: args.n_samples],
-        "condition": features[: args.n_samples],
-        "domain": domain.reshape(-1, 1),
-        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
-        "resolution": args.m_high,
-    }
-
-    # Test config
-    test_data = {
-        "LF_field": lf_solution[args.n_samples :],
-        "HF_field": hf_solution[args.n_samples :],
-        "condition": features[args.n_samples :],
-        "domain": domain.reshape(-1, 1),
-        "condition_domain": domain.reshape(-1, 1),  # domain for the input function
-        "resolution": args.m_high,
+        "condition": condition[: args.n_samples],
+        "domain": domain,  # low fidelity must be interpoalted to the same domain as HF
     }
 
     # plot a snapshot
-    plot_snapshot(domain, features, hf_solution, lf_solution)
+    if args.plot:
+        plot_snapshot(domain, condition, hf_solution, lf_solution)
 
     # save
     np.savez("high_fidelity.npz", **high_data)
     np.savez("low_fidelity.npz", **low_data)
-    np.savez("test_data.npz", **test_data)
+
+    print("saved high fidelity data to high_fidelity.npz")
+    print("saved low fidelity data to low_fidelity.npz")
 
 
 if __name__ == "__main__":
