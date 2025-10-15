@@ -5,18 +5,17 @@ Flow-matching operator for residual-augmented learning for 1D toy problem
 import torch
 import wandb
 import argparse
-import lightning as L
 import yaml
 from omegaconf import OmegaConf
 from floral.utils import (
-    OpDataModule,
-    get_checkpointer,
-    get_trainer,
     printer,
+    print_section,
     check_path,
-    Inference,
+    build_data_module,
+    build_checkpointer,
+    build_trainer,
 )
-from floral.flow import Flow
+from floral.flow import perform_inference, Flow
 
 parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
 parser.add_argument(
@@ -37,72 +36,20 @@ def print_header(config: dict):
     Args:
         config (dict): Configuration dictionary parameters.
     """
-    printer("==" * 50)
-    printer("Running oneDCorr")
+    print_section("oneDCorr config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Number of samples: {config.data.n_samples}")
-    printer("==" * 50)
-
-
-def build_data_module(
-    config: dict,
-    hp_config: wandb.sdk.wandb_config.Config | dict = None,
-    verbose: bool = False,
-):
-    """Get the data module for the oneDCorr problem.
-    Args:
-        config (dict): Configuration dictionary containing data parameters.
-        hp_config (dict): Hyperparameter configuration dictionary.
-    """
-    # create the data module
-    data_module = OpDataModule(config=config, hp_config=hp_config, verbose=verbose)
-    # Setup the data module
-    data_module.setup()
-
-    return data_module
-
-
-def build_checkpointer(config: dict):
-    """Get the checkpointer for saving and loading model checkpoints."""
-    # get the checkpointer
-    ckp_save_path = config.checkpoint_save_path
-    checkpointer = get_checkpointer(
-        ckp_save_path + "/floral" if config.floral else ckp_save_path
-    )
-    return checkpointer
-
-
-def build_trainer(
-    config: dict,
-    hp_config: wandb.sdk.wandb_config.Config | dict = None,
-    checkpointer=None,
-    verbose: bool = False,
-):
-    """Get the trainer for training the model.
-    Args:
-        config (dict): Configuration dictionary containing training parameters.
-        hp_config (wandb.sdk.wandb_config.Config | dict): Hyperparameter configuration
-        checkpointer: Checkpointer for saving and loading model checkpoints.
-    Returns:
-        trainer (L.Trainer): Trainer object for training the model.
-    """
-    trainer = get_trainer(
-        config=config,
-        hp_config=hp_config,
-        checkpointer=checkpointer,
-        verbose=verbose,
-    )
-
-    return trainer
+    print_section("oneDCorr config", end=True)
 
 
 def train_model(hp_config: dict = None):
     """Train the model using the specified configuration and hyperparameters.
     Returns:
         best_model_path (str): Path to the best model checkpoint after training.
+        data_module( L.LightningDataModule|None): Data module
     """
     if config.tune_hyperparameters:
         # initialize wandb with the hyperparameter config
@@ -118,7 +65,7 @@ def train_model(hp_config: dict = None):
     checkpointer = build_checkpointer(config=config)
     # get trainer
     trainer = build_trainer(
-        config=config, hp_config=hp_config, checkpointer=checkpointer
+        config=config, hp_config=hp_config, checkpointer=checkpointer, verbose=False
     )
     # model
     flow = Flow(
@@ -140,9 +87,10 @@ def train_model(hp_config: dict = None):
             best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
         )
     # train
-    printer("Starting training...")
+    print_section("Training")
     trainer.fit(flow, data_module)
 
+    # return
     if config.tune_hyperparameters:
         # clean up wandb run
         wandb.finish()
@@ -151,34 +99,6 @@ def train_model(hp_config: dict = None):
         best_model_path = checkpointer.best_model_path
         printer(f"Best model saved at {best_model_path}")
         return best_model_path, data_module
-
-
-def infer_model(best_model_path: str, data_module: L.LightningDataModule):
-    """Infererence task"""
-    printer("Inference...")
-    # load the best model
-    best_model = Flow.load_from_checkpoint(
-        best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
-    )
-    # set model to eval mode
-    best_model.eval()
-    # enable inference model optimizations
-    if hasattr(best_model, "compile") and torch.cuda.is_available():
-        # Use torch.compile for PyTorch 2.0+ (significant speedup)
-        printer("Compiling the model...")
-        best_model = torch.compile(best_model, mode="max-autotune")
-
-    # create inference object
-    infer = Inference(
-        model=best_model,
-        val_set=data_module.val_set,
-        statistics=data_module.statistics,
-        job_name=config.job_name,
-        floral=config.floral,
-        generate_config=config.generate,
-    )
-    # infer the model
-    infer()
 
 
 if __name__ == "__main__":
@@ -218,4 +138,6 @@ if __name__ == "__main__":
             # best_model_path = config.checkpoint_load_path
 
         # infer
-        infer_model(best_model_path, data_module)
+        perform_inference(
+            best_model_path=best_model_path, data_module=data_module, config=config
+        )

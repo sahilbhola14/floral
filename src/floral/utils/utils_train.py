@@ -1,29 +1,60 @@
 import wandb
-import torch
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
-from .utils_IO import get_logger, printer
+from .utils_IO import get_logger, printer, print_section, check_keys
 
 
-def get_checkpointer(path: str):
-    """Get a ModelCheckpoint callback for PyTorch Lightning."""
-    ckp = ModelCheckpoint(
+def build_checkpointer(config: dict, verbose: bool = False):
+    """Get the checkpointer for saving and loading model checkpoints.
+    Args:
+        config (dict):
+        verbose(bool):
+            verbose flag
+    Returns:
+        checkpointer (lightning.pytorch.callbacks.ModelCheckpoint):
+            checkpointer
+    """
+    # get the checkpointer
+    ckp_save_path = config.get("checkpoint_save_path", "./experiments/")
+    # checkpointer path
+    check_keys(config, ["floral"])
+    path = ckp_save_path + "floral" if config.floral else ckp_save_path
+    checkpointer = ModelCheckpoint(
         monitor="val_loss",
         mode="min",
         save_top_k=1,
         dirpath=path,
         filename="model-{epoch:02d}-{val_loss:.2f}",
     )
-    return ckp
+
+    if verbose:
+        print_section("Checkpointer config")
+        printer(f"Saving checkpoint to path: {path}")
+        print_section("Checkpointer config", end=True)
+
+    return checkpointer
 
 
-def get_trainer(
+def build_trainer(
     config: dict,
-    hp_config: wandb.sdk.wandb_config.Config | dict,
-    checkpointer: L.pytorch.callbacks.ModelCheckpoint,
+    hp_config: wandb.sdk.wandb_config.Config | dict = None,
+    checkpointer=None,
     verbose: bool = False,
 ):
-    """Get a PyTorch Lightning Trainer with the specified configuration."""
+    """Get the trainer for training the model.
+    Args:
+        config (dict):
+            Configuration dictionary containing training parameters.
+        hp_config (wandb.sdk.wandb_config.Config | dict):
+            Hyperparameter configuration
+        checkpointer (lightning.pytorch.callbacks.ModelCheckpoint):
+            Checkpointer for saving and loading model checkpoints.
+        verbose(bool):
+            verbose flag
+    Returns:
+        trainer (L.Trainer): Trainer object for training the model.
+    """
+
     # extract config and hp_config
     devices = config.train.get("devices", 1)
     accelerator = config.train.get("accelerator", "cpu")
@@ -41,7 +72,7 @@ def get_trainer(
         monitor="val_loss",  # Metric to monitor
         min_delta=1e-4,  # Minimum change to qualify as improvement
         patience=int(
-            0.2 * max_epochs
+            0.9 * max_epochs
         ),  # Number of epochs with no improvement after which training will stop
         verbose=True,
         mode="min",  # "min" for loss, "max" for accuracy
@@ -60,43 +91,12 @@ def get_trainer(
     )
 
     if verbose:
-        printer("==" * 50)
-        printer("**" * 10 + "Trainer config" + "**" * 10)
+        print_section("Trainer config")
         printer(f"Number of devices: {devices}")
         printer(f"Precision: {precision}")
         printer(f"Running on : {accelerator}")
         printer(f"Logger file: {logger_name}")
         printer(f"Max epochs: {max_epochs}")
-        printer("==" * 50)
+        print_section("Trainer config", end=True)
 
     return trainer
-
-
-def make_grid(dims, x_min=0, x_max=1):
-    """Creates a 1D or 2D grid based on the list of dimensions in dims.
-
-    Example: dims = [64, 64] returns a grid of shape (64*64, 2)
-    Example: dims = [100] returns a grid of shape (100, 1)
-    Adapted from: https://github.com/GavinKerrigan/functional_flow_matching
-    """
-    if len(dims) == 1:
-        grid = torch.linspace(x_min, x_max, dims[0])
-        grid = grid.unsqueeze(-1)
-    elif len(dims) == 2:
-        _, _, grid = make_2d_grid(dims)
-    return grid
-
-
-def make_2d_grid(dims, x_min=0, x_max=1):
-    """
-    Adapted from: https://github.com/GavinKerrigan/functional_flow_matching
-    """
-    # Makes a 2D grid in the format of (n_grid, 2)
-    x1 = torch.linspace(x_min, x_max, dims[0])
-    x2 = torch.linspace(x_min, x_max, dims[1])
-    x1, x2 = torch.meshgrid(x1, x2, indexing="ij")
-    grid = torch.cat(
-        (x1.contiguous().view(x1.numel(), 1), x2.contiguous().view(x2.numel(), 1)),
-        dim=1,
-    )
-    return x1, x2, grid

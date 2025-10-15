@@ -4,7 +4,32 @@ import lightning as L
 import wandb
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from .utils_IO import check_path, printer, check_tensor_blowup, n2t
+from .utils_IO import (
+    check_path,
+    printer,
+    check_tensor_blowup,
+    n2t,
+    check_keys,
+    deep_get,
+)
+
+
+def build_data_module(
+    config: dict,
+    hp_config: wandb.sdk.wandb_config.Config | dict = None,
+    verbose: bool = False,
+):
+    """Get the data module for the oneDCorr problem.
+    Args:
+        config (dict): Configuration dictionary containing data parameters.
+        hp_config (dict): Hyperparameter configuration dictionary.
+    """
+    # create the data module
+    data_module = OpDataModule(config=config, hp_config=hp_config, verbose=verbose)
+    # Setup the data module
+    data_module.setup()
+
+    return data_module
 
 
 class OpDataModule(L.LightningDataModule):
@@ -44,21 +69,19 @@ class OpDataModule(L.LightningDataModule):
 
     def _load_data(self, path):
         """Load data from the specified path"""
+        # initial check
         check_path(path)
-        data = np.load(path, allow_pickle=True)
-        self._check_required_data_keys(data)
-        return data
-
-    def _check_required_data_keys(self, data):
-        """Check if the data has the required keys"""
+        # load
+        data = dict(np.load(path, allow_pickle=True))
+        # load  check
         required_keys = [
             "field",
             "condition",
-            "domain",
+            "field_domain",
+            "condition_domain",
         ]
-        for key in required_keys:
-            if key not in data:
-                raise KeyError(f"Data must contain the key '{key}'")
+        check_keys(data, required_keys)
+        return data
 
     def _get_file_paths(self):
         """Get the file paths for saving/loading datasets and statistics"""
@@ -92,9 +115,12 @@ class OpDataModule(L.LightningDataModule):
 
     def _extract_keys(self, data_dict):
         """extract the keys: field, condition, domain from the data_dict"""
+        # extract dict
         field = data_dict.get("field")
         condition = data_dict.get("condition")
-        domain = data_dict.get("domain")
+        field_domain = data_dict.get("field_domain")
+        condition_domain = data_dict.get("condition_domain")
+
         # assert statements
         field_batch_size, field_channels, *field_dims = field.shape
         condition_batch_size, condition_channels, *condition_dims = condition.shape
@@ -105,38 +131,69 @@ class OpDataModule(L.LightningDataModule):
             condition, np.ndarray
         ), f"Expected numpy array, got {type(condition).__name__}"
         assert isinstance(
-            domain, np.ndarray
-        ), f"Expected numpy array, got {type(domain).__name__}"
+            field_domain, np.ndarray
+        ), f"Expected numpy array, got {type(field_domain).__name__}"
+        assert isinstance(
+            condition_domain, np.ndarray
+        ), f"Expected numpy array, got {type(condition_domain).__name__}"
         assert (
             field_batch_size == condition_batch_size
         ), "incorrect number of field and condition samples"
         assert all(
             [
-                domain.ndim == 2,
-                domain.shape[1] == len(field_dims),
-                domain.shape[1] == len(condition_dims),
+                field_domain.ndim == 2,
+                field_domain.shape[1] == len(field_dims),
             ]
-        ), "domain dims inconsistent with the field and condition"
-        assert len(domain) == math.prod(field_dims) and len(domain) == math.prod(
+        ), "field domain dims inconsistent with the field"
+        assert all(
+            [
+                condition_domain.ndim == 2,
+                condition_domain.shape[1] == len(condition_dims),
+            ]
+        ), "condition domain dims inconsistent with the condition"
+
+        assert len(field_domain) == math.prod(
+            field_dims
+        ), "inconsistent field domain points"
+        assert len(condition_domain) == math.prod(
             condition_dims
-        ), "inconsistent domain points"
+        ), "inconsistent condition domain points"
 
         # convert to float tensor
         field_tensor = n2t(field)
         condition_tensor = n2t(condition)
-        domain_tensor = n2t(domain)
+        field_domain_tensor = n2t(field_domain)
+        condition_domain_tensor = n2t(condition_domain)
 
-        # convert domain shape to match field
-        domain_tensor = domain_tensor.T.view(-1, *field_dims).unsqueeze(0)
+        # convert domain(s) shape to match field
+        field_domain_tensor = field_domain_tensor.T.view(-1, *field_dims).unsqueeze(0)
+        condition_domain_tensor = condition_domain_tensor.T.view(
+            -1, *condition_dims
+        ).unsqueeze(0)
 
-        return field_tensor, condition_tensor, domain_tensor
+        return (
+            field_tensor,
+            condition_tensor,
+            field_domain_tensor,
+            condition_domain_tensor,
+        )
 
     def _get_operator_data_dict(self):
         """get the operator dictionary"""
         # extract LF data tensors
-        LF_field, LF_condition, LF_domain = self._extract_keys(data_dict=self.LF_data)
+        (
+            LF_field,
+            LF_condition,
+            LF_field_domain,
+            LF_condition_domain,
+        ) = self._extract_keys(data_dict=self.LF_data)
         # extract HF data tensors
-        HF_field, HF_condition, HF_domain = self._extract_keys(data_dict=self.HF_data)
+        (
+            HF_field,
+            HF_condition,
+            HF_field_domain,
+            HF_condition_domain,
+        ) = self._extract_keys(data_dict=self.HF_data)
         # assert statements
         assert (
             LF_field.shape == HF_field.shape
@@ -145,8 +202,11 @@ class OpDataModule(L.LightningDataModule):
             LF_condition.shape == HF_condition.shape
         ), "Low-fidelity and High-fidelity must be defined on the same domain"
         assert (
-            LF_domain.shape == HF_domain.shape
-        ), "Low-fidelity and High-fidelity must be defined on the same domain"
+            LF_field_domain.shape == HF_field_domain.shape
+        ), "Low-fidelity and High-fidelity must be defined on the same field domain"
+        assert (
+            LF_condition_domain.shape == HF_condition_domain.shape
+        ), "Low-fidelity and High-fidelity must be defined on the same condition domain"
         # create target field
         if self.floral:
             target_field = HF_field - LF_field
@@ -165,7 +225,7 @@ class OpDataModule(L.LightningDataModule):
         op_data_dict["LF_field"] = LF_field[: self.n_samples]
         # create data shape dict
         shape_dict = {}
-        shape_dict["target_field"] = {
+        shape_dict["field"] = {
             "channels": target_field.shape[1],
             "dims": list(target_field.shape[2:]),
             "ndim": len(target_field.shape[2:]),
@@ -175,15 +235,20 @@ class OpDataModule(L.LightningDataModule):
             "dims": list(HF_condition.shape[2:]),
             "ndim": len(HF_condition.shape[2:]),
         }
-        shape_dict["domain"] = {
-            "channels": HF_domain.shape[1],
-            "dims": list(HF_domain.shape[2:]),
-            "ndim": len(HF_domain.shape[2:]),
+        shape_dict["field_domain"] = {
+            "channels": HF_field_domain.shape[1],
+            "dims": list(HF_field_domain.shape[2:]),
+            "ndim": len(HF_field_domain.shape[2:]),
+        }
+        shape_dict["condition_domain"] = {
+            "channels": HF_condition_domain.shape[1],
+            "dims": list(HF_condition_domain.shape[2:]),
+            "ndim": len(HF_condition_domain.shape[2:]),
         }
         # create domain dict
         domain_dict = {
-            "target_field": HF_domain,
-            "condition": HF_domain,
+            "field": HF_field_domain,
+            "condition": HF_condition_domain,
         }
         return op_data_dict, shape_dict, domain_dict
 
@@ -234,7 +299,11 @@ class OpDataModule(L.LightningDataModule):
 
     def _get_normalize_data_dict(self, train_data_dict, val_data_dict):
         """normalize the data using the training data statistics"""
+        # initial checks
         normalize_keys = ["target_field", "condition"]
+        check_keys(train_data_dict, normalize_keys)
+        check_keys(val_data_dict, normalize_keys)
+
         statistics = {}
         train_norm_data_dict = {}
         val_norm_data_dict = {}
@@ -261,7 +330,7 @@ class OpDataModule(L.LightningDataModule):
             statistics[k]["mean"] = mean
             statistics[k]["std"] = std
 
-        # add LF_field
+        # add LF_field (without any normalization)
         train_norm_data_dict["LF_field"] = train_data_dict["LF_field"]
         val_norm_data_dict["LF_field"] = val_data_dict["LF_field"]
 
@@ -274,6 +343,32 @@ class OpDataModule(L.LightningDataModule):
     def _get_attribute(self, name):
         """get the attribute"""
         return getattr(self, name)
+
+    def denormalize_field(self, normal_field: torch.Tensor):
+        """denormalize the field"""
+        # extract field statistics
+        field_mean = deep_get(self.statistics, ["target_field", "mean"])
+        field_std = deep_get(self.statistics, ["target_field", "std"])
+        # input check
+        assert normal_field.ndim == field_mean.ndim, "invalid normal field"
+        assert normal_field.ndim == field_std.ndim, "invalid normal field"
+        # denormalize
+        denormal_field = normal_field * field_std + field_mean
+
+        return denormal_field
+
+    def denormalize_condition(self, normal_condition: torch.Tensor):
+        """denormalize the condition"""
+        # extract field statistics
+        condition_mean = deep_get(self.statistics, ["condition", "mean"])
+        condition_std = deep_get(self.statistics, ["condition", "std"])
+        # input check
+        assert normal_condition.ndim == condition_mean.ndim, "invalid normal condition"
+        assert normal_condition.ndim == condition_std.ndim, "invalid normal condition"
+        # denormalize
+        denormal_condition = normal_condition * condition_std + condition_mean
+
+        return denormal_condition
 
     def setup(self, stage=None):
         """dataset setup"""
