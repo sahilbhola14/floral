@@ -2,8 +2,14 @@
 import lightning as L
 import wandb
 import torch
-from floral.utils import printer, omega_to_dict, check_tensor_blowup, check_keys
-from floral.archs import get_operator_modules
+from floral.utils import (
+    printer,
+    omega_to_dict,
+    check_tensor_blowup,
+    check_keys,
+    deep_get,
+)
+from floral.archs import get_vector_field_operator
 from floral.gp import get_gp_prior
 from torchdiffeq import odeint
 
@@ -52,7 +58,7 @@ class Flow(L.LightningModule):
         # build operator config
         operator_config = self._get_operator_config(flow_config=flow_config)
         # build the operator modules for the vector field
-        self.vector_field = get_operator_modules(operator_config=operator_config)
+        self.vector_field = get_vector_field_operator(operator_config=operator_config)
         # build the prior (eval mode implicit)
         self.prior = get_gp_prior(prior_config=flow_config["prior"])
 
@@ -164,13 +170,23 @@ class Flow(L.LightningModule):
         """get the operator config"""
         operator_config = flow_config.get("operator")
         # check required keys in flow config
-        required_keys = ["hidden_channels", "proj_channels", "modes"]
+        required_keys = ["field", "condition"]
+        required_sub_keys = ["hidden_channels", "proj_channels", "modes"]
         check_keys(operator_config, required_keys)
-        # add channel details
-        operator_config["field_channels"] = self.shape_dict["target_field"]["channels"]
-        operator_config["condition_channels"] = self.shape_dict["condition"]["channels"]
-        # add field ndim
-        operator_config["field_ndim"] = self.shape_dict["target_field"]["ndim"]
+        # add field details
+        check_keys(operator_config["field"], required_sub_keys)
+        operator_config["field"]["channels"] = deep_get(
+            self.shape_dict, ["field", "channels"]
+        )
+        operator_config["field"]["ndim"] = deep_get(self.shape_dict, ["field", "ndim"])
+        # add condition details
+        check_keys(operator_config["condition"], required_sub_keys)
+        operator_config["condition"]["channels"] = deep_get(
+            self.shape_dict, ["condition", "channels"]
+        )
+        operator_config["condition"]["ndim"] = deep_get(
+            self.shape_dict, ["condition", "ndim"]
+        )
 
         return operator_config
 
@@ -223,12 +239,11 @@ class Flow(L.LightningModule):
     def _sample_prior_measure(self, batch_size: int):
         """sample prior measure"""
         # prepare flattened domain
-        domain_eval = (
-            self.target_field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
-        )
+        domain_eval = self.field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
+
         # field shape
-        field_channels = self.shape_dict["target_field"]["channels"]
-        field_dims = self.shape_dict["target_field"]["dims"]
+        field_channels = deep_get(self.shape_dict, ["field", "channels"])
+        field_dims = deep_get(self.shape_dict, ["field", "dims"])
         # sample prior
         prior_samples = self.prior.sample(
             domain=domain_eval,
@@ -236,6 +251,7 @@ class Flow(L.LightningModule):
             field_channels=field_channels,
             field_dims=field_dims,
         )
+
         assert prior_samples.shape == (batch_size, field_channels, *field_dims)
 
         return prior_samples
@@ -249,7 +265,7 @@ class Flow(L.LightningModule):
         ), "prior sample shape not same as field shape"
         # extract shape
         batch_size = target_field.shape[0]
-        field_ndim = self.shape_dict["target_field"]["ndim"]
+        field_ndim = deep_get(self.shape_dict, ["field", "ndim"])
         # reshape t
         t_expand = t.view(batch_size, 1, *([1] * field_ndim))
         # sample noise (fresh draw from prior measure)
@@ -295,9 +311,12 @@ class Flow(L.LightningModule):
         )
         # compute the model vector field
         vt = self.vector_field(
-            psi=psi, condition=condition, field_domain=self.target_field_domain, t=t
+            psi=psi,
+            condition=condition,
+            field_domain=self.field_domain,
+            condition_domain=self.condition_domain,
+            t=t,
         )
-
         assert vt.shape == psi_prime.shape, "incorrect target and model vector field"
         # Compute the loss
         loss = torch.mean((vt - psi_prime) ** 2)
@@ -320,9 +339,12 @@ class Flow(L.LightningModule):
         else:
             print("\n[All parameters that require grad received gradients]")
 
-    # def on_after_backward(self):
-    #     """ for debugging of unused parameters """
-    #     self._check_unused_parameters()
+    def on_after_backward(self, check: bool = False):
+        """for debugging of unused parameters"""
+        if check:
+            self._check_unused_parameters()
+        else:
+            pass
 
     def load_state_dict(self, state_dict, strict=True):
         # drop PyTorch-internal metadata if present
@@ -333,10 +355,11 @@ class Flow(L.LightningModule):
         # sizes
         batch_size = field.shape[0]
         n_gen = field.shape[1]
-        field_channels = self.shape_dict["target_field"]["channels"]
-        field_dims = self.shape_dict["target_field"]["dims"]
-        condition_channels = self.shape_dict["condition"]["channels"]
-        condition_dims = self.shape_dict["condition"]["dims"]
+
+        field_channels = deep_get(self.shape_dict, ["field", "channels"])
+        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+        condition_channels = deep_get(self.shape_dict, ["condition", "channels"])
+        condition_dims = deep_get(self.shape_dict, ["condition", "dims"])
 
         # create eval field and condition
         field_eval = field.view(batch_size * n_gen, field_channels, *field_dims)
@@ -350,7 +373,8 @@ class Flow(L.LightningModule):
             vt = self.vector_field(
                 psi=field_eval,
                 condition=condition_eval,
-                field_domain=self.target_field_domain,
+                field_domain=self.field_domain,
+                condition_domain=self.condition_domain,
                 t=t_eval,
             )
         return vt.view(batch_size, n_gen, field_channels, *field_dims)
@@ -367,16 +391,18 @@ class Flow(L.LightningModule):
         **kwargs,
     ):
         """integrate the flow"""
-        # sizes
+        # extract sizes
         batch_size = condition.shape[0]
-        field_channels = self.shape_dict["target_field"]["channels"]
-        field_dims = self.shape_dict["target_field"]["dims"]
-        condition_channels = self.shape_dict["condition"]["channels"]
-        condition_dims = self.shape_dict["condition"]["dims"]
+        field_channels = deep_get(self.shape_dict, ["field", "channels"])
+        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+        condition_channels = deep_get(self.shape_dict, ["condition", "channels"])
+        condition_dims = deep_get(self.shape_dict, ["condition", "dims"])
 
         # create condition batch
-        condition_batch = condition.unsqueeze(1).expand(
-            -1, n_gen, condition_channels, *condition_dims
+        condition_batch = (
+            condition.unsqueeze(1)
+            .expand(-1, n_gen, condition_channels, *condition_dims)
+            .to(self.device)
         )
         # sample prior
         prior = self._sample_prior_measure(batch_size=batch_size * n_gen).view(

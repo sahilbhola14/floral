@@ -23,7 +23,7 @@ dataloader:
   train_ratio: 0.7 # percentage of {n_samples} to train
   num_workers: 6 # Number of workers
   normalize:
-    # normalization: (x - mu) * sigma_t / sigma
+    # normalization: (x - mu) / sigma
     target_field:
       enabled: True # True: normalize the field
       auto: True # If True, mean and std are computed.
@@ -47,9 +47,15 @@ flow:
   sig_min: 1.0e-5 # gaussian std for the data
   operator:
     # operator parameters
-    hidden_channels: 128
-    proj_channels: 128
-    modes: 32
+    field:
+      hidden_channels: 128
+      proj_channels: 128
+      modes: 32
+    condition:
+      hidden_channels: 128
+      proj_channels: 128
+      out_channels: 16
+      modes: 32
   prior:
     # prior GP measure parameters
     lengthscale: 1.0e-3

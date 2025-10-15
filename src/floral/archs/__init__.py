@@ -1,3 +1,3 @@
-from .operator import get_operator_modules
+from .operator import get_vector_field_operator
 
-__all__ = ["get_operator_modules"]
+__all__ = ["get_vector_field_operator"]

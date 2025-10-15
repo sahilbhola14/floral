@@ -112,13 +112,15 @@ def generate():
     high_data = {
         "field": hf_solution[: args.n_samples],
         "condition": condition[: args.n_samples],
-        "domain": domain,
+        "field_domain": domain,
+        "condition_domain": domain,
     }
-
+    # low fidelity must be interpoalted to the same domain as HF
     low_data = {
         "field": lf_solution[: args.n_samples],
         "condition": condition[: args.n_samples],
-        "domain": domain,  # low fidelity must be interpoalted to the same domain as HF
+        "field_domain": domain,
+        "condition_domain": domain,
     }
 
     # plot a snapshot

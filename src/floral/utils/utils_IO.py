@@ -23,14 +23,29 @@ def check_keys(mapping, required_keys):
     Args:
         mapping (dict): dictionary to check
     """
-    assert isinstance(mapping, dict), "target mapping should be a dictionary"
-    assert isinstance(required_keys, list) and all(
+
+    assert isinstance(
+        mapping, (dict, DictConfig)
+    ), "target mapping should be a dictionary or DictConfig"
+
+    assert isinstance(required_keys, (list, str)) and all(
         isinstance(el, str) for el in required_keys
     ), "required keys should be a list of strings"
-    missing_keys = [k for k in required_keys if k not in mapping]
-    assert (
-        len(missing_keys) == 0
-    ), f"Missing keys : {', '.join(missing_keys)} in the dictionary."
+
+    # check missing keys
+    if isinstance(required_keys, list):
+        missing_keys = [k for k in required_keys if k not in mapping]
+        assert (
+            len(missing_keys) == 0
+        ), f"Missing keys : {', '.join(missing_keys)} in the dictionary."
+    elif isinstance(required_keys, str):
+        assert (
+            required_keys in mapping
+        ), f"Missing keys : {required_keys} in the dictionary."
+    else:
+        raise ValueError(
+            f"required keys must be list or string, got {type(required_keys).__name__}"
+        )
 
 
 def omega_to_dict(cfg: DictConfig, resolve: bool = True) -> Dict[str, Any]:
@@ -50,10 +65,32 @@ def omega_to_dict(cfg: DictConfig, resolve: bool = True) -> Dict[str, Any]:
     return OmegaConf.to_container(cfg, resolve=resolve)
 
 
+def deep_get(mapping: dict | DictConfig, keys, default=None):
+    assert isinstance(
+        mapping, (dict, DictConfig)
+    ), "target mapping should be a dictionary or DictConfig"
+    assert isinstance(keys, list) and len(keys) > 0, "keys must be passed as a list"
+    for k in keys:
+        if isinstance(mapping, (dict, DictConfig)):
+            mapping = mapping.get(k, default)
+        else:
+            return default
+    return mapping
+
+
 @rank_zero_only
 def printer(message):
     """Print message only on rank 0"""
     print(message)
+
+
+@rank_zero_only
+def print_section(section_name: str, end: bool = False):
+    """print section name"""
+    if end:
+        print("#" * 10 + "#" + "#" * len(section_name) + "#" + "#" * 10)
+    else:
+        print("#" * 10 + " " + section_name + " " + "#" * 10)
 
 
 def t2n(tensor: torch.Tensor) -> torch.Tensor:

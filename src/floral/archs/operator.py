@@ -7,123 +7,130 @@ modified to account for fourier time embedding and conditional inputs.
 import torch
 from neuralop.models import FNO as _FNO
 from floral.utils import check_keys
+from .embedding import SpatialAttentivePooling
 
 
-def get_operator_modules(operator_config: dict):
+def get_vector_field_operator(operator_config: dict):
     """build the operator modules
     Args:
         operator_config (dict):
             configuration for building the operator
     """
     # check the required keys
-    required_keys = [
-        "field_channels",
-        "condition_channels",
-        "hidden_channels",
-        "proj_channels",
-        "modes",
-        "field_ndim",
-    ]
+    required_keys = ["field", "condition"]
     check_keys(operator_config, required_keys)
     # create model
-    return FNO(**operator_config)
+    return VectorField(
+        field_config=operator_config["field"],
+        condition_config=operator_config["condition"],
+    )
 
 
-def t_allhot(t, shape):
-    batch_size = shape[0]
-    # n_channels = shape[1]
-    dim = shape[2:]
-    n_dim = len(dim)
-
-    t = t.view(batch_size, *[1] * (1 + n_dim))
-    t = t * torch.ones(batch_size, 1, *dim, device=t.device)
-    return t
-
-
-def conds_allhot(conds, shape):
-    # batch_size = shape[0]
-    dim = shape[2:]
-    n_dim = len(dim)
-
-    # expand conds
-
-    if n_dim == 1:
-        conds = conds.unsqueeze(-1)
-    elif n_dim == 2:
-        conds = conds.unsqueeze(-1).unsqueeze(-1)
-    elif n_dim == 3:
-        conds = conds.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-
-    conds = conds.repeat(1, 1, *dim)
-    return conds
-
-
-def make_posn_embed(batch_size, dims):
-    if len(dims) == 1:
-        # Single channel of spatial embeddings
-        emb = torch.linspace(0, 1, dims[0])
-        emb = emb.unsqueeze(0).repeat(batch_size, 1, 1)
-    elif len(dims) == 2:
-        # 2 Channels of spatial embeddings
-        x1 = torch.linspace(0, 1, dims[1]).repeat(dims[0], 1).unsqueeze(0)
-        x2 = torch.linspace(0, 1, dims[0]).repeat(dims[1], 1).T.unsqueeze(0)
-        emb = torch.cat((x1, x2), dim=0)  # (2, dims[0], dims[1])
-
-        # Repeat along new batch channel
-        emb = emb.unsqueeze(0).repeat(batch_size, 1, 1, 1)  # (batch_size, 2, *dims)
-
-    # new
-    elif len(dims) == 3:
-        x1 = (
-            torch.linspace(0, 1, dims[0])
-            .reshape(1, dims[0], 1, 1)
-            .repeat(1, 1, dims[1], dims[2])
+class ConditionEmbedding(torch.nn.Module):
+    def __init__(
+        self, condition_config: dict, t_scaling: float = 1.0, pooling: str = "attention"
+    ):
+        super(ConditionEmbedding, self).__init__()
+        # intial check
+        required_keys = [
+            "hidden_channels",
+            "proj_channels",
+            "modes",
+            "out_channels",
+            "channels",
+            "ndim",
+        ]
+        check_keys(condition_config, required_keys)
+        # set attributes
+        self.t_scaling = t_scaling
+        for key in required_keys:
+            setattr(self, key, condition_config.get(key))
+        # create operator
+        n_modes = (self.modes,) * self.ndim
+        in_channels = self.channels + self.ndim + 1
+        self.fno = _FNO(
+            n_modes=n_modes,
+            hidden_channels=self.hidden_channels,
+            projection_channels=self.proj_channels,
+            in_channels=in_channels,
+            out_channels=self.out_channels,
         )
-        x2 = (
-            torch.linspace(0, 1, dims[1])
-            .reshape(1, 1, dims[1], 1)
-            .repeat(1, dims[0], 1, dims[2])
+        # spatiall attentive pooling
+        if pooling == "attention":
+            self.pool = SpatialAttentivePooling(in_channels=self.out_channels)
+        elif pooling == "mean":
+            raise NotImplementedError
+        else:
+            raise ValueError(f"Invalid pooling method: {pooling}")
+
+    def _check_input(
+        self, condition: torch.Tensor, condition_domain: torch.Tensor, t: torch.Tensor
+    ):
+        assert condition.ndim == self.ndim + 2
+        assert condition_domain.ndim == 3  # (batch_size, domain_channels, *domain_dims)
+        assert t.ndim == 2
+
+    def forward(
+        self, condition: torch.Tensor, condition_domain: torch.Tensor, t: torch.Tensor
+    ):
+        """forward pass"""
+        # input check
+        self._check_input(condition, condition_domain, t)
+        batch_size, _, *dims = condition.shape
+        # scale the time
+        t = t / self.t_scaling
+        # reshape time
+        t = t.view(batch_size, 1, *([1] * self.ndim)).expand(-1, -1, *dims)
+        # reshape domain
+        condition_domain = condition_domain.expand(
+            batch_size, *condition_domain.shape[1:]
         )
-        x3 = (
-            torch.linspace(0, 1, dims[2])
-            .reshape(1, 1, 1, dims[2])
-            .repeat(1, dims[0], dims[1], 1)
-        )
-        emb = torch.cat((x1, x2, x3), dim=0)
+        # create input
+        inp = torch.cat((condition, condition_domain, t), dim=1)
+        # compute operator output (batch_size, out_channels, *dims)
+        out = self.fno(inp)
+        # apply spatial attentive pooling
+        out = self.pool(out)
 
-        emb = emb.unsqueeze(0).repeat(batch_size, 1, 1, 1, 1)  # (batch_size, 3, *dims)
-
-    else:
-        raise NotImplementedError
-
-    return emb
+        return out
 
 
-class FNO(torch.nn.Module):
+class VectorField(torch.nn.Module):
     def __init__(
         self,
-        modes: int,
-        field_channels: int,
-        condition_channels: int,
-        hidden_channels: int,
-        proj_channels: int,
-        field_ndim: int = 1,
+        field_config: dict,
+        condition_config: dict,
         t_scaling: float = 1.0,
         **kwargs,
     ):
-        super(FNO, self).__init__()
+        super(VectorField, self).__init__()
+        # intial check
+        required_keys = [
+            "hidden_channels",
+            "proj_channels",
+            "modes",
+            "channels",
+            "ndim",
+        ]
+        check_keys(field_config, required_keys)
+        # set attributes
         self.t_scaling = t_scaling
-        # same modes in each dimension
-        n_modes = (modes,) * field_ndim
-        # in_channels = (field + domain + t + condition)
-        in_channels = field_channels + field_ndim + condition_channels + 1
-        # model
+        for key in required_keys:
+            setattr(self, key, field_config.get(key))
+
+        # condition FNO
+        self.condition_embedding = ConditionEmbedding(condition_config, t_scaling)
+        # create operator
+        n_modes = (self.modes,) * self.ndim
+        in_channels = (
+            self.channels + self.ndim + condition_config.get("out_channels") + 1
+        )
         self.model = _FNO(
             n_modes=n_modes,
-            hidden_channels=hidden_channels,
-            projection_channels=proj_channels,
+            hidden_channels=self.hidden_channels,
+            projection_channels=self.proj_channels,
             in_channels=in_channels,
-            out_channels=field_channels,
+            out_channels=self.channels,
         )
 
     def forward(
@@ -131,6 +138,7 @@ class FNO(torch.nn.Module):
         psi: torch.Tensor,
         condition: torch.Tensor,
         field_domain: torch.Tensor,
+        condition_domain: torch.Tensor,
         t: torch.Tensor,
     ):
         """forward pass
@@ -141,21 +149,30 @@ class FNO(torch.nn.Module):
             condition (torch.Tensor):
                 conditions of shape (batch_size, condition_channels, *condition_dims)
             field_domain (torch.Tensor):
-                domain of shape (1, domain_channels, *domain_dims)
+                domain of shape (1, field_domain_channels, *field_domain_dims)
+            condition_domain (torch.Tensor):
+                domain of shape (1, condition_domain_channels, *condition_domain_dims)
             t (torch.Tensor):
                 samples of time of shape (batch_size, 1)
         """
         # extract shape
-        batch_size, field_channels, *field_dims = psi.shape
-        field_ndim = len(field_dims)
+        batch_size, channels, *dims = psi.shape
+        ndim = len(dims)
+        # condition embedding (batch_size, condition_out_channels)
+        condition_embedding = self.condition_embedding(
+            condition=condition, condition_domain=condition_domain, t=t
+        )
+        condition_embedding = condition_embedding.view(
+            batch_size, -1, *([1] * ndim)
+        ).expand(-1, -1, *dims)
         # scale the time
         t = t / self.t_scaling
         # reshape time
-        t = t.view(batch_size, 1, *([1] * field_ndim)).expand(-1, -1, *field_dims)
+        t = t.view(batch_size, 1, *([1] * ndim)).expand(-1, -1, *dims)
         # reshape domain
         field_domain = field_domain.expand(batch_size, *field_domain.shape[1:])
         # create input to the FNO
-        inp = torch.cat((psi, field_domain, t, condition), dim=1)
+        inp = torch.cat((psi, field_domain, condition_embedding, t), dim=1)
         # compute output
         out = self.model(inp)
         return out
