@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from neuralop.layers.spectral_convolution import SpectralConv
 from floral.utils import check_keys, printer
-from .embedding import CrossAttention, MLP, build_pos_encoder, conv_nd
+from .embedding import CrossAttention, build_pos_encoder, conv_nd
 
 
 def get_vector_field_operator(operator_config: dict):
@@ -34,7 +34,7 @@ class SpectralBlock(nn.Module):
         out_channels: int,
         n_modes: tuple,
         cond_dim: int | None = None,
-        cond_method: str = "attention",
+        **kwargs: dict,
     ):
         super(SpectralBlock, self).__init__()
         self.in_channels = in_channels
@@ -55,27 +55,33 @@ class SpectralBlock(nn.Module):
         # condition layer
         if self.apply_condition:
             self.condition_layer = self._build_condition_layer(
-                cond_dim=cond_dim, cond_method=cond_method
+                embed_dim=kwargs.get("embed_dim", 128),
+                num_heads=kwargs.get("num_heads", 4),
             )
 
-    def _build_condition_layer(
-        self, cond_dim: int = None, cond_method: str = "cross_attn"
-    ):
+    def _build_condition_layer(self, embed_dim: int, num_heads: int):
         """build the conditon layer"""
-        if cond_dim == "cross_attn":
-            condition_layer = CrossAttention(
-                dim_q=self.out_channels, dim_kv=self.cond_dim
-            )
-        else:
-            raise ValueError(f"condition method: {cond_method} not implemented")
+        # attention layer
+        attention_layer = CrossAttention(
+            dim_q=self.out_channels,
+            dim_kv=self.cond_dim,
+            dim_out=embed_dim,
+            num_heads=num_heads,
+        )
 
-        return condition_layer
+        return attention_layer
+
+    def _condition_forward(self, x, cond):
+        """apply condition to the output"""
+        raise NotImplementedError
 
     def forward(self, x, cond=None):
+        # apply the spectral layer
         x = self.spectral_layer(x)
+        # normalize
         x = self.norm(x)
         if self.apply_condition:
-            x = self.condition_layer(x, cond, cond)
+            x = self._condition_forward(x=x, cond=cond)
         return x
 
 
@@ -89,13 +95,11 @@ class FNOBlock(nn.Module):
         activation: str = "gelu",
         skip: str = "linear",
     ):
-        cond_dim = self.condition_channels
         super(FNOBlock, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.n_modes = n_modes
         self.cond_dim = cond_dim
-        self.cond_
         self.ndim = len(self.n_modes)
         # spectral layers
         self.spectral_layer = self._build_spectral_module()
@@ -109,6 +113,7 @@ class FNOBlock(nn.Module):
             in_channels=self.in_channels,
             out_channels=self.out_channels,
             n_modes=self.n_modes,
+            cond_dim=self.cond_dim,
         )
 
     def _build_skip_module(self):
@@ -134,7 +139,7 @@ class FNOBlock(nn.Module):
 
     def forward(self, x, cond=None):
         """apply forward"""
-        x_spec = self.spectral_layer(x)  # (B, out_channels, *dims)
+        x_spec = self.spectral_layer(x=x, cond=cond)  # (B, out_channels, *dims)
         if self.skip is not None:
             x_skip = self.skip(x)
             x = x_spec + x_skip
@@ -239,62 +244,10 @@ class FNO(nn.Module):
         x = self.lifting(x)
         # apply spectral layers
         for layer in self.spectral_layers:
-            x = layer(x, cond)
+            x = layer(x=x, cond=cond)
         # project back
         x = self.projection(x)
         return x
-
-
-class SpatialDecoder(nn.Module):
-    """Decode latent features to spatial field using coordinate-based queries"""
-
-    def __init__(self, latent_channels: int, field_ndim: int, **kwargs: dict):
-        super(SpatialDecoder, self).__init__()
-        self.field_ndim = field_ndim
-        # coordinate encoder
-        embed_dim = kwargs.get("embed_dim", 128)
-        self.coord_encoder = MLP(
-            in_dim=self.field_ndim,
-            width=[64, 64],
-            out_dim=embed_dim,
-            activations=[nn.ReLU(), nn.ReLU(), None],
-            dropout=kwargs.get("dropout", 0.0),
-        )
-        # attention
-        self.cross_attention = CrossAttention(
-            dim_q=embed_dim,
-            dim_kv=latent_channels,
-            num_heads=kwargs.get("num_heads", 8),
-        )
-        # final projection
-        self.out_projection = MLP(
-            in_dim=embed_dim,
-            width=[latent_channels],
-            out_dim=latent_channels,
-            activations=[nn.GELU(), None],
-            dropout=kwargs.get("dropout", 0.0),
-        )
-
-    def forward(self, latent_features: torch.Tensor, field_domain: torch.Tensor):
-        """forward pass"""
-        raise NotImplementedError
-        # flatten the field domain
-        field_domain_flat = field_domain.flatten(2).transpose(1, 2)
-        # encode the field coordinates (queries) (B, Nq, embed_dim)
-        coord_queries = self.coord_encoder(field_domain_flat)
-        print(latent_features[0])
-        # cross attention (B, Nq, embed_dim)
-        attended_coords = self.cross_attention(
-            query=coord_queries, key=latent_features, value=latent_features
-        )
-        # output
-        out = self.out_projection(
-            attended_coords
-        )  # (batch_size, N_field, latent_channels)
-        # reshape output
-        out = out.transpose(1, 2)
-
-        return out
 
 
 class VectorField(nn.Module):
@@ -302,56 +255,137 @@ class VectorField(nn.Module):
         self,
         field_config: dict,
         condition_config: dict,
-        t_scaling: float = 1.0,
         **kwargs,
     ):
         super(VectorField, self).__init__()
         # intial check
         required_keys = ["channels", "ndim"]
         check_keys(field_config, required_keys)
+        check_keys(condition_config, required_keys)
         # set attributes
-        self.t_scaling = t_scaling
         self.field_channels = field_config.get("channels")
-        self.field_hidden_channels = field_config.get("hidden_channels", 128)
         self.field_ndim = field_config.get("ndim")
+        self.field_hidden_channels = field_config.get("hidden_channels", 128)
         self.field_modes = field_config.get("modes", 32)
         self.condition_channels = condition_config.get("channels")
-        self.condition_out_channels = condition_config.get("out_channels")
-        # domain encoder
+        self.condition_ndim = condition_config.get("ndim")
+
+        # domain encoders
+        (self.field_domain_encoder, self.field_domain_embed_dim,) = build_pos_encoder(
+            pos_encoder=kwargs.get("pos_encoder", "fourier"),
+            ndim=self.field_ndim,
+        )
+
         (
-            self.field_domain_encoder,
-            self.field_domain_embed_dim,
-        ) = self._build_pos_encoder(pos_encoder=kwargs.get("pos_encoder", "fourier"))
-        # field processor
-        self.field_model = self._build_field_module()
+            self.condition_domain_encoder,
+            self.condition_domain_embed_dim,
+        ) = build_pos_encoder(
+            pos_encoder=kwargs.get("pos_encoder", "fourier"),
+            ndim=self.condition_ndim,
+        )
+        # time encoder
+        self.time_encoder, self.time_embed_dim = build_pos_encoder(
+            pos_encoder=kwargs.get("time_encoder", "fourier"),
+            ndim=1,
+            learnable_modes=False,
+        )
+        # operator
+        self.field = self._build_field_module()
 
     def _build_field_module(self):
-        """build the field processor operator"""
+        """build the field processor operator
+        Vector field operator with inputs
+        1. psi:
+            samples from the conditional flow
+        2. field_domain:
+            domain for the field at which we need to generate the predition
+        3. condition:
+            additional conditions
+        4. time:
+            time samples
+        """
         # same modes in each dimension
         n_modes = (self.field_modes,) * self.field_ndim
-        # in_channels for the operator
+        # in_channels to the field
         in_channels = (
-            self.field_channels
-            + self.field_domain_embed_dim
-            + self.condition_channels
-            + 1
+            self.field_channels + self.field_domain_embed_dim + self.time_embed_dim
         )
-        return FNO(
+        # condition dims
+        cond_dim = self.condition_channels + self.condition_domain_embed_dim
+        # field model
+        field_model = FNO(
             in_channels=in_channels,
             hidden_channels=self.field_hidden_channels,
             out_channels=self.field_channels,
             n_modes=n_modes,
-            cond_dim=self.condition_channels,
+            cond_dim=cond_dim,
         )
 
-    def _build_pos_encoder(self, pos_encoder: str = "rbf"):
-        """build the position encoder"""
-        field_domain_encoder = build_pos_encoder(
-            pos_encoder=pos_encoder,
-            ndim=self.field_ndim,
+        return field_model
+
+    def _check_inputs(
+        self,
+        field: torch.Tensor,
+        condition: torch.Tensor,
+        field_domain: torch.Tensor,
+        condition_domain: torch.Tensor,
+        t: torch.Tensor,
+    ):
+        """check inputs"""
+        assert (
+            field.ndim == self.field_ndim + 2
+        ), f"expected {self.field_ndim + 2}-D field, got {field.ndim}"
+        assert (
+            field.shape[1] == self.field_channels
+        ), f"expected {self.field_channels} field channels, got {field.shape[1]}"
+        assert (
+            condition.ndim == self.condition_ndim + 2
+        ), f"expected {self.condition_ndim + 2}-D condition, got {condition.ndim}"
+        assert (
+            condition.shape[1] == self.condition_channels
+        ), f"expected {self.condition_channels} condition channels, "
+        f" got {condition.shape[1]}"
+        assert (
+            t.ndim == 2 and t.shape[1] == 1
+        ), f"expected time of shape (batch_size, 1), got {t.shape}"
+        assert field_domain.ndim == 3, "expected field domain of shape "
+        f"(batch_size, {self.field_ndim}, {field.shape[2:]})"
+        assert condition_domain.ndim == 3, "expected condition domain of shape "
+        f"(batch_size, {self.condition_ndim}, {condition.shape[2:]}"
+
+    def _get_time_embedding(self, t: torch.Tensor, field_dims: list):
+        """time embedding
+        Args:
+            t (torch.Tensor):
+        """
+        batch_size = t.shape[0]
+        t_embed = self.time_encoder(t.unsqueeze(1)).squeeze(1)
+        t_embed = t_embed.view(batch_size, -1, *([1] * self.field_ndim)).expand(
+            -1, -1, *field_dims
         )
-        domain_embed_dim = field_domain_encoder.output_features
-        return field_domain_encoder, domain_embed_dim
+        return t_embed
+
+    def _get_field_domain_embedding(self, field_domain: torch.Tensor):
+        """field domain embedding"""
+        batch_size = field_domain.shape[0]
+        field_domain_flat = field_domain.flatten(2).transpose(1, 2)
+        domain_embed = (
+            self.field_domain_encoder(field_domain_flat)
+            .transpose(1, 2)
+            .view(batch_size, -1, *field_domain.shape[2:])
+        )
+        return domain_embed
+
+    def _get_condition_domain_embedding(self, condition_domain: torch.Tensor):
+        """condition domain embedding"""
+        batch_size = condition_domain.shape[0]
+        condition_domain_flat = condition_domain.flatten(2).transpose(1, 2)
+        domain_embed = (
+            self.condition_domain_encoder(condition_domain_flat)
+            .transpose(1, 2)
+            .view(batch_size, -1, *condition_domain.shape[2:])
+        )
+        return domain_embed
 
     def forward(
         self,
@@ -376,19 +410,29 @@ class VectorField(nn.Module):
                 samples of time of shape (batch_size, 1)
         """
         batch_size, _, *field_dims = psi.shape
-        # time embedding
-        t_scaled = t / self.t_scaling
-        t_embed = t_scaled.view(batch_size, 1, *([1] * self.field_ndim)).expand(
-            -1, -1, *field_dims
+        _, _, *condition_dims = condition.shape
+        # check inputs
+        self._check_inputs(
+            field=psi,
+            condition=condition,
+            field_domain=field_domain,
+            condition_domain=condition_domain,
+            t=t,
         )
-        # domain embedding
-        field_domain_expd = field_domain.expand(batch_size, *field_domain.shape[1:])
-        field_domain_flat = field_domain_expd.flatten(2).transpose(1, 2)
-        field_domain_embed = self.field_domain_encoder(coords=field_domain_flat)
-        field_domain_embed = field_domain_embed.transpose(1, 2).view(
-            batch_size, -1, *field_dims
+        # time embedding (batch_size, embed_dim, *field_dims)
+        t_embed = self._get_time_embedding(t=t, field_dims=field_dims)
+        # field domain embedding (batch_size, embed_dim, *field_dims)
+        field_domain_embed = self._get_field_domain_embedding(field_domain).expand(
+            batch_size, *([-1] * (field_domain.ndim - 1))
         )
-        # input
-        inp_vt = torch.cat((psi, field_domain_embed, condition, t_embed), dim=1)
-        vt = self.field_model(inp_vt)
+        # condition domain embedding (batch_size, embed_dim, *condiiton_dims)
+        condition_domain_embed = self._get_condition_domain_embedding(
+            condition_domain
+        ).expand(batch_size, *([-1] * (condition_domain.ndim - 1)))
+        # input field
+        inp_vt = torch.cat((psi, field_domain_embed, t_embed), dim=1)
+        # condition
+        cond_vt = torch.cat((condition, condition_domain_embed), dim=1)
+        vt = self.field(x=inp_vt, cond=cond_vt)
+        raise NotImplementedError
         return vt

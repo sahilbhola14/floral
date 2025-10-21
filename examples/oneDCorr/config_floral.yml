@@ -49,6 +49,7 @@ flow:
     # operator parameters
     field:
       hidden_channels: 128
+      proj_channels: 128
       modes: 32
     condition:
       hidden_channels: 128

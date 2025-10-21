@@ -11,11 +11,19 @@ import torch.nn.functional as F
 def build_pos_encoder(pos_encoder: str, **kwargs: dict):
     """
     get position encoder
+    Args:
+        pos_encoder (str):
+            type of position encoder
+    Returns:
+        encoder (nn.Module):
+            position encoder module
+        output_features (int):
+            dimensionality of the embedding
     """
     available_pos_encoders = ["rbf", "fourier"]
 
     if pos_encoder == "rbf":
-        return RBFPosEncoding(
+        encoder = RBFPosEncoding(
             ndim=kwargs.get("ndim"),
             n_centers=kwargs.get("n_centers", 10),
             learnable_centers=kwargs.get("learnable_centers", True),
@@ -23,7 +31,7 @@ def build_pos_encoder(pos_encoder: str, **kwargs: dict):
             domain_max=kwargs.get("domain_max", 1.0),
         )
     elif pos_encoder == "fourier":
-        return FourierPosEncoding(
+        encoder = FourierPosEncoding(
             ndim=kwargs.get("ndim"),
             n_fourier_modes=kwargs.get("n_fourier_modes", 5),
             learnable_modes=kwargs.get("learnable_modes", True),
@@ -33,6 +41,10 @@ def build_pos_encoder(pos_encoder: str, **kwargs: dict):
             f"Invalid pos_encoder:{pos_encoder}, "
             f"choose from {', '.join(available_pos_encoders)}"
         )
+
+    assert hasattr(encoder, "output_features"), "need to specify the output features"
+
+    return encoder, encoder.output_features
 
 
 def conv_nd(dims, *args, **kwargs):
@@ -366,7 +378,7 @@ class FourierPosEncoding(nn.Module):
         if learnable_modes:
             self.modes = nn.Parameter(modes)
         else:
-            self.modes = self.register_buffer("modes", modes)
+            self.register_buffer("modes", modes)
 
     def _initialize_modes(self):
         modes = torch.randn(self.ndim, self.n_fourier_modes)
@@ -374,6 +386,9 @@ class FourierPosEncoding(nn.Module):
 
     def _check_input(self, coords: torch.Tensor):
         assert coords.ndim == 3, f"exptected (batch_size, N, ndim), got {coords.shape}"
+        assert (
+            coords.shape[-1] == self.ndim
+        ), f"expected {self.ndim} features, got {coords.shape[-1]}"
 
     def _get_fourier_encoding(self, coords):
         batch_size = coords.shape[0]
