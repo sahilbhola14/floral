@@ -212,7 +212,6 @@ class OpDataModule(L.LightningDataModule):
             target_field = HF_field - LF_field
         else:
             target_field = HF_field
-
         # check availabe samples
         assert self.n_samples <= len(
             target_field

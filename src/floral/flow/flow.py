@@ -171,7 +171,7 @@ class Flow(L.LightningModule):
         operator_config = flow_config.get("operator")
         # check required keys in flow config
         required_keys = ["field", "condition"]
-        required_sub_keys = ["hidden_channels", "proj_channels", "modes"]
+        required_sub_keys = ["hidden_channels", "modes"]
         check_keys(operator_config, required_keys)
         # add field details
         check_keys(operator_config["field"], required_sub_keys)
@@ -439,5 +439,4 @@ class Flow(L.LightningModule):
             )[-1]
 
         assert x1.shape == (batch_size, n_gen, field_channels, *field_dims)
-
         return x1
