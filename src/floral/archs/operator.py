@@ -34,6 +34,8 @@ class SpectralBlock(nn.Module):
         out_channels: int,
         n_modes: tuple,
         cond_dim: int | None = None,
+        num_latents: int = 128,
+        latent_dim: int = 256,
         **kwargs: dict,
     ):
         super(SpectralBlock, self).__init__()
@@ -43,6 +45,8 @@ class SpectralBlock(nn.Module):
         self.ndim = len(self.n_modes)
         self.cond_dim = cond_dim
         self.apply_condition = self.cond_dim is not None
+        self.num_latents = num_latents
+        self.latent_dim = latent_dim
 
         # spectral layer
         self.spectral_layer = SpectralConv(
@@ -54,26 +58,41 @@ class SpectralBlock(nn.Module):
         self.norm = nn.LayerNorm(self.out_channels)
         # condition layer
         if self.apply_condition:
-            self.condition_layer = self._build_condition_layer(
-                embed_dim=kwargs.get("embed_dim", 128),
-                num_heads=kwargs.get("num_heads", 4),
+            # latent queries
+            self.latents = nn.Parameter(torch.randn(self.num_latents, self.latent_dim))
+            # cross attention: latent attends to the condition
+            self.cond_cross_attn = CrossAttention(
+                dim_q=self.latent_dim,
+                dim_kv=self.cond_dim,
+                num_heads=kwargs.get("num_heads", 8),
+            )
+            # cross attention: field attends to the latents
+            self.latent_cross_attn = CrossAttention(
+                dim_q=self.out_channels,
+                dim_kv=self.latent_dim,
+                num_heads=kwargs.get("num_heads", 8),
             )
 
-    def _build_condition_layer(self, embed_dim: int, num_heads: int):
-        """build the conditon layer"""
-        # attention layer
-        attention_layer = CrossAttention(
-            dim_q=self.out_channels,
-            dim_kv=self.cond_dim,
-            dim_out=embed_dim,
-            num_heads=num_heads,
-        )
-
-        return attention_layer
-
     def _condition_forward(self, x, cond):
-        """apply condition to the output"""
-        raise NotImplementedError
+        """apply condition to the output via latent cross attention"""
+        assert (
+            cond is not None
+        ), "need to provide condition for doing condition forward pass"
+        batch_size, _, *dims = x.shape
+        # expand latents (batch_size, num_latents, latent_dim)
+        latents = self.latents.unsqueeze(0).expand(batch_size, -1, -1)
+        # flatten condition for attention (batch_size, Nc, cond_dim)
+        cond_flat = cond.flatten(2).transpose(1, 2)
+        # latents attend to the condition (batch_size, num_latents, latent_dim)
+        latents = self.cond_cross_attn(query=latents, key=cond_flat, value=cond_flat)
+        # flatten field for attention (batch_size, Nx, out_channels)
+        x_flat = x.flatten(2).transpose(1, 2)
+        # field attends to the latents
+        x_attn = self.latent_cross_attn(query=x_flat, key=latents, value=latents)
+        # reshape to original
+        x_attn = x_attn.transpose(1, 2).view(batch_size, -1, *dims)
+
+        return x + x_attn
 
     def forward(self, x, cond=None):
         # apply the spectral layer
@@ -434,5 +453,4 @@ class VectorField(nn.Module):
         # condition
         cond_vt = torch.cat((condition, condition_domain_embed), dim=1)
         vt = self.field(x=inp_vt, cond=cond_vt)
-        raise NotImplementedError
         return vt
