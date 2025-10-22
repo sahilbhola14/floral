@@ -8,9 +8,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def build_pos_encoder(pos_encoder: str, **kwargs: dict):
+def build_domain_encoder(pos_encoder: str = "fourier", **kwargs: dict):
     """
-    get position encoder
+    get encoder for domain.
+    This is done to enrich the feature space.
     Args:
         pos_encoder (str):
             type of position encoder
@@ -23,7 +24,7 @@ def build_pos_encoder(pos_encoder: str, **kwargs: dict):
     available_pos_encoders = ["rbf", "fourier"]
 
     if pos_encoder == "rbf":
-        encoder = RBFPosEncoding(
+        encoder = RBFEncoding(
             ndim=kwargs.get("ndim"),
             n_centers=kwargs.get("n_centers", 10),
             learnable_centers=kwargs.get("learnable_centers", True),
@@ -31,7 +32,7 @@ def build_pos_encoder(pos_encoder: str, **kwargs: dict):
             domain_max=kwargs.get("domain_max", 1.0),
         )
     elif pos_encoder == "fourier":
-        encoder = FourierPosEncoding(
+        encoder = FourierEncoding(
             ndim=kwargs.get("ndim"),
             n_fourier_modes=kwargs.get("n_fourier_modes", 5),
             learnable_modes=kwargs.get("learnable_modes", True),
@@ -179,7 +180,7 @@ class ChannelFiLM(nn.Module):
         gamma = gamma.transpose(1, 2).view(batch_size, self.target_channels, *dims)
         beta = beta.transpose(1, 2).view(batch_size, self.target_channels, *dims)
         # apply film
-        target_mod = target * gamma + beta
+        target_mod = target * (1.0 + gamma) + beta
         assert target_mod.shape == target.shape, "Invalid modulation"
         return target_mod
 
@@ -281,9 +282,9 @@ class CrossAttention(nn.Module):
         return out
 
 
-class RBFPosEncoding(nn.Module):
+class RBFEncoding(nn.Module):
     """
-    Positional encoding using RBF kernels.
+    Encoding using RBF kernels.
     Convert the domain of shape (batch_size, N, ndim) to (batch_size, N, n_centers)
     """
 
@@ -295,7 +296,7 @@ class RBFPosEncoding(nn.Module):
         domain_min: float = 0.0,
         domain_max: float = 1.0,
     ):
-        super(RBFPosEncoding, self).__init__()
+        super(RBFEncoding, self).__init__()
         self.ndim = ndim
         self.n_centers = n_centers
         self.output_features = self.n_centers  # same as num centers
@@ -358,16 +359,16 @@ class RBFPosEncoding(nn.Module):
         return self._get_rbf_encoding(coords)
 
 
-class FourierPosEncoding(nn.Module):
+class FourierEncoding(nn.Module):
     """
-    Positional encoding using RBF kernels.
+    Encoding using fourier encoding
     Convert the domain of shape (batch_size, N, ndim) to (batch_size, N, n_centers)
     """
 
     def __init__(
         self, ndim: int, n_fourier_modes: int = 5, learnable_modes: bool = True
     ):
-        super(FourierPosEncoding, self).__init__()
+        super(FourierEncoding, self).__init__()
         self.ndim = ndim
         self.n_fourier_modes = n_fourier_modes
         self.output_features = (

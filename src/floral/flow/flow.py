@@ -1,4 +1,5 @@
 # src/floral/flow/flow.py
+import sys
 import lightning as L
 import wandb
 import torch
@@ -337,8 +338,9 @@ class Flow(L.LightningModule):
             print("\n[Unused parameters/buffers detected]")
             for kind, name, shape in unused:
                 print(f" - {kind}: {name}, shape={shape}")
+            sys.exit("Unused parameters")
         else:
-            print("\n[All parameters that require grad received gradients]")
+            pass
 
     def on_after_backward(self, check: bool = False):
         """for debugging of unused parameters"""

@@ -72,7 +72,7 @@ def build_trainer(
         monitor="val_loss",  # Metric to monitor
         min_delta=1e-4,  # Minimum change to qualify as improvement
         patience=int(
-            0.8 * max_epochs
+            0.3 * max_epochs
         ),  # Number of epochs with no improvement after which training will stop
         verbose=True,
         mode="min",  # "min" for loss, "max" for accuracy
