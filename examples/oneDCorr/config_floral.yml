@@ -2,7 +2,7 @@
 # configutations for 1-D toy problem
 
 # general configuration
-job_name: "oneDCorr_2000_samples" # Unique identifier for each run
+job_name: "oneDCorr" # Unique identifier for each run
 floral: True # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
@@ -12,6 +12,8 @@ logger_name: "oneDCorr" # Logger folder
 # configuration for data
 data:
   n_samples: 2000 # total samples for training + validation (for tractability)
+  n_train: 1500
+  n_val: 500
   LF: # low fidelity
     path: "./low_fidelity.npz"
   HF: # high fidelity
@@ -39,7 +41,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 3
+  devices: 1
   precision: '32-true'
 
 # configuration for flow-matching
@@ -54,8 +56,10 @@ flow:
     condition:
       hidden_channels: 128
       proj_channels: 128
-      out_channels: 16
+      out_channels: 5
       modes: 32
+      num_latents: 128
+      use_perceiver: True
   prior:
     # prior GP measure parameters
     lengthscale: 1.0e-3

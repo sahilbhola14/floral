@@ -54,7 +54,7 @@ class Inference:
         self.best_flow = best_flow
         assert self.best_flow.training is False, "model should be in training mode"
         self.device = self.best_flow.device
-        self.job_name = job_name
+        self.job_name = job_name.lower().strip()
         self.floral = floral
         self.generate_config = generate_config
         self.data_module = data_module
@@ -146,9 +146,18 @@ class Inference:
             "condition_plot": self.inference_input_dict.get("condition_plot"),
             "HF_field_prediction_plot": all_prediction_plot,
             "domain_dict": self.data_module.domain_dict,
+            "n_train": self.data_module.n_train,
+            "n_val": self.data_module.n_val,
+            "n_samples": self.data_module.n_samples,
         }
         # save the results to a file
-        save_path = f"{self.job_name}_results{'_floral' if self.floral else ''}.pt"
+        save_path_identifier = "floral" if self.floral else "flora"
+        job_identifier = (
+            self.job_name
+            + f"_n_train_{self.data_module.n_train}"
+            + f"_n_val_{self.data_module.n_val}"
+        )
+        save_path = f"{job_identifier}_results_{save_path_identifier}.pt"
         printer(f"Saving results to {save_path}")
         torch.save(result_dict, save_path)
 

@@ -1,4 +1,5 @@
 # src/floral/flow/flow.py
+import sys
 import lightning as L
 import wandb
 import torch
@@ -170,9 +171,10 @@ class Flow(L.LightningModule):
         """get the operator config"""
         operator_config = flow_config.get("operator")
         # check required keys in flow config
-        required_keys = ["field", "condition"]
-        required_sub_keys = ["hidden_channels", "proj_channels", "modes"]
+        required_keys = ["field"]
+        required_sub_keys = ["hidden_channels", "modes"]
         check_keys(operator_config, required_keys)
+
         # add field details
         check_keys(operator_config["field"], required_sub_keys)
         operator_config["field"]["channels"] = deep_get(
@@ -180,7 +182,7 @@ class Flow(L.LightningModule):
         )
         operator_config["field"]["ndim"] = deep_get(self.shape_dict, ["field", "ndim"])
         # add condition details
-        check_keys(operator_config["condition"], required_sub_keys)
+        operator_config["condition"] = {}
         operator_config["condition"]["channels"] = deep_get(
             self.shape_dict, ["condition", "channels"]
         )
@@ -314,7 +316,6 @@ class Flow(L.LightningModule):
             psi=psi,
             condition=condition,
             field_domain=self.field_domain,
-            condition_domain=self.condition_domain,
             t=t,
         )
         assert vt.shape == psi_prime.shape, "incorrect target and model vector field"
@@ -336,8 +337,9 @@ class Flow(L.LightningModule):
             print("\n[Unused parameters/buffers detected]")
             for kind, name, shape in unused:
                 print(f" - {kind}: {name}, shape={shape}")
+            sys.exit("Unused parameters")
         else:
-            print("\n[All parameters that require grad received gradients]")
+            pass
 
     def on_after_backward(self, check: bool = False):
         """for debugging of unused parameters"""
@@ -374,7 +376,6 @@ class Flow(L.LightningModule):
                 psi=field_eval,
                 condition=condition_eval,
                 field_domain=self.field_domain,
-                condition_domain=self.condition_domain,
                 t=t_eval,
             )
         return vt.view(batch_size, n_gen, field_channels, *field_dims)
@@ -439,5 +440,4 @@ class Flow(L.LightningModule):
             )[-1]
 
         assert x1.shape == (batch_size, n_gen, field_channels, *field_dims)
-
         return x1

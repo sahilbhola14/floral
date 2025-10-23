@@ -18,7 +18,8 @@ def build_checkpointer(config: dict, verbose: bool = False):
     ckp_save_path = config.get("checkpoint_save_path", "./experiments/")
     # checkpointer path
     check_keys(config, ["floral"])
-    path = ckp_save_path + "floral" if config.floral else ckp_save_path
+    path_identifier = "floral" if config.floral else "flora"
+    path = ckp_save_path + path_identifier
     checkpointer = ModelCheckpoint(
         monitor="val_loss",
         mode="min",
@@ -60,8 +61,8 @@ def build_trainer(
     accelerator = config.train.get("accelerator", "cpu")
     logger_name = config.get("logger_name", "default_logger").lower().strip()
     precision = config.train.get("precision", "32-true")
-
-    logger_name = logger_name + "_floral" if config.floral else logger_name
+    logger_identifier = "floral" if config.floral else "flora"
+    logger_name = logger_name + "_" + logger_identifier
     max_epochs = hp_config.get("max_epochs", 100)
 
     # get logger
@@ -72,7 +73,7 @@ def build_trainer(
         monitor="val_loss",  # Metric to monitor
         min_delta=1e-4,  # Minimum change to qualify as improvement
         patience=int(
-            0.9 * max_epochs
+            0.3 * max_epochs
         ),  # Number of epochs with no improvement after which training will stop
         verbose=True,
         mode="min",  # "min" for loss, "max" for accuracy

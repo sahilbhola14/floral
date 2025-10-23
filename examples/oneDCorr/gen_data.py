@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser(
     description="generate synthetic data for 1d model with correlation with the input",
 )
 parser.add_argument(
-    "-n", "--n_samples", type=int, default=2000, help="Number of samples to generate"
+    "-n", "--n_samples", type=int, default=10000, help="Number of samples to generate"
 )
 
 parser.add_argument(
