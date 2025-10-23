@@ -39,7 +39,7 @@ def build_domain_encoder(pos_encoder: str = "fourier", **kwargs: dict):
         )
     else:
         raise ValueError(
-            f"Invalid pos_encoder:{pos_encoder}, "
+            f"Invalid pos_encoder: {pos_encoder}, "
             f"choose from {', '.join(available_pos_encoders)}"
         )
 
