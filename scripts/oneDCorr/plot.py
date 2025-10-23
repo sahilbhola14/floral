@@ -244,6 +244,6 @@ def plot_pareto():
 
 if __name__ == "__main__":
     # plot field
-    # plot_field(n_train_samples=n_train_samples_list[0])
+    plot_field(n_train_samples=n_train_samples_list[0])
     # plot pareto front
     plot_pareto()
