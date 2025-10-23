@@ -2,7 +2,8 @@
 """
 operator modules
 adapted from https://github.com/yzshi5/SPL_OFM/blob/main/models/fno.py
-modified to account for fourier time embedding and conditional inputs.
+modified to account for fourier time embedding,
+conditional inputs, and domain embedding.
 """
 import torch
 import torch.nn as nn
@@ -356,7 +357,6 @@ class VectorField(nn.Module):
         field: torch.Tensor,
         condition: torch.Tensor,
         field_domain: torch.Tensor,
-        condition_domain: torch.Tensor,
         t: torch.Tensor,
     ):
         """check inputs"""
@@ -378,8 +378,6 @@ class VectorField(nn.Module):
         ), f"expected time of shape (batch_size, 1), got {t.shape}"
         assert field_domain.ndim == 3, "expected field domain of shape "
         f"(batch_size, {self.field_ndim}, {field.shape[2:]})"
-        assert condition_domain.ndim == 3, "expected condition domain of shape "
-        f"(batch_size, {self.condition_ndim}, {condition.shape[2:]}"
 
     def _get_time_embedding(self, t: torch.Tensor, field_dims: list):
         """time embedding
@@ -398,7 +396,6 @@ class VectorField(nn.Module):
         psi: torch.Tensor,
         condition: torch.Tensor,
         field_domain: torch.Tensor,
-        condition_domain: torch.Tensor,
         t: torch.Tensor,
     ):
         """forward pass
@@ -422,15 +419,12 @@ class VectorField(nn.Module):
             field=psi,
             condition=condition,
             field_domain=field_domain,
-            condition_domain=condition_domain,
             t=t,
         )
         # time embedding (batch_size, embed_dim, *field_dims)
         t_embed = self._get_time_embedding(t=t, field_dims=field_dims)
         # field domain (batch_size, field_ndim, *field_dims)
         x_domain = field_domain.expand(batch_size, -1, *field_dims)
-        # condition domain (batch_size, condition_ndim, *condition_dims)
-        # cond_domain = condition_domain.expand(batch_size, -1, *condition_dims)
         # input field
         inp_vt = torch.cat((psi, t_embed, condition), dim=1)
         # compute the vector field

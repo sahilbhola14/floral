@@ -48,11 +48,18 @@ class OpDataModule(L.LightningDataModule):
         self.LF_path = self.config.data.LF.path
         self.HF_path = self.config.data.HF.path
         self.n_samples = self.config.data.get("n_samples", 10)
+        self.n_val = self.config.data.get("n_val", 10)
+        self.n_train_all = self.n_samples - self.n_val
+        assert (
+            self.n_train_all > 0
+        ), f"number of validation samples cannot exceed : {self.n_samples}"
+        self.n_train = self.config.data.get("n_train", 10)
+        assert (
+            self.n_train <= self.n_train_all
+        ), f"number of train samples must be less than (or equal) to {self.n_train_all}"
         self.dataloader_config = self.config.dataloader
         self.reload = self.dataloader_config.reload
         self.num_workers = self.dataloader_config.num_workers
-        self.train_ratio = self.dataloader_config.get("train_ratio", 0.7)
-
         # extract hp_config
         self.batch_size = self.hp_config.get("batch_size", 64)
 
@@ -66,6 +73,10 @@ class OpDataModule(L.LightningDataModule):
         # verbose
         if verbose:
             self._print_header()
+
+        assert (
+            self.n_train + self.n_val <= self.n_samples
+        ), "number of (train + val) samples cannot exceed available samples"
 
     def _load_data(self, path):
         """Load data from the specified path"""
@@ -88,10 +99,12 @@ class OpDataModule(L.LightningDataModule):
         # file paths
         file_paths = {
             "datasets": {
-                "train": "trainset_floral.pt" if self.floral else "trainset.pt",
-                "val": "valset_floral.pt" if self.floral else "valset.pt",
+                "train": "trainset_floral.pt" if self.floral else "trainset_flora.pt",
+                "val": "valset_floral.pt" if self.floral else "valset_flora.pt",
             },
-            "statistics": "statistics_floral.pt" if self.floral else "statistics.pt",
+            "statistics": "statistics_floral.pt"
+            if self.floral
+            else "statistics_flora.pt",
         }
         return file_paths
 
@@ -100,16 +113,18 @@ class OpDataModule(L.LightningDataModule):
         printer("==" * 50)
         printer("**" * 10 + "Dataloader config" + "**" * 10)
         printer(f"Reload datasets: {self.reload}")
-        printer(f"Train/Val ratio: {self.train_ratio}")
+        printer(f"Train samples: {self.n_train}")
+        printer(f"Validation samples: {self.n_val}")
+        printer(f"Train/Val ratio: {self.n_train/self.n_val}")
         printer(f"Batch size: {self.batch_size}")
         printer(f"Num workers: {self.num_workers}")
         printer(
-            f"Normalize field: {self.dataloader_config.normalize.field.enabled}"
-            f"with Auto: {self.dataloader_config.normalize.field.auto}"
+            f"Normalize field: {self.dataloader_config.normalize.target_field.enabled}"
+            f" with Auto: {self.dataloader_config.normalize.target_field.auto}"
         )
         printer(
             f"Normalize condition: {self.dataloader_config.normalize.condition.enabled}"
-            f"with Auto: {self.dataloader_config.normalize.condition.auto}"
+            f" with Auto: {self.dataloader_config.normalize.condition.auto}"
         )
         printer("==" * 50)
 
@@ -255,10 +270,12 @@ class OpDataModule(L.LightningDataModule):
         """split the operator data dict to train and validation"""
         train_data_dict = {}
         val_data_dict = {}
-        n_train = int(self.dataloader_config.train_ratio * self.n_samples)
         for k in op_data_dict:
-            train_data_dict[k] = op_data_dict[k][:n_train]
-            val_data_dict[k] = op_data_dict[k][n_train:]
+            # this splitting ensure that the same validation set (from end) is used
+            train_data_dict[k] = op_data_dict[k][: self.n_train_all][: self.n_train]
+            val_data_dict[k] = op_data_dict[k][-self.n_val :]
+            assert len(train_data_dict[k]) == self.n_train
+            assert len(val_data_dict[k]) == self.n_val
         return train_data_dict, val_data_dict
 
     def _get_statistics(self, data, normalize_config):
