@@ -51,7 +51,7 @@ class SpectralBlock(nn.Module):
             n_modes=self.n_modes,
         )
         # layer norm
-        self.norm = nn.LayerNorm(self.out_channels)
+        self.norm = nn.GroupNorm(1, self.out_channels)
 
         # field domain embedding
         self.field_domain_encoder, field_domain_embed_dim = build_domain_encoder(
@@ -369,15 +369,18 @@ class VectorField(nn.Module):
         assert (
             condition.ndim == self.condition_ndim + 2
         ), f"expected {self.condition_ndim + 2}-D condition, got {condition.ndim}"
-        assert (
-            condition.shape[1] == self.condition_channels
-        ), f"expected {self.condition_channels} condition channels, "
-        f" got {condition.shape[1]}"
+        assert condition.shape[1] == self.condition_channels, (
+            f"expected {self.condition_channels} condition channels, "
+            f" got {condition.shape[1]}"
+        )
         assert (
             t.ndim == 2 and t.shape[1] == 1
         ), f"expected time of shape (batch_size, 1), got {t.shape}"
-        assert field_domain.ndim == 3, "expected field domain of shape "
-        f"(batch_size, {self.field_ndim}, {field.shape[2:]})"
+
+        assert field_domain.ndim == self.field_ndim + 2, (
+            "expected field domain of shape "
+            f"(batch_size, {self.field_ndim}, {field.shape[2:]})"
+        )
 
     def _get_time_embedding(self, t: torch.Tensor, field_dims: list):
         """time embedding
