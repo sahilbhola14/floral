@@ -262,10 +262,16 @@ def generate():
     # plot a snapshot
     plot_snapshot(domain, features, hf_solution, lf_solution)
 
-    # reshape
-    hf_solution = hf_solution.reshape(total_samples, args.m_high, args.m_high)
-    lf_solution = lf_solution.reshape(total_samples, args.m_high, args.m_high)
-    features = features.reshape(total_samples, args.m_high, args.m_high)
+    # reshape to (B, channels, *dims)
+    hf_solution = np.expand_dims(
+        hf_solution.reshape(total_samples, args.m_high, args.m_high), 1
+    )
+    lf_solution = np.expand_dims(
+        lf_solution.reshape(total_samples, args.m_high, args.m_high), 1
+    )
+    features = np.expand_dims(
+        features.reshape(total_samples, args.m_high, args.m_high), 1
+    )
 
     high_data = {
         "field": hf_solution,  # only high fidelity for training,
