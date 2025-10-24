@@ -106,7 +106,7 @@ def plot_field(n_train_samples):
         ax.grid()
         ax.label_outer()
 
-    plt.savefig("oneDCorr_field_comparison.png", dpi=300)
+    plt.savefig(f"oneDCorr_field_ntrain_{n_train_samples}_comparison.png", dpi=300)
     plt.close()
 
 
@@ -185,7 +185,6 @@ def get_pareto_data(n_train_samples):
 
 
 def plot_pareto():
-
     # Combine all data into one DataFrame
     all_data = []
     for n_train_samples in n_train_samples_list:
