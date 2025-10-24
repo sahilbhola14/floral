@@ -23,9 +23,6 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "-nt", "--n_test_samples", type=int, default=100, help="Number of samples to test"
-)
-parser.add_argument(
     "-mh",
     "--m_high",
     type=int,
@@ -247,16 +244,13 @@ def generate():
     y = np.linspace(0, 1, args.m_high)
     XX, YY = np.meshgrid(x, y)
     domain = np.stack([XX.flatten(), YY.flatten()], axis=1)  # shape (m_high^2, 2)
-    total_samples = args.n_samples + args.n_test_samples
-    features = sample_input_function(
-        total_samples, domain
-    )  # samples of the input functions
-    hf_solution = eval_high_fidelity_model(
-        features, domain
-    )  # evaluate high fidelity model
-    lf_solution = eval_low_fidelity_model(
-        features, domain
-    )  # evaluate low fidelity model
+    total_samples = args.n_samples
+    # samples of the input functions
+    features = sample_input_function(total_samples, domain)
+    # evaluate high fidelity model
+    hf_solution = eval_high_fidelity_model(features, domain)
+    # evaluate low fidelity model
+    lf_solution = eval_low_fidelity_model(features, domain)
 
     # check nan
     assert not np.isnan(hf_solution).any(), "High fidelity solution contains NaN"
@@ -265,35 +259,33 @@ def generate():
     # plot joint distribution
     plot_joint(lf_solution, hf_solution)
 
+    # plot a snapshot
+    plot_snapshot(domain, features, hf_solution, lf_solution)
+
+    # reshape
+    hf_solution = hf_solution.reshape(total_samples, args.m_high, args.m_high)
+    lf_solution = lf_solution.reshape(total_samples, args.m_high, args.m_high)
+    features = features.reshape(total_samples, args.m_high, args.m_high)
+
     high_data = {
-        "field": hf_solution[: args.n_samples],  # only high fidelity for training,
-        "condition": features[: args.n_samples],  # input function for training
-        "domain": domain,
+        "field": hf_solution,  # only high fidelity for training,
+        "condition": features,  # input function for training
+        "field_domain": domain,
+        "condition_domain": domain,
         "resolution": args.m_high,
     }
 
     low_data = {
-        "field": lf_solution[: args.n_samples],  # only low fidelity for training
-        "condition": features[: args.n_samples],  # input function for training
-        "domain": domain,
+        "field": lf_solution,  # only low fidelity for training
+        "condition": features,  # input function for training
+        "field_domain": domain,
+        "condition_domain": domain,
         "resolution": args.m_high,
     }
-
-    test_data = {
-        "LF_field": lf_solution[args.n_samples :],
-        "HF_field": hf_solution[args.n_samples :],
-        "condition": features[args.n_samples :],
-        "domain": domain,
-        "resolution": args.m_high,
-    }
-
-    # plot a snapshot
-    plot_snapshot(domain, features, hf_solution, lf_solution)
 
     # save
     np.savez("high_fidelity.npz", **high_data)
     np.savez("low_fidelity.npz", **low_data)
-    np.savez("test_data.npz", **test_data)
 
 
 if __name__ == "__main__":
