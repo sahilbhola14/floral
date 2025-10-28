@@ -1,4 +1,4 @@
-learning_rate: 1.0e-2
+learning_rate: 1.0e-3
 batch_size: 256
 max_epochs: 1000
 optimizer: "Adam"

@@ -3,7 +3,7 @@
 
 # general configuration
 job_name: "oneDCorr" # Unique identifier for each run
-floral: True # True means residual operator is learned
+floral: False # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
@@ -41,7 +41,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 1
+  devices: 3
   precision: '32-true'
 
 # configuration for flow-matching
@@ -51,15 +51,7 @@ flow:
     # operator parameters
     field:
       hidden_channels: 128
-      proj_channels: 128
       modes: 32
-    condition:
-      hidden_channels: 128
-      proj_channels: 128
-      out_channels: 5
-      modes: 32
-      num_latents: 128
-      use_perceiver: True
   prior:
     # prior GP measure parameters
     lengthscale: 1.0e-3
