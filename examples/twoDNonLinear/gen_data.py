@@ -23,9 +23,6 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "-nt", "--n_test_samples", type=int, default=100, help="Number of samples to test"
-)
-parser.add_argument(
     "-mh",
     "--m_high",
     type=int,
@@ -52,16 +49,6 @@ def eval_high_fidelity_model(a: np.ndarray, domain: np.ndarray):
     # original
     hf_solution = np.cos(a) * np.cos(y) ** 2
 
-    # modified
-    # hf_solution = (
-    #     (1 + 0.2 * np.sin(4 * x) + 0.3 * np.cos(5 * y)) * np.sin(3 * a + x - y)
-    #     + 0.1 * np.sin(30 * (a + x**2 - y**2))  # input-warped high freq
-    #     + 0.05
-    #     * np.exp(-150 * ((a + 2.0) ** 2 + (x - 0.75) ** 2))  # non-symmetric bump
-    #     + 0.05 * np.sign(np.sin(5 * a - 4 * x + 2 * y))  # nonlinear discontinuity
-    #     + 0.03 * np.heaviside(np.sin(6 * x * y + a), 1.0)  # location-specific jumps
-    # )
-
     assert hf_solution.shape == a.shape
     return hf_solution
 
@@ -78,13 +65,6 @@ def eval_low_fidelity_model(a: np.ndarray, domain: np.ndarray):
     # original
     lf_solution = np.cos(a) * np.cos(y) + x
 
-    # modified
-    # lf_solution = (
-    #     np.sin(3 * a + x - y)
-    #     + 0.05 * np.sin(6 * x + 3 * y)
-    #     - 0.02 * np.exp(-20 * ((x - 0.25) ** 2 + (y - 0.8) ** 2))
-    # )
-
     assert lf_solution.shape == a.shape
     return lf_solution
 
@@ -95,23 +75,6 @@ def sample_input_function(n_samples: int, domain: np.ndarray):
     x = domain[:, 0]
     # original
     a = k * x - 4.0
-
-    # modified (1)
-    # a = k * x * y - 4.0
-
-    # modfied
-    # a = (
-    #     (
-    #         np.sin(k * x**2) * np.cos(k * y**2)
-    #         + 0.3 * np.sin(0.5 * k**2 * x * y)
-    #         + 0.2 * np.tanh(0.3 * k * (x + y))
-    #         - 4.0
-    #     )
-    #     + 0.15 * k**2 * x**3 * y
-    #     - 0.1 * k * x * y**3
-    # )
-
-    # a += 0.25 * (x**2 - y**2) * np.cos(k * x * y)
 
     idx_plot = np.random.choice(len(a), 10, replace=False)
     fig, ax = plt.subplots(
@@ -130,9 +93,12 @@ def sample_input_function(n_samples: int, domain: np.ndarray):
             aspect="equal",
             interpolation="bilinear",
         )
-        ax_.set_xlabel(r"$x$")
-        ax_.set_ylabel(r"$y$")
+        ax_.set_xlabel(r"$x_a$")
+        ax_.set_ylabel(r"$y_a$")
         ax_.label_outer()
+        ax_.grid(False, which="both")
+        ax_.xaxis.grid(False, which="both")
+        ax_.yaxis.grid(False, which="both")
     plt.savefig("input_function_samples.png", dpi=300)
 
     return a
@@ -179,7 +145,7 @@ def plot_snapshot(
     )
     axs[0].set_title("Input")
     cb0 = fig.colorbar(im0, ax=axs[0], orientation="vertical", pad=0.01, shrink=0.5)
-    cb0.set_label(r"$a(k)$")
+    cb0.set_label(r"$a$")
 
     # --- Plot high-fidelity solution ---
     axs[1].imshow(
@@ -217,12 +183,19 @@ def plot_snapshot(
 
     # --- Shared vertical colorbar for hf and lf ---
     cb1 = fig.colorbar(im2, ax=axs[1:], orientation="vertical", shrink=0.5, pad=0.01)
-    cb1.set_label(r"$w(a)$")
+    cb1.set_label(r"$w$")
 
-    for ax in axs:
-        ax.set_xlabel(r"$x$")
-        ax.set_ylabel(r"$y$")
+    for ia, ax in enumerate(axs):
+        if ia == 0:
+            ax.set_xlabel(r"$x_a$")
+            ax.set_ylabel(r"$y_a$")
+        else:
+            ax.set_xlabel(r"$x_w$")
+            ax.set_ylabel(r"$y_w$")
         ax.label_outer()
+        ax.grid(False, which="both")
+        ax.xaxis.grid(False, which="both")
+        ax.yaxis.grid(False, which="both")
     plt.savefig("snapshot.png", dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -271,16 +244,13 @@ def generate():
     y = np.linspace(0, 1, args.m_high)
     XX, YY = np.meshgrid(x, y)
     domain = np.stack([XX.flatten(), YY.flatten()], axis=1)  # shape (m_high^2, 2)
-    total_samples = args.n_samples + args.n_test_samples
-    features = sample_input_function(
-        total_samples, domain
-    )  # samples of the input functions
-    hf_solution = eval_high_fidelity_model(
-        features, domain
-    )  # evaluate high fidelity model
-    lf_solution = eval_low_fidelity_model(
-        features, domain
-    )  # evaluate low fidelity model
+    total_samples = args.n_samples
+    # samples of the input functions
+    features = sample_input_function(total_samples, domain)
+    # evaluate high fidelity model
+    hf_solution = eval_high_fidelity_model(features, domain)
+    # evaluate low fidelity model
+    lf_solution = eval_low_fidelity_model(features, domain)
 
     # check nan
     assert not np.isnan(hf_solution).any(), "High fidelity solution contains NaN"
@@ -289,35 +259,39 @@ def generate():
     # plot joint distribution
     plot_joint(lf_solution, hf_solution)
 
+    # plot a snapshot
+    plot_snapshot(domain, features, hf_solution, lf_solution)
+
+    # reshape to (B, channels, *dims)
+    hf_solution = np.expand_dims(
+        hf_solution.reshape(total_samples, args.m_high, args.m_high), 1
+    )
+    lf_solution = np.expand_dims(
+        lf_solution.reshape(total_samples, args.m_high, args.m_high), 1
+    )
+    features = np.expand_dims(
+        features.reshape(total_samples, args.m_high, args.m_high), 1
+    )
+
     high_data = {
-        "field": hf_solution[: args.n_samples],  # only high fidelity for training,
-        "condition": features[: args.n_samples],  # input function for training
-        "domain": domain,
+        "field": hf_solution,  # only high fidelity for training,
+        "condition": features,  # input function for training
+        "field_domain": domain,
+        "condition_domain": domain,
         "resolution": args.m_high,
     }
 
     low_data = {
-        "field": lf_solution[: args.n_samples],  # only low fidelity for training
-        "condition": features[: args.n_samples],  # input function for training
-        "domain": domain,
+        "field": lf_solution,  # only low fidelity for training
+        "condition": features,  # input function for training
+        "field_domain": domain,
+        "condition_domain": domain,
         "resolution": args.m_high,
     }
-
-    test_data = {
-        "LF_field": lf_solution[args.n_samples :],
-        "HF_field": hf_solution[args.n_samples :],
-        "condition": features[args.n_samples :],
-        "domain": domain,
-        "resolution": args.m_high,
-    }
-
-    # plot a snapshot
-    plot_snapshot(domain, features, hf_solution, lf_solution)
 
     # save
     np.savez("high_fidelity.npz", **high_data)
     np.savez("low_fidelity.npz", **low_data)
-    np.savez("test_data.npz", **test_data)
 
 
 if __name__ == "__main__":

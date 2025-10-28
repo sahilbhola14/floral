@@ -185,7 +185,6 @@ class OpDataModule(L.LightningDataModule):
         condition_domain_tensor = condition_domain_tensor.T.view(
             -1, *condition_dims
         ).unsqueeze(0)
-
         return (
             field_tensor,
             condition_tensor,
