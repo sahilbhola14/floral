@@ -38,13 +38,13 @@ def print_header(config: dict):
     Args:
         config (dict): Configuration dictionary parameters.
     """
-    print_section("oneDCorr config")
+    print_section("twoDNonLinear config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Number of samples: {config.data.n_samples}")
-    print_section("oneDCorr config", end=True)
+    print_section("twoDNonLinear config", end=True)
 
 
 def train_model(hp_config: dict = None):
