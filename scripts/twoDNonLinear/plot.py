@@ -10,7 +10,7 @@ import pandas as pd
 plt.style.use("../journal.mplstyle")
 
 # Begin user input
-n_train_samples_list = [1500]
+n_train_samples_list = [50, 100, 500, 1000, 1500]
 n_val_samples = 500
 sigma_factor = 6.0  # Number of standard deviations for the error bars
 plot_idx = {"automatic": True, "idx": 6}  # Set to True for automatic index selection
@@ -29,6 +29,15 @@ def load_data(n_train_samples):
     print("n_val_samples: ", n_val_samples)
     data_flora = torch.load(file_flora, weights_only=False)
     data_floral = torch.load(file_floral, weights_only=False)
+    print(
+        "Number of samples for UQ (Flora): "
+        f"{data_flora['HF_field_prediction_plot'].shape[1]}"
+    )
+    print(
+        "Number of samples for UQ (Floral): "
+        f"{data_floral['HF_field_prediction_plot'].shape[1]}"
+    )
+    print("--" * 10)
 
     return data_flora, data_floral
 
@@ -55,8 +64,7 @@ def plot_field(n_train_samples):
         )
     else:
         idx = plot_idx["idx"]
-    print(f"Plotting index {idx}")
-
+        print(f"Plotting index {idx}")
     # extract data
     HF_field = data_floral["HF_field_plot"][idx]
     LF_field = data_floral["LF_field_plot"][idx]
@@ -116,10 +124,10 @@ def plot_field(n_train_samples):
         else:
             field_to_plot = means[method]
         field_to_plot = field_to_plot.squeeze(0)
-        print(
-            f"min and max of {method} mean/error: "
-            f"{field_to_plot.min().item()}, {field_to_plot.max().item()}"
-        )
+        # print(
+        #     f"min and max of {method} mean/error: "
+        #     f"{field_to_plot.min().item()}, {field_to_plot.max().item()}"
+        # )
 
         axs[0, ii].imshow(
             field_to_plot,
@@ -225,10 +233,14 @@ def get_pareto_data(n_train_samples):
 
     # Compute method-wise means
     summary_df = (
-        error_df.groupby("Method")["L2 Error"]
+        error_df.groupby("Method", observed=False)["L2 Error"]
         .mean()
         .to_frame()
-        .join(uncertainty_df.groupby("Method")["Mean Std"].mean().to_frame())
+        .join(
+            uncertainty_df.groupby("Method", observed=False)["Mean Std"]
+            .mean()
+            .to_frame()
+        )
         .reset_index()
     )
 
@@ -288,13 +300,13 @@ def plot_pareto():
     ax.set_yscale("log")
     ax.set_xscale("log")
     ax.set_xlim(1e-7, 1e-1)
-    ax.set_ylim(1e-1, 1e2)
+    # ax.set_ylim(1e-1, 1e2)
 
     # Optional: make legend cleaner
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1), loc="upper left")
     ax.set_xlabel("Mean Predictive Uncertainty (Mean Std)")
-    ax.set_ylabel("Mean Predictive Accuracy (L2 Norm)")
+    ax.set_ylabel("Mean Predictive Error (L2 Norm)")
     plt.tight_layout()
     plt.savefig("twoDNonLinear_pareto_comparison.png", dpi=300)
     plt.close()

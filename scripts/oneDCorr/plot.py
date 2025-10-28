@@ -235,7 +235,7 @@ def plot_pareto():
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1), loc="upper left")
     ax.set_xlabel("Mean Predictive Uncertainty (Mean Std)")
-    ax.set_ylabel("Mean Predictive Accuracy (L2 Norm)")
+    ax.set_ylabel("Mean Predictive Error (L2 Norm)")
     plt.tight_layout()
     plt.savefig("oneDCorr_pareto_comparison.png", dpi=300)
     plt.close()
