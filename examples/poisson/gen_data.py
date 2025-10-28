@@ -62,13 +62,6 @@ def parse_args():
         help="Number of samples to generate",
     )
     parser.add_argument(
-        "-nt",
-        "--n_test_samples",
-        type=int,
-        default=200,
-        help="Number of samples to generate for testing",
-    )
-    parser.add_argument(
         "-ml",
         "--m_low",
         type=int,
@@ -87,7 +80,6 @@ def parse_args():
     print("==" * 20)
     print("Poisson 1D example")
     print(f"Number of training samples: {args.n_samples}")
-    print(f"Number of test samples: {args.n_test_samples}")
     print(f"Low fidelity discretization points: {args.m_low}")
     print(f"High fidelity discretization points: {args.m_high}")
     print("==" * 20)
@@ -116,10 +108,15 @@ def plot_snapshot(
     features: np.ndarray,
     hf_solution: np.ndarray,
     lf_solution: np.ndarray,
+    random: bool = False,
 ):
     """Plot a snapshot of the high and low fidelity solutions."""
-    idx_plot = 0  # for reproducibility, always plot the first sample
-    plt.figure(figsize=(8, 4))
+    if random:
+        idx_plot = np.random.randint(0, hf_solution.shape[0])
+    else:
+        idx_plot = 0  # for reproducibility, always plot the first sample
+    print(f"Plotting sample index: {idx_plot}")
+    plt.figure(figsize=(6, 2.5))
     plt.plot(
         domain.ravel(),
         lf_solution[idx_plot, :],
@@ -128,11 +125,11 @@ def plot_snapshot(
         alpha=0.6,
     )
     plt.plot(domain.ravel(), hf_solution[idx_plot, :], label="High-fidelity", color="k")
-    plt.xlabel("$x$")
-    plt.ylabel("$w(a)$")
+    plt.xlabel(r"$x_w$")
+    plt.ylabel(r"$w(x_w)$")
     plt.legend(fontsize=10, loc="best")
     plt.tight_layout()
-    plt.savefig("snapshot.png")
+    plt.savefig("data_snapshot.png")
 
 
 def generate(args):
@@ -143,7 +140,7 @@ def generate(args):
         need the features interpolated to the high fidelity domain for training.
     """
     N = args.m_high * 10
-    total_samples = args.n_samples + args.n_test_samples
+    total_samples = args.n_samples
     space = GRF(1, length_scale=0.05, N=N, interp="cubic")
     features = space.random(total_samples)  # Generate random features
     hf_domain = np.linspace(0, 1, args.m_high)  # High fidelity domain
@@ -172,36 +169,39 @@ def generate(args):
 
     lf_solution = np.array(lf_solution)
     pbar.close()
+    # plot a snapshot
+    plot_snapshot(hf_domain, hf_features, hf_solution, lf_solution)
+    # reshape and save data
+    hf_domain = hf_domain.reshape(-1, 1)
+    hf_features = np.expand_dims(hf_features, 1)  # (B, channels_c, *dim_c)
+    hf_solution = np.expand_dims(hf_solution, 1)  # (B, channels_f, *dim_f)
+    lf_solution = np.expand_dims(lf_solution, 1)  # (B, channels_f, *dim_f)
+
+    assert hf_solution.shape == lf_solution.shape, (
+        "Incorrect lf solution shape."
+        "Consider interpolating the low fidelity solution."
+    )
 
     high_data = {
-        "field": hf_solution[: args.n_samples],
-        "condition": hf_features[: args.n_samples],
-        "domain": hf_domain.reshape(-1, 1),
-        "resolution": args.m_high,
+        "field": hf_solution,
+        "condition": hf_features,
+        "field_domain": hf_domain,
+        "condition_domain": hf_domain,
     }
 
     low_data = {
-        "field": lf_solution[: args.n_samples],
-        "condition": hf_features[: args.n_samples],
-        "domain": hf_domain.reshape(-1, 1),
-        "resolution": args.m_low,
+        "field": lf_solution,
+        "condition": hf_features,
+        "field_domain": hf_domain,
+        "condition_domain": hf_domain,
     }
-
-    test_data = {
-        "LF_field": lf_solution[args.n_samples :],
-        "HF_field": hf_solution[args.n_samples :],
-        "condition": hf_features[args.n_samples :],
-        "domain": hf_domain.reshape(-1, 1),
-        "resolution": args.m_high,
-    }
-
-    # plot a snapshot
-    plot_snapshot(hf_domain, hf_features, hf_solution, lf_solution)
 
     # save
     np.savez("high_fidelity.npz", **high_data)
     np.savez("low_fidelity.npz", **low_data)
-    np.savez("test_data.npz", **test_data)
+
+    print("saved high fidelity data to high_fidelity.npz")
+    print("saved low fidelity data to low_fidelity.npz")
 
 
 if __name__ == "__main__":
