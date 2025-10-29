@@ -25,7 +25,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=1,
+        default=10000,
         help="Number of samples to generate",
     )
 
@@ -33,7 +33,7 @@ def parse_args():
         "-res",
         "--resolution",
         type=int,
-        default=32,
+        default=64,
         help="Number of discretization points",
     )
 
@@ -59,8 +59,15 @@ def parse_args():
     )
 
     args = parser.parse_args()
-
-    print(f"Solving Darcy flow for {args.n_samples} samples.")
+    print("#" * 50)
+    print("Darcy Flow")
+    print("#" * 50)
+    print(f"Number of samples: {args.n_samples}")
+    print(f"Resolution: {args.resolution}")
+    print(f"Number of threads: {args.threads}")
+    print(f"High-fidelity parameterization dimension: {args.ntheta_HF}")
+    print(f"Low-fidelity parameterization dimension: {args.ntheta_LF}")
+    print("#" * 50)
 
     return args
 
@@ -149,8 +156,8 @@ class Darcysolver:
 
     def _get_generative_params(self, n_samples):
         """get the generative parameters"""
-        # theta = np.random.rand(self.ntheta, n_samples) * 2.5
-        theta = np.ones((self.ntheta, n_samples)) * 2.5
+        theta = np.random.rand(self.ntheta, n_samples) * 2.5
+        # theta = np.ones((self.ntheta, n_samples)) * 2.5
         return theta
 
     def _sample_permeability(self, n_samples):
@@ -306,7 +313,7 @@ class Darcysolver:
         return U1, U2
 
     def _solve(self, K: np.ndarray, sample_index: int):
-        if sample_index % 100 == 0:
+        if sample_index % 10 == 0:
             print(f"Generating sample {sample_index}...")
         xv = np.linspace(0, 1, self.resolution)
         dx = xv[1] - xv[0]
@@ -424,7 +431,7 @@ class MultiFidelity:
             ax.text(
                 0.05,
                 0.95,
-                f"$r = {r: .2f}$",
+                f"$r_{{Pearson}} = {r: .2f}$",
                 transform=ax.transAxes,
                 fontsize=12,
                 verticalalignment="top",
@@ -476,10 +483,20 @@ class MultiFidelity:
         vmin_K = min(K_LF.min(), K_HF.min())
         vmax_K = max(K_LF.max(), K_HF.max())
         im_K = axs[0, 0].imshow(
-            K_LF, aspect="equal", interpolation="bicubic", vmin=vmin_K, vmax=vmax_K
+            K_LF,
+            aspect="equal",
+            interpolation="bicubic",
+            vmin=vmin_K,
+            vmax=vmax_K,
+            origin="lower",
         )
         axs[0, 1].imshow(
-            K_HF, aspect="equal", interpolation="bicubic", vmin=vmin_K, vmax=vmax_K
+            K_HF,
+            aspect="equal",
+            interpolation="bicubic",
+            vmin=vmin_K,
+            vmax=vmax_K,
+            origin="lower",
         )
         axs[0, 0].set_title("Low-fidelity")
         axs[0, 1].set_title("High-fidelity")
@@ -495,10 +512,20 @@ class MultiFidelity:
         vmin_P = min(P_LF.min(), P_HF.min())
         vmax_P = max(P_LF.max(), P_HF.max())
         im_p = axs[1, 0].imshow(
-            P_LF, aspect="equal", interpolation="bicubic", vmin=vmin_P, vmax=vmax_P
+            P_LF,
+            aspect="equal",
+            interpolation="bicubic",
+            vmin=vmin_P,
+            vmax=vmax_P,
+            origin="lower",
         )
         axs[1, 1].imshow(
-            P_HF, aspect="equal", interpolation="bicubic", vmin=vmin_P, vmax=vmax_P
+            P_HF,
+            aspect="equal",
+            interpolation="bicubic",
+            vmin=vmin_P,
+            vmax=vmax_P,
+            origin="lower",
         )
         fig.colorbar(
             im_p,
@@ -512,8 +539,8 @@ class MultiFidelity:
         for ax in axs.flat:
             ax.set_xticks([])
             ax.set_yticks([])
-            ax.set_xlabel(r"$x$")
-            ax.set_ylabel(r"$y$")
+            ax.set_xlabel(r"$x_{1}$")
+            ax.set_ylabel(r"$x_{2}$")
             ax.label_outer()
         fig.set_constrained_layout_pads(
             w_pad=0.001, h_pad=0.001, hspace=0.002, wspace=0.02
