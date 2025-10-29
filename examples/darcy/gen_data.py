@@ -610,6 +610,32 @@ class MultiFidelity:
         self._make_joint_plot(data_dict_HF, data_dict_LF, random_index=False)
         # compute average pearson correlation coefficient
         self._comp_average_pearson(data_dict_HF, data_dict_LF)
+        # reshape data for saving
+        high_data = {
+            "field": np.expand_dims(
+                data_dict_HF["pressure"], 1
+            ),  # (B, channel_f, *dim_f)
+            "condition": np.expand_dims(
+                data_dict_HF["permeability"], 1
+            ),  # (B, channel_c, *dim_c)
+            "field_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
+            "condition_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
+        }
+        low_data = {
+            "field": np.expand_dims(
+                data_dict_LF["pressure"], 1
+            ),  # (B, channel_f, *dim_f)
+            "condition": np.expand_dims(
+                data_dict_HF["permeability"], 1
+            ),  # (B, channel_c, *dim_c)
+            "field_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
+            "condition_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
+        }
+        # save
+        np.savez("high_fidelity.npz", **high_data)
+        np.savez("low_fidelity.npz", **low_data)
+        print("Data saved to high_fidelity.npz and low_fidelity.npz")
+        print("Simulation complete.")
 
 
 if __name__ == "__main__":
