@@ -1,3 +1,8 @@
+# examples/kuramoto_sivashinsky/gen_data.py
+"""
+Python script to generate multi-fidelity KS equation data.
+Author: Sahil Bhola, University of Michigan, 2025
+"""
 import numpy as np
 import jax
 import jax_cfd.base as cfd
