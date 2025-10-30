@@ -28,7 +28,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=10000,
+        default=5000,
         help="Number of samples to generate",
     )
 
@@ -36,7 +36,7 @@ def parse_args():
         "-resHF",
         "--resolution_HF",
         type=int,
-        default=256,
+        default=128,
         help="Number of discretization points for high-fidelity",
     )
 
@@ -51,7 +51,7 @@ def parse_args():
         "-tsteps",
         "--time_steps",
         type=int,
-        default=256,
+        default=128,
         help="Number of time steps",
     )
     args = parser.parse_args()
@@ -96,12 +96,16 @@ class KuramotoSivashinskySimulator:
         (self.dx,) = self.grid.step
         (self.xs,) = self.grid.axes()
 
-        # domain (x, t)
-        # problem is treated as 2D with time as another dimension.
+        # normalized domain (x, t) for better domain conditioning
+        x_norm = (self.xs - self.spatial_domain_range[0]) / self.length
         t_eval = np.linspace(
             self.temporal_domain_range[0], self.temporal_domain_range[1], outer_steps
         )
-        XX, YY = np.meshgrid(self.xs, t_eval)
+        t_norm = (t_eval - self.temporal_domain_range[0]) / (
+            self.temporal_domain_range[1]
+        )
+
+        XX, YY = np.meshgrid(x_norm, t_norm)
         self.domain = np.concatenate(
             [XX.ravel().reshape(-1, 1), YY.ravel().reshape(-1, 1)], axis=1
         )
@@ -127,14 +131,93 @@ class KuramotoSivashinskySimulator:
         key = jax.random.key(seed)
         u0 = 0.0
 
+        # for i in [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]:
+        #     subkey1, subkey2, key = jax.random.split(key, 3)
+        #     u0 += jax.random.uniform(subkey1, (num_trajectories, 1)) * jnp.sin(
+        #         (2 * i * jnp.pi / self.length) * self.xs
+        #         + self.length
+        #         / self.size
+        #         * jax.random.uniform(subkey2, (num_trajectories, 1))
+        #     )
+
+        # === Low-frequency modes (modes 1-5) - Both HF and LF capture well ===
         for i in [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]:
             subkey1, subkey2, key = jax.random.split(key, 3)
-            u0 += jax.random.uniform(subkey1, (num_trajectories, 1)) * jnp.sin(
-                (2 * i * jnp.pi / self.length) * self.xs
-                + self.length
+            amplitude = jax.random.uniform(subkey1, (num_trajectories, 1))
+            phase = (
+                self.length
                 / self.size
                 * jax.random.uniform(subkey2, (num_trajectories, 1))
             )
+            u0 += amplitude * jnp.sin((2 * i * jnp.pi / self.length) * self.xs + phase)
+
+        # === Mid-frequency modes (modes 6-12) ===
+        for i in [-12, -11, -10, -9, -8, -7, -6, 6, 7, 8, 9, 10, 11, 12]:
+            subkey1, subkey2, key = jax.random.split(key, 3)
+            amplitude = 0.6 * jax.random.uniform(subkey1, (num_trajectories, 1))
+            phase = (
+                self.length
+                / self.size
+                * jax.random.uniform(subkey2, (num_trajectories, 1))
+            )
+            u0 += amplitude * jnp.sin((2 * i * jnp.pi / self.length) * self.xs + phase)
+
+        # === High-frequency modes (modes 15-22)  ===
+        # These create significant aliasing in LF
+        for i in [
+            -22,
+            -21,
+            -20,
+            -19,
+            -18,
+            -17,
+            -16,
+            -15,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+        ]:
+            subkey1, subkey2, key = jax.random.split(key, 3)
+            amplitude = 0.4 * jax.random.uniform(subkey1, (num_trajectories, 1))
+            phase = (
+                self.length
+                / self.size
+                * jax.random.uniform(subkey2, (num_trajectories, 1))
+            )
+            u0 += amplitude * jnp.sin((2 * i * jnp.pi / self.length) * self.xs + phase)
+
+        # === Very high-frequency modes (modes 25-32) ===
+        for i in [
+            -32,
+            -31,
+            -30,
+            -29,
+            -28,
+            -27,
+            -26,
+            -25,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+        ]:
+            subkey1, subkey2, key = jax.random.split(key, 3)
+            amplitude = 0.25 * jax.random.uniform(subkey1, (num_trajectories, 1))
+            phase = (
+                self.length
+                / self.size
+                * jax.random.uniform(subkey2, (num_trajectories, 1))
+            )
+            u0 += amplitude * jnp.sin((2 * i * jnp.pi / self.length) * self.xs + phase)
 
         return jax.lax.stop_gradient(u0.reshape(*u0.shape))
 
@@ -299,7 +382,9 @@ class MultiFidelityKSComparison:
             "upsampled_low_res": upsampled_low,
         }
 
-    def compare_energy_spectra(self, traj_hf, traj_lf, plot=True, plot_idx=0):
+    def compare_energy_spectra(
+        self, traj_hf, traj_lf, upsampled_traj_lf, plot=True, plot_idx=0
+    ):
         """
         Compare energy spectra and total energy between HF and LF KS trajectories.
 
@@ -308,6 +393,8 @@ class MultiFidelityKSComparison:
                 High-fidelity trajectory (time vs space).
             traj_lf: Array, shape (num_traj, Nt, Nx)
                 Low-fidelity trajectory (time vs space).
+            upsampled_traj_lf: Array, shape (num_traj, Nt, Nx)
+                Upsampled Low-fidelity trajectory (time vs space).
             plot: bool, optional
                 If True, plots the energy spectra.
             plot_idx: int
@@ -320,36 +407,52 @@ class MultiFidelityKSComparison:
         # Convert to numpy for FFT operations
         uh = np.array(traj_hf[plot_idx])
         ul = np.array(traj_lf[plot_idx])
+        us_ul = np.array(upsampled_traj_lf[plot_idx])
         Nt_h, Nx_h = uh.shape
         Nt_l, Nx_l = ul.shape
 
         # Define wavenumbers
         k_h = np.fft.fftfreq(Nx_h, d=self.high_sim.length / Nx_h) * 2 * np.pi
         k_l = np.fft.fftfreq(Nx_l, d=self.low_sim.length / Nx_l) * 2 * np.pi
+        us_k_l = np.fft.fftfreq(Nx_h, d=self.high_sim.length / Nx_h) * 2 * np.pi
 
         # Compute FFT in space and energy spectra
         Uh = np.fft.fft(uh, axis=1)
         Ul = np.fft.fft(ul, axis=1)
+        us_Ul = np.fft.fft(us_ul, axis=1)
 
         Eh = np.mean(np.abs(Uh) ** 2, axis=0) / Nx_h
         El = np.mean(np.abs(Ul) ** 2, axis=0) / Nx_l
+        us_El = np.mean(np.abs(us_Ul) ** 2, axis=0) / Nx_h
 
         # Only keep nonnegative frequencies for plotting
         half_h = Nx_h // 2
         half_l = Nx_l // 2
         k_h_pos = k_h[:half_h]
         k_l_pos = k_l[:half_l]
+        k_us_l_pos = us_k_l[:half_h]
         Eh_pos = Eh[:half_h]
         El_pos = El[:half_l]
+        us_El_pos = us_El[:half_h]
 
         # Compute total energy (Parseval)
         E_total_h = np.sum(Eh_pos)
         E_total_l = np.sum(El_pos)
+        E_total_us_l = np.sum(us_El_pos)
 
         if plot:
             plt.figure(figsize=(6, 4))
             plt.loglog(k_h_pos, Eh_pos, label=r"High-fidelity", color="k")
-            plt.loglog(k_l_pos, El_pos, label=r"Low-fidelity", color="grey", alpha=0.6)
+            plt.loglog(
+                k_l_pos, El_pos, label=r"Low-fidelity", color="grey", alpha=0.6, ls="--"
+            )
+            plt.loglog(
+                k_us_l_pos,
+                us_El_pos,
+                label=r"Low-fidelity (Interpolated)",
+                color="grey",
+                alpha=0.6,
+            )
             plt.xlabel("Wavenumber, $k$")
             plt.ylabel("Energy spectrum, $E(k)$")
             plt.title("Time-averaged energy spectrum")
@@ -360,7 +463,9 @@ class MultiFidelityKSComparison:
 
             print(f"Total energy (HF): {E_total_h:.3e}")
             print(f"Total energy (LF): {E_total_l:.3e}")
+            print(f"Total energy (Interpolated-LF): {E_total_us_l:.3e}")
             print(f"Energy ratio (LF/HF): {E_total_l/E_total_h:.3f}")
+            print(f"Energy ratio (Interpolated-LF/HF): {E_total_us_l/E_total_h:.3f}")
 
         return {
             "k_h": k_h_pos,
@@ -389,7 +494,6 @@ class MultiFidelityKSComparison:
             sharex=True,
             sharey=True,
         )
-
         assert (trajectory_idx <= len(results["high_res"])) and (
             trajectory_idx <= len(results["upsampled_low_res"])
         )
@@ -553,7 +657,11 @@ class MultiFidelityKSComparison:
         # Compare energy spectra
         print("\n=== Energy Spectra Comparison ===")
         spectra = self.compare_energy_spectra(
-            results["high_res"], results["low_res"], plot=True, plot_idx=trajectory_idx
+            results["high_res"],
+            results["low_res"],
+            results["upsampled_low_res"],
+            plot=True,
+            plot_idx=trajectory_idx,
         )
 
         results["energy_spectra"] = spectra
@@ -605,8 +713,8 @@ class MultiFidelityKSComparison:
             "condition_domain": condition_domain,
         }
 
-        np.savez("high_data.npz", **high_data)
-        np.savez("low_data.npz", **low_data)
+        np.savez("high_fidelity.npz", **high_data)
+        np.savez("low_fidelity.npz", **low_data)
 
 
 if __name__ == "__main__":
@@ -620,6 +728,6 @@ if __name__ == "__main__":
     )
     # perform the analysis
     results = mf.full_analysis(
-        num_trajectories=args.n_samples, seed=37723, trajectory_idx=2  # for plotting
+        num_trajectories=args.n_samples, seed=37723, trajectory_idx=0  # for plotting
     )
     mf.create_data_dict(results)
