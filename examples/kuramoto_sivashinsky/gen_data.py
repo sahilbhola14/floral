@@ -31,7 +31,7 @@ def parse_args():
         "-resHF",
         "--resolution_HF",
         type=int,
-        default=128,
+        default=256,
         help="Number of discretization points for high-fidelity",
     )
 
@@ -80,18 +80,22 @@ class KuramotoSivashinskySimulator:
         """
         self.size = size
         self.length = length
+        self.spatial_domain_range = (0, self.length)
+        self.temporal_domain_range = (0, outer_steps * dt)
         self.dt = dt
         self.smooth = smooth
         self.outer_steps = outer_steps
 
         # Setup grid
-        self.grid = cfd.grids.Grid((size,), domain=((0, length),))
+        self.grid = cfd.grids.Grid((size,), domain=(self.spatial_domain_range,))
         (self.dx,) = self.grid.step
         (self.xs,) = self.grid.axes()
 
         # domain (x, t)
         # problem is treated as 2D with time as another dimension.
-        t_eval = np.linspace(0, outer_steps * dt, outer_steps)
+        t_eval = np.linspace(
+            self.temporal_domain_range[0], self.temporal_domain_range[1], outer_steps
+        )
         XX, YY = np.meshgrid(self.xs, t_eval)
         self.domain = np.concatenate(
             [XX.ravel().reshape(-1, 1), YY.ravel().reshape(-1, 1)], axis=1
@@ -141,7 +145,9 @@ class KuramotoSivashinskySimulator:
         """
         real_space_trajectory = []
 
-        for v0 in initial_conditions:
+        for ii, v0 in enumerate(initial_conditions):
+            if ii % 10 == 0:
+                print(f"sample: {ii} / {len(initial_conditions)}")
             v0_spectral = jnp.fft.rfft(v0)
             _, trajectory = jax.device_get(self.rollout_fn(v0_spectral))
             real_space_trajectory.append(jnp.fft.irfft(trajectory).real)
@@ -201,6 +207,9 @@ class MultiFidelityKSComparison:
 
         self.high_sim = KuramotoSivashinskySimulator(high_res, **kwargs)
         self.low_sim = KuramotoSivashinskySimulator(low_res, **kwargs)
+
+        self.spatial_domain_range = self.high_sim.spatial_domain_range
+        self.temporal_domain_range = self.high_sim.temporal_domain_range
 
     def filter_invalid_samples(self, high_traj, low_traj):
         """
@@ -302,6 +311,7 @@ class MultiFidelityKSComparison:
         Returns:
             dict with energy spectra and total energies for both resolutions.
         """
+        assert (plot_idx <= len(traj_hf)) and (plot_idx <= len(traj_lf))
         # Convert to numpy for FFT operations
         uh = np.array(traj_hf[plot_idx])
         ul = np.array(traj_lf[plot_idx])
@@ -333,15 +343,15 @@ class MultiFidelityKSComparison:
 
         if plot:
             plt.figure(figsize=(6, 4))
-            plt.loglog(k_h_pos, Eh_pos, label=f"HF ({self.high_res})", lw=2)
-            plt.loglog(k_l_pos, El_pos, label=f"LF ({self.low_res})", lw=2, ls="--")
-            plt.xlabel("Wavenumber $k$")
-            plt.ylabel("Energy Spectrum $E(k)$")
-            plt.title("Time-Averaged Energy Spectrum")
+            plt.loglog(k_h_pos, Eh_pos, label=r"High-fidelity", color="k")
+            plt.loglog(k_l_pos, El_pos, label=r"Low-fidelity", color="grey", alpha=0.6)
+            plt.xlabel("Wavenumber, $k$")
+            plt.ylabel("Energy spectrum, $E(k)$")
+            plt.title("Time-averaged energy spectrum")
             plt.legend()
-            plt.grid(True, which="both", ls=":")
             plt.tight_layout()
-            plt.show()
+            plt.savefig("energy_spectra.png")
+            plt.close()
 
             print(f"Total energy (HF): {E_total_h:.3e}")
             print(f"Total energy (LF): {E_total_l:.3e}")
@@ -375,6 +385,10 @@ class MultiFidelityKSComparison:
             sharey=True,
         )
 
+        assert (trajectory_idx <= len(results["high_res"])) and (
+            trajectory_idx <= len(results["upsampled_low_res"])
+        )
+
         high_res_data = results["high_res"][trajectory_idx]  # (high_res, high_res)
         upsampled_low_data = results["upsampled_low_res"][
             trajectory_idx
@@ -384,19 +398,45 @@ class MultiFidelityKSComparison:
             upsampled_low_data,
             vmax=vmax,
             vmin=vmin,
-            aspect="equal",
+            aspect="auto",
             interpolation="bicubic",
+            extent=(
+                self.spatial_domain_range[0],
+                self.spatial_domain_range[1],
+                self.temporal_domain_range[1],
+                self.temporal_domain_range[0],
+            ),
         )
         axs[0].set_title(r"Low-fidelity")
 
-        axs[0].imshow(
-            high_res_data, vmax=vmax, vmin=vmin, aspect="equal", interpolation="bicubic"
+        axs[1].imshow(
+            high_res_data,
+            vmax=vmax,
+            vmin=vmin,
+            aspect="auto",
+            interpolation="bicubic",
+            extent=(
+                self.spatial_domain_range[0],
+                self.spatial_domain_range[1],
+                self.temporal_domain_range[1],
+                self.temporal_domain_range[0],
+            ),
         )
         axs[1].set_title(r"High-fidelity")
 
         diff = jnp.abs(upsampled_low_data - high_res_data)
         axs[2].imshow(
-            diff, vmax=vmax, vmin=vmin, aspect="equal", interpolation="bicubic"
+            diff,
+            vmax=vmax,
+            vmin=vmin,
+            aspect="auto",
+            interpolation="bicubic",
+            extent=(
+                self.spatial_domain_range[0],
+                self.spatial_domain_range[1],
+                self.temporal_domain_range[1],
+                self.temporal_domain_range[0],
+            ),
         )
         axs[2].set_title("Absolute Error")
 
@@ -408,9 +448,10 @@ class MultiFidelityKSComparison:
             ax.label_outer()
 
         fig.colorbar(im0, ax=axs[-1], orientation="vertical", pad=0.1, fraction=0.046)
-        plt.show()
+        plt.savefig("data_snapshot.png")
+        plt.close()
 
-    def make_joint_plot(self, results, trajectory_idx=0):
+    def make_joint_plot(self, traj_hf, traj_lf, plot_idx=0):
         """
         Plot joint distribution between the low and high fidelity
 
@@ -419,8 +460,9 @@ class MultiFidelityKSComparison:
             trajectory_idx: Which trajectory to plot
             vmin, vmax: Color scale limits
         """
-        high_res_data = results["high_res"][trajectory_idx].flatten()
-        upsampled_low_data = results["upsampled_low_res"][trajectory_idx].flatten()
+        assert (plot_idx <= len(traj_hf)) and (plot_idx <= len(traj_lf))
+        traj_hf_plot = traj_hf[plot_idx].flatten()
+        traj_lf_plot = traj_lf[plot_idx].flatten()
 
         def _plot(x, y, ax):
             assert x.shape == y.shape, "x and y must have the same shape"
@@ -461,11 +503,28 @@ class MultiFidelityKSComparison:
             return ax
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 5), dpi=300, constrained_layout=True)
-        _plot(upsampled_low_data, high_res_data, ax)
+        _plot(traj_lf_plot, traj_hf_plot, ax)
         ax.set_xlabel(r"Low-fidelity")
-        ax.set_xlabel(r"High-fidelity")
+        ax.set_ylabel(r"High-fidelity")
         plt.savefig("joint_plot.png")
         plt.close()
+
+    def compute_average_pearson(self, traj_hf, traj_lf):
+        assert traj_hf.shape == traj_lf.shape
+
+        def _comp_pearson(x, y):
+            assert x.shape == y.shape
+            r, _ = pearsonr(x, y)
+            return r
+
+        r_list = []
+        n_samples = len(traj_hf)
+        for ii in range(n_samples):
+            r_list.append(_comp_pearson(traj_lf[ii].flatten(), traj_hf[ii].flatten()))
+        avg_r = np.mean(np.array(r_list))
+        print(
+            f"{n_samples} sample average Pearson correlation coefficient: {avg_r: .4f}"
+        )
 
     def full_analysis(self, num_trajectories=10000, seed=37723, trajectory_idx=0):
         """
@@ -494,9 +553,55 @@ class MultiFidelityKSComparison:
 
         results["energy_spectra"] = spectra
 
-        # create the data dictionary
+        # Compare energy spectra
+        print("\n=== Joint Distribution Comparison ===")
+        self.make_joint_plot(
+            results["high_res"], results["upsampled_low_res"], plot_idx=trajectory_idx
+        )
+        self.compute_average_pearson(results["high_res"], results["upsampled_low_res"])
 
         return results
+
+    def create_data_dict(self, results):
+        # high-fidelity
+        hf_solution = np.expand_dims(results["high_res"], 1)
+        Nt = hf_solution.shape[-1]  # time resolution
+        # Nx = hf_solution.shape[-2]  # space resolution
+        # low-fidelity
+        lf_solution = np.expand_dims(results["upsampled_low_res"], 1)
+        # high-fidleity domain
+        hf_domain = results["high_domain"]
+        # low-fidleity domain (upsampled)
+        lf_domain = results["high_domain"]
+        # condition
+        condition = np.expand_dims(
+            np.tile(np.expand_dims(results["high_init"], 1), (1, Nt, 1)), 1
+        )
+        # condition domain (same as the field domain)
+        condition_domain = results["high_domain"]
+        print(f"High-fidelity solution shape: {hf_solution.shape}")
+        print(f"Low-fidelity solution shape: {lf_solution.shape}")
+        print(f"High-fidelity domain shape: {hf_domain.shape}")
+        print(f"Low-fidelity domain shape: {lf_domain.shape}")
+        print(f"Condition shape: {condition.shape}")
+        print(f"Condition domain shape: {condition_domain.shape}")
+
+        high_data = {
+            "field": hf_solution,
+            "condition": condition,
+            "field_domain": hf_domain,
+            "condition_domain": condition_domain,
+        }
+
+        low_data = {
+            "field": lf_solution,
+            "condition": condition,
+            "field_domain": lf_domain,
+            "condition_domain": condition_domain,
+        }
+
+        np.savez("high_data.npz", **high_data)
+        np.savez("low_data.npz", **low_data)
 
 
 if __name__ == "__main__":
@@ -509,6 +614,7 @@ if __name__ == "__main__":
         outer_steps=args.time_steps,
     )
     # perform the analysis
-    mf.full_analysis(
+    results = mf.full_analysis(
         num_trajectories=args.n_samples, seed=37723, trajectory_idx=2  # for plotting
     )
+    mf.create_data_dict(results)
