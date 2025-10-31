@@ -8,7 +8,7 @@ conditional inputs, and domain embedding.
 import torch
 import torch.nn as nn
 from neuralop.layers.spectral_convolution import SpectralConv
-from floral.utils import check_keys, printer
+from floral.utils import check_keys, printer, check_tensor_blowup
 from .embedding import ChannelFiLM, MLP, build_domain_encoder, conv_nd
 
 
@@ -308,6 +308,7 @@ class VectorField(nn.Module):
         self.field_channels = field_config.get("channels")
         self.field_ndim = field_config.get("ndim")
         self.field_hidden_channels = field_config.get("hidden_channels", 128)
+        self.field_n_layers = field_config.get("n_layers", 4)
         self.field_modes = field_config.get("modes", 32)
         self.condition_channels = condition_config.get("channels")
         self.condition_ndim = condition_config.get("ndim")
@@ -348,6 +349,7 @@ class VectorField(nn.Module):
             n_modes=n_modes,
             cond_ndim=self.condition_ndim,
             cond_channels=cond_channels,
+            n_layers=self.field_n_layers,
         )
 
         return field_model
@@ -432,4 +434,5 @@ class VectorField(nn.Module):
         inp_vt = torch.cat((psi, t_embed, condition), dim=1)
         # compute the vector field
         vt = self.field(x=inp_vt, x_domain=x_domain, cond=condition)
+        check_tensor_blowup(vt, name="vector field")
         return vt

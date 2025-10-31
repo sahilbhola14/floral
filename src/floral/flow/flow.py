@@ -172,7 +172,7 @@ class Flow(L.LightningModule):
         operator_config = flow_config.get("operator")
         # check required keys in flow config
         required_keys = ["field"]
-        required_sub_keys = ["hidden_channels", "modes"]
+        required_sub_keys = ["hidden_channels", "modes", "n_layers"]
         check_keys(operator_config, required_keys)
 
         # add field details
@@ -253,6 +253,8 @@ class Flow(L.LightningModule):
             field_channels=field_channels,
             field_dims=field_dims,
         )
+
+        check_tensor_blowup(prior_samples, name="prior samples")
 
         assert prior_samples.shape == (batch_size, field_channels, *field_dims)
 
