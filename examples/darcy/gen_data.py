@@ -595,16 +595,21 @@ class MultiFidelity:
             len(r_permeability_list) == len(r_pressure_list) == self.n_samples
         ), "Number of samples mismatch"
 
-        avg_r_permeability = np.mean(np.array(r_permeability_list))
-        avg_r_pressure = np.mean(np.array(r_pressure_list))
+        mean_r_permeability = np.mean(np.array(r_permeability_list))
+        mean_r_pressure = np.mean(np.array(r_pressure_list))
+
+        std_r_permeability = np.std(np.array(r_permeability_list))
+        std_r_pressure = np.std(np.array(r_pressure_list))
 
         print(
             f"{self.n_samples} sample average Pearson correlation coefficient for "
-            f"permeability: {avg_r_permeability: .4f}"
+            f"permeability: {mean_r_permeability: .4f} with {std_r_permeability: .4f} "
+            "standard deviation"
         )
         print(
             f"{self.n_samples} sample average Pearson correlation coefficient for "
-            f"pressure: {avg_r_pressure: .4f}"
+            f"pressure: {mean_r_pressure: .4f} with {std_r_pressure: .4f} "
+            "standard deviation"
         )
 
     def simulate(self):
