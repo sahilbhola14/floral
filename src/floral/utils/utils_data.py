@@ -64,8 +64,11 @@ class OpDataModule(L.LightningDataModule):
         self.batch_size = self.hp_config.get("batch_size", 64)
 
         # load the data
+        printer(f"Loading low-fidelity data from {self.LF_path}")
         self.LF_data = self._load_data(path=self.LF_path)
+        printer(f"Loading high-fidelity data from {self.HF_path}")
         self.HF_data = self._load_data(path=self.HF_path)
+        printer("Done loading data")
 
         # file paths
         self.file_paths = self._get_file_paths()
