@@ -7,7 +7,7 @@ for multi-fidelity training.
 
 import numpy as np
 
-# from joblib import Parallel, delayed
+from joblib import Parallel, delayed
 import scipy
 from scipy.stats import pearsonr, gaussian_kde
 from scipy.sparse import csr_matrix
@@ -160,8 +160,8 @@ class Darcysolver:
 
     def _get_generative_params(self, n_samples):
         """get the generative parameters"""
-        # theta = np.random.rand(self.ntheta, n_samples) * 2.5
-        theta = np.ones((self.ntheta, n_samples)) * 2.5
+        theta = np.random.rand(self.ntheta, n_samples) * 2.5
+        # theta = np.ones((self.ntheta, n_samples)) * 2.5 # for testing purposes
         return theta
 
     def _sample_permeability(self, n_samples):
@@ -316,43 +316,53 @@ class Darcysolver:
 
         return U1, U2
 
-    def _solve(self, K: np.ndarray, sample_index: int):
+    def _solve(self, K: np.ndarray, sample_index: int, sparse_solve: bool = True):
         if sample_index % 10 == 0:
             print(f"Generating sample {sample_index}...")
         xv = np.linspace(0, 1, self.resolution)
         dx = xv[1] - xv[0]
         A, f = self.form_matrix(K, xv, dx)
-        A = np.concatenate((A, self.A_reg), axis=0)
-        f = np.concatenate((f, np.zeros((1, 1))), axis=0)
-        A_sparse = csr_matrix(A)
-        P = spsolve(A_sparse, f)
-        P = P.reshape((self.resolution, self.resolution))
-        # P, _, _, _ = scipy.linalg.lstsq(A, f)
-        # P = P.reshape((self.resolution, self.resolution))
+        if sparse_solve:
+            # Form KKT matrix
+            n = A.shape[0]
+            KKT = np.zeros((n + 1, n + 1))
+            KKT[:n, :n] = A
+            KKT[:n, n] = self.A_reg.flatten()  # or self.A_reg.ravel()
+            KKT[n, :n] = self.A_reg.T.flatten()
+
+            # Form KKT right-hand side
+            rhs = np.zeros((n + 1, 1))
+            rhs[:n] = f
+            KKT_sparse = csr_matrix(KKT)
+            solution = spsolve(KKT_sparse, rhs.flatten())
+            P = solution[:n]
+            P = P.reshape((self.resolution, self.resolution))
+        else:
+            A = np.concatenate((A, self.A_reg), axis=0)
+            f = np.concatenate((f, np.zeros((1, 1))), axis=0)
+            P, _, _, _ = scipy.linalg.lstsq(A, f)
+            P = P.reshape((self.resolution, self.resolution))
         U1, U2 = self.compute_u(P, K, self.resolution, xv, dx)
-        raise NotImplementedError
 
         return P, U1, U2
 
     def solve(self, K: np.ndarray):
         """solve the darcy flow problem"""
-        # n_samples = K.shape[0]
-        # results = Parallel(n_jobs=self.threads)(
-        #     delayed(self._solve)(K[i], i) for i in range(0, n_samples)
-        # )
-        self._solve(K[0], 0)
-        raise NotImplementedError
-        # P, U1, U2 = zip(*results)
-        # P = np.stack(P)  # high-fidelity pressure field
-        # U1 = np.stack(U1)  # high-fidelity velocity field in x-direction
-        # U2 = np.stack(U2)  # high-fidelity velocity field in y-direction
-        # # data dict
-        # data_dict = {
-        #     "pressure": P,
-        #     "velocity_x": U1,
-        #     "velocity_y": U2,
-        # }
-        # return data_dict
+        n_samples = K.shape[0]
+        results = Parallel(n_jobs=self.threads)(
+            delayed(self._solve)(K[i], i) for i in range(0, n_samples)
+        )
+        P, U1, U2 = zip(*results)
+        P = np.stack(P)  # high-fidelity pressure field
+        U1 = np.stack(U1)  # high-fidelity velocity field in x-direction
+        U2 = np.stack(U2)  # high-fidelity velocity field in y-direction
+        # data dict
+        data_dict = {
+            "pressure": P,
+            "velocity_x": U1,
+            "velocity_y": U2,
+        }
+        return data_dict
 
 
 class MultiFidelity:
