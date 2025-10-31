@@ -335,9 +335,10 @@ class VectorField(nn.Module):
         # same modes in each dimension
         n_modes = (self.field_modes,) * self.field_ndim
         # in_channels to the field
-        in_channels = (
-            self.field_channels + self.time_embed_dim + self.condition_channels
-        )
+        # in_channels = (
+        #     self.field_channels + self.time_embed_dim + self.condition_channels
+        # )
+        in_channels = self.field_channels + self.time_embed_dim
         # condition channels
         cond_channels = self.condition_channels
 
@@ -431,7 +432,8 @@ class VectorField(nn.Module):
         # field domain (batch_size, field_ndim, *field_dims)
         x_domain = field_domain.expand(batch_size, -1, *field_dims)
         # input field
-        inp_vt = torch.cat((psi, t_embed, condition), dim=1)
+        # inp_vt = torch.cat((psi, t_embed, condition), dim=1)
+        inp_vt = torch.cat((psi, t_embed), dim=1)
         # compute the vector field
         vt = self.field(x=inp_vt, x_domain=x_domain, cond=condition)
         check_tensor_blowup(vt, name="vector field")
