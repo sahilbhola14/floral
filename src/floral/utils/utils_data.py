@@ -105,9 +105,9 @@ class OpDataModule(L.LightningDataModule):
                 "train": "trainset_floral.pt" if self.floral else "trainset_flora.pt",
                 "val": "valset_floral.pt" if self.floral else "valset_flora.pt",
             },
-            "statistics": "statistics_floral.pt"
-            if self.floral
-            else "statistics_flora.pt",
+            "statistics": (
+                "statistics_floral.pt" if self.floral else "statistics_flora.pt"
+            ),
         }
         return file_paths
 

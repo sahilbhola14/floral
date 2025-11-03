@@ -32,7 +32,7 @@ class Flow(L.LightningModule):
             hp_config if isinstance(hp_config, dict) else omega_to_dict(hp_config)
         )
         assert isinstance(domain_dict, dict)
-        for (k, v) in domain_dict.items():
+        for k, v in domain_dict.items():
             domain_dict[k] = v.tolist() if isinstance(v, torch.Tensor) else v
         # shape dict
         self.shape_dict = shape_dict

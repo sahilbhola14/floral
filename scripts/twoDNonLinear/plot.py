@@ -167,9 +167,11 @@ def plot_field(n_train_samples):
     # add colorbars
     cbar_ax_mean = fig.add_axes([1, 0.56, 0.015, 0.34])  # [left, bottom, width, height]
     cbar_mean = fig.colorbar(axs[0, -1].images[0], cax=cbar_ax_mean)
-    cbar_mean.set_label(
-        r"$\left|\frac{w - \hat{w}}{w}\right|$"
-    ) if plot_error else cbar_mean.set_label(r"$\hat{w}$")
+    (
+        cbar_mean.set_label(r"$\left|\frac{w - \hat{w}}{w}\right|$")
+        if plot_error
+        else cbar_mean.set_label(r"$\hat{w}$")
+    )
     cbar_ax_std = fig.add_axes([1, 0.11, 0.015, 0.34])  # adjust to match lower row
     cbar_std = fig.colorbar(axs[1, -1].images[0], cax=cbar_ax_std)
     cbar_std.set_label(r"$\log_{10}(\sigma)$", labelpad=10)

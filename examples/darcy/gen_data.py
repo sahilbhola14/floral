@@ -695,9 +695,9 @@ class MultiFidelity:
         # solve low-fidelity darcy flow
         print("solving low-fidelity darcy flow...")
         data_dict_LF = self.solver_LF.solve(K_LF_int)
-        data_dict_LF[
-            "permeability"
-        ] = K_LF  # original LF permeability before interpolation
+        data_dict_LF["permeability"] = (
+            K_LF  # original LF permeability before interpolation
+        )
         # interpolate the LF solution and update the dictionary
         P_LF_int = []
         K_LF_int = []
