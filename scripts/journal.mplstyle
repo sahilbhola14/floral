@@ -10,10 +10,13 @@ text.latex.preamble: \usepackage{amsmath}
 # Axes
 axes.grid: True
 axes.grid.which: both
-axes.labelsize: 18
-axes.titlesize: 18
+axes.labelsize: 12
+axes.titlesize: 12
 axes.linewidth: 1.0
 axes.labelpad: 2.5  # spacing between label and axis
+
+# Colorbar
+colorbar.labelsize: 10
 
 # Ticks
 xtick.labelsize: 18
