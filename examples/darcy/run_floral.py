@@ -1,6 +1,9 @@
 # examples/darcy/run_floral.py
 """
 Flow-matching operator for residual-augmented learning for Darcy flow.
+Notes:
+    1. To improve reproducibility across architectures, tf32 is not used.
+    Emperically, operators were producing higher losses.
 """
 import torch
 import wandb
@@ -31,6 +34,8 @@ config = OmegaConf.load(args.config)
 
 torch.set_float32_matmul_precision("high")  # for tensor cores
 seed_everything(42, workers=True)
+torch.backends.cuda.matmul.allow_tf32 = False  # operator stability
+torch.backends.cudnn.allow_tf32 = False  # operator stability
 
 
 def print_header(config: dict):
