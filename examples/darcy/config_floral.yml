@@ -10,8 +10,8 @@ logger_name: "darcy" # Logger folder
 
 # configuration for data
 data:
-  n_samples: 2000 # total samples for training + validation (for tractability)
-  n_train: 1500
+  n_samples: 10000 # total samples for training + validation (for tractability)
+  n_train: 9500
   n_val: 500
   LF: # low fidelity
     path: "./low_fidelity.npz"
@@ -31,7 +31,7 @@ dataloader:
       mean: [0.1] # For example, [0.5] if want specified (per channel)
       std: [0.5] # For example, [0.5] if want specified (per channel)
     condition:
-      enabled: True # True: normalize the field
+      enabled: False # True: normalize the field
       auto: True # If True, mean and std are computed.
       mean: [2.0] # For example, [0.5] if want specified (per channel)
       std: [3.5] # For example, [0.5] if want specified (per channel)
@@ -50,7 +50,7 @@ flow:
     # operator parameters
     field:
       hidden_channels: 128
-      n_layers: 5
+      n_layers: 4
       modes: 32
   prior:
     # prior GP measure parameters

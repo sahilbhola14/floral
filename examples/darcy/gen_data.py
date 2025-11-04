@@ -560,8 +560,8 @@ class MultiFidelity:
             vmax=vmax_K,
             origin="lower",
         )
-        axs[0, 0].set_title("Low-fidelity")
-        axs[0, 1].set_title("High-fidelity")
+        axs[0, 0].set_title(r"Low-fidelity")
+        axs[0, 1].set_title(r"High-fidelity")
         cbar_K = fig.colorbar(
             im_K,
             ax=axs[0, 1],

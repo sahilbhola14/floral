@@ -74,9 +74,9 @@ def train_model(hp_config: dict = None):
         domain_dict=data_module.domain_dict,
         shape_dict=data_module.shape_dict,
     )
-    if hasattr(flow, "compile") and torch.cuda.is_available():
-        printer("Compiling the model...")
-        flow = torch.compile(flow, mode="default")
+    # if hasattr(flow, "compile") and torch.cuda.is_available():
+    #     printer("Compiling the model...")
+    #     flow = torch.compile(flow, mode="default")
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:
         check_path(config.checkpoint_load_path)
