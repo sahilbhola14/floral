@@ -1,4 +1,4 @@
-# src/floral/archs/operator.py
+# src/floral/archs/operators.py
 """
 operator modules
 adapted from https://github.com/yzshi5/SPL_OFM/blob/main/models/fno.py
