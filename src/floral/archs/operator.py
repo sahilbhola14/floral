@@ -8,7 +8,7 @@ conditional inputs, and domain embedding.
 import torch
 import torch.nn as nn
 
-# from neuralop.models import FNO as _FNO
+from neuralop.models import FNO as _FNO
 from neuralop.layers.spectral_convolution import SpectralConv
 from floral.utils import check_keys, printer, check_tensor_blowup
 from .embedding import ChannelFiLM, MLP, build_domain_encoder, conv_nd
@@ -342,28 +342,28 @@ class VectorField(nn.Module):
         )
         # in_channels = self.field_channels + self.time_embed_dim
         # condition channels
-        cond_channels = self.condition_channels
+        # cond_channels = self.condition_channels
 
         # field model
-        field_model = FNO(
+        # field_model = FNO(
+        #     in_channels=in_channels,
+        #     hidden_channels=self.field_hidden_channels,
+        #     out_channels=self.field_channels,
+        #     n_modes=n_modes,
+        #     cond_ndim=self.condition_ndim,
+        #     cond_channels=cond_channels,
+        #     n_layers=self.field_n_layers,
+        # )
+
+        field_model = _FNO(
             in_channels=in_channels,
-            hidden_channels=self.field_hidden_channels,
             out_channels=self.field_channels,
+            hidden_channels=self.field_hidden_channels,
+            lifting_channel_ratio=4,
+            projection_channel_ratio=4,
             n_modes=n_modes,
-            cond_ndim=self.condition_ndim,
-            cond_channels=cond_channels,
             n_layers=self.field_n_layers,
         )
-
-        # field_model = _FNO(
-        #         in_channels = in_channels,
-        #         out_channels = self.field_channels,
-        #         hidden_channels=self.field_hidden_channels,
-        #         lifting_channel_ratio=4,
-        #         projection_channel_ratio=4,
-        #         n_modes=n_modes,
-        #         n_layers=self.field_n_layers,
-        #         )
 
         return field_model
 
@@ -442,13 +442,13 @@ class VectorField(nn.Module):
         # time embedding (batch_size, embed_dim, *field_dims)
         t_embed = self._get_time_embedding(t=t, field_dims=field_dims)
         # field domain (batch_size, field_ndim, *field_dims)
-        x_domain = field_domain.expand(batch_size, -1, *field_dims)
+        # x_domain = field_domain.expand(batch_size, -1, *field_dims)
         # Default FNO
-        # inp_vt = torch.cat((psi, t_embed), dim=1)
-        # vt = self.field(inp_vt)
+        inp_vt = torch.cat((psi, t_embed, condition), dim=1)
+        vt = self.field(inp_vt)
         # Custom FNO
         # compute the vector field
-        inp_vt = torch.cat((psi, t_embed), dim=1)
-        vt = self.field(x=inp_vt, x_domain=x_domain, cond=condition)
+        # inp_vt = torch.cat((psi, t_embed), dim=1)
+        # vt = self.field(x=inp_vt, x_domain=x_domain, cond=condition)
         check_tensor_blowup(vt, name="vector field")
         return vt
