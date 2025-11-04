@@ -16,6 +16,7 @@ from floral.utils import (
     build_trainer,
 )
 from floral.flow import perform_inference, Flow
+from lightning import seed_everything
 
 parser = argparse.ArgumentParser(description="Run darcy with specified parameters.")
 parser.add_argument(
@@ -28,7 +29,8 @@ parser.add_argument(
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
 
-torch.set_float32_matmul_precision("medium")  # for tensor cores
+torch.set_float32_matmul_precision("high")  # for tensor cores
+seed_everything(42, workers=True)
 
 
 def print_header(config: dict):
