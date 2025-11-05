@@ -9,6 +9,7 @@ from .utils_IO import (
 )
 from .utils_data import build_data_module
 from .utils_train import build_checkpointer, build_trainer
+from .utils_plot import twoDPlot
 
 __all__ = [
     "build_data_module",
@@ -21,4 +22,5 @@ __all__ = [
     "deep_get",
     "check_keys",
     "omega_to_dict",
+    "twoDPlot",
 ]
