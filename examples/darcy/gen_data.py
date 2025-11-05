@@ -176,6 +176,14 @@ class Darcysolver:
         inds = np.flip(np.argsort(ev))
         ev = ev[inds]
         U = np.real(U)[:, inds]
+        assert (
+            ev.ndim == 1 and ev.shape[0] == self.ntheta
+        ), "Eigen values dimension mismatch"
+        assert (
+            U.ndim == 2
+            and U.shape[0] == self.resolution**2
+            and U.shape[1] == self.ntheta
+        ), "Eigen vectors dimension mismatch"
         return ev, U
 
     def _get_generative_params(self, n_samples):
