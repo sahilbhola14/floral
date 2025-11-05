@@ -382,7 +382,9 @@ class Darcysolver:
             "velocity_y": U2,
         }
         toc = time.time()
-        print(f"Solving time for {n_samples} samples: {toc - tic: .2f} seconds")
+        avg_time = (toc - tic) / n_samples
+        print(f"Total solve time for {n_samples} samples: {toc - tic: .2f} seconds")
+        print(f"Average solve time per sample: {avg_time: .2f} seconds")
         return data_dict
 
 
