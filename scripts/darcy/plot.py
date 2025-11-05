@@ -12,9 +12,8 @@ plt.style.use("../journal.mplstyle")
 # Begin user input
 n_train_samples_list = [500, 1000, 5000, 9500]
 n_val_samples = 500
-sigma_factor = 6.0  # Number of standard deviations for the error bars
-plot_idx = {"automatic": True, "idx": 6}  # Set to True for automatic index selection
-plot_error = True  # Whether to plot error or not
+plot_idx = {"automatic": False, "idx": 32}  # Set to True for automatic index selection
+plot_error = False  # Whether to plot error or not
 # End user input
 
 
@@ -320,4 +319,4 @@ if __name__ == "__main__":
     # plot field
     plot_field(n_train_samples=n_train_samples_list[0])
     # plot pareto front
-    plot_pareto()
+    # plot_pareto()
