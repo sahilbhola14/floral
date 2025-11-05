@@ -15,8 +15,8 @@ axes.titlesize: 12
 axes.linewidth: 1.0
 axes.labelpad: 2.5  # spacing between label and axis
 
-# Colorbar
-colorbar.labelsize: 10
+# # Colorbar
+# colorbar.labelsize: 10
 
 # Ticks
 xtick.labelsize: 18
