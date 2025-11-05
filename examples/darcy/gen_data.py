@@ -48,7 +48,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=32,
+        default=8,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -87,6 +87,12 @@ def parse_args():
     return args
 
 
+def check_blowup(field: np.ndarray, string: str = ""):
+    """check if the field has blown up (nan or inf values)"""
+    if np.isnan(field).any() or np.isinf(field).any():
+        raise ValueError(f"{string} field has blown up!")
+
+
 class Darcysolver:
     def __init__(self, resolution: int, ntheta: int = 128, threads: int = 32):
         self.resolution = resolution
@@ -100,8 +106,7 @@ class Darcysolver:
             2, 0, 1
         )
         # correlation matrix params
-        # self.corr_params = {"c0": 0.1, "sigma": 1.0, "thresh": 1e-12} # original
-        self.corr_params = {"c0": 0.01, "sigma": 2.0, "thresh": 1e-12}  # modified
+        self.corr_params = {"c0": 0.1, "sigma": 1.0, "thresh": 1e-12}  # original
         # source
         # self.source_strength = 10.0 # original
         self.source_strength = 50.0  # modified
@@ -440,6 +445,9 @@ class MultiFidelity:
                 self.resolution_LF, self.resolution_LF
             )
         pbar.close()
+        self._make_sample_comparison_plot(
+            K_LF, K_HF, field_name="permeability", n_samples=10
+        )
         return K_HF, K_LF, K_LF_int
 
     def _make_joint_plot(
@@ -510,6 +518,72 @@ class MultiFidelity:
 
         plt.savefig("joint_plot.png", dpi=300)
         plt.close()
+
+    def _make_sample_comparison_plot(
+        self, samples_LF, samples_HF, field_name: str, n_samples=10
+    ):
+        assert (
+            samples_LF.shape == samples_HF.shape
+        ), "LF and HF samples must have the same shape"
+        assert len(samples_LF) >= n_samples, "Not enough samples to plot"
+        # plot testing
+        fig, axs = plt.subplots(
+            n_samples,
+            3,
+            figsize=(6, 2 * n_samples),
+            dpi=300,
+            layout="constrained",
+            sharex=True,
+            sharey=True,
+        )
+        axs_lf = axs[:, 0]
+        axs_hf = axs[:, 1]
+        axs_diff = axs[:, 2]
+        vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
+        vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
+        for ii in range(n_samples):
+            # vmin = min(samples_LF[ii].min(), samples_HF[ii].min())
+            # vmax = max(samples_LF[ii].max(), samples_HF[ii].max())
+            im_field = axs_lf[ii].imshow(
+                samples_LF[ii],
+                origin="lower",
+                vmin=vmin,
+                vmax=vmax,
+                interpolation="bicubic",
+            )
+            axs_hf[ii].imshow(
+                samples_HF[ii],
+                origin="lower",
+                vmin=vmin,
+                vmax=vmax,
+                interpolation="bicubic",
+            )
+            im_diff = axs_diff[ii].imshow(
+                np.abs(samples_HF[ii] - samples_LF[ii]),
+                origin="lower",
+                interpolation="bicubic",
+            )
+            fig.colorbar(
+                im_field, ax=axs_hf[ii], orientation="vertical", fraction=0.046, pad=0.1
+            )
+            fig.colorbar(
+                im_diff,
+                ax=axs_diff[ii],
+                orientation="vertical",
+                fraction=0.046,
+                pad=0.1,
+            )
+            if ii == 0:
+                axs_lf[ii].set_title(r"Low-fidelity")
+                axs_hf[ii].set_title(r"High-fidelity")
+                axs_diff[ii].set_title(r"Absolute error")
+        for ax in axs.flatten():
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_xlabel(r"$x_{1}$")
+            ax.set_ylabel(r"$x_{2}$")
+            ax.label_outer()
+        plt.savefig(f"{field_name}_sample_comparison.png", dpi=300)
 
     def _make_field_plot(
         self, data_dict_HF: dict, data_dict_LF: dict, random_index: bool = False
@@ -700,7 +774,6 @@ class MultiFidelity:
         )
         # interpolate the LF solution and update the dictionary
         P_LF_int = []
-        K_LF_int = []
         pbar = tqdm(range(self.n_samples), desc="LF pressure interpolation")
         for ii in pbar:
             # intepolate pressure
@@ -718,19 +791,20 @@ class MultiFidelity:
         P_LF_int = np.stack(P_LF_int)
         data_dict_LF["pressure"] = P_LF_int
 
+        # compare pressure plots
+        self._make_sample_comparison_plot(
+            data_dict_LF["pressure"],
+            data_dict_HF["pressure"],
+            field_name="pressure",
+            n_samples=10,
+        )
+
         # check blow-up
-        assert np.all(
-            np.isfinite(data_dict_HF["pressure"])
-        ), "High-fidelity pressure field has NaN or Inf values"
-        assert np.all(
-            np.isfinite(data_dict_LF["pressure"])
-        ), "Low-fidelity pressure field has NaN or Inf values"
-        assert np.all(
-            np.isfinite(data_dict_HF["permeability"])
-        ), "High-fidelity permeability field has NaN or Inf values"
-        assert np.all(
-            np.isfinite(data_dict_LF["permeability"])
-        ), "Low-fidelity permeability field has NaN or Inf values"
+        check_blowup(data_dict_HF["pressure"], "High-fidelity pressure field")
+        check_blowup(data_dict_LF["pressure"], "Low-fidelity pressure field")
+        check_blowup(data_dict_HF["permeability"], "High-fidelity permeability field")
+        check_blowup(data_dict_LF["permeability"], "Low-fidelity permeability field")
+
         # check size
         assert (
             data_dict_HF["pressure"].shape == data_dict_LF["pressure"].shape
@@ -750,6 +824,7 @@ class MultiFidelity:
         assert (
             len(data_dict_LF["permeability"]) == self.n_samples
         ), "Number of LF permeability samples mismatch"
+
         # make field plot
         self._make_field_plot(data_dict_HF, data_dict_LF, random_index=False)
         # make joint plot
