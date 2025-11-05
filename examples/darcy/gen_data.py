@@ -32,7 +32,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=30000,
+        default=11000,
         help="Number of samples to generate",
     )
 
