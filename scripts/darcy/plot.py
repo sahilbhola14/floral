@@ -10,7 +10,7 @@ import pandas as pd
 plt.style.use("../journal.mplstyle")
 
 # Begin user input
-n_train_samples_list = [500]
+n_train_samples_list = [500, 1000, 5000, 9500]
 n_val_samples = 500
 sigma_factor = 6.0  # Number of standard deviations for the error bars
 plot_idx = {"automatic": True, "idx": 6}  # Set to True for automatic index selection
@@ -106,7 +106,7 @@ def plot_field(n_train_samples):
     fig, axs = plt.subplots(
         2,
         len(plot_order),
-        figsize=(10, 5),
+        figsize=(8, 5),
         sharey=True,
         sharex=True,
         constrained_layout=True,
@@ -140,8 +140,8 @@ def plot_field(n_train_samples):
         axs[0, ii].xaxis.grid(False, which="both")
         axs[0, ii].yaxis.grid(False, which="both")
         axs[0, ii].set_title(method)
-        axs[0, ii].set_xlabel(r"$x_w$")
-        axs[0, ii].set_ylabel(r"$y_w$")
+        axs[0, ii].set_xlabel(r"$x_1$")
+        axs[0, ii].set_ylabel(r"$x_2$")
         axs[0, ii].label_outer()
 
         # plot log_10 std
@@ -158,8 +158,8 @@ def plot_field(n_train_samples):
         axs[1, ii].grid(False, which="both")
         axs[1, ii].xaxis.grid(False, which="both")
         axs[1, ii].yaxis.grid(False, which="both")
-        axs[1, ii].set_xlabel(r"$x_w$")
-        axs[1, ii].set_ylabel(r"$y_w$")
+        axs[1, ii].set_xlabel(r"$x_1$")
+        axs[1, ii].set_ylabel(r"$x_2$")
         axs[1, ii].label_outer()
 
     # add colorbars
@@ -173,6 +173,10 @@ def plot_field(n_train_samples):
     cbar_ax_std = fig.add_axes([1, 0.11, 0.015, 0.34])  # adjust to match lower row
     cbar_std = fig.colorbar(axs[1, -1].images[0], cax=cbar_ax_std)
     cbar_std.set_label(r"$\log_{10}(\sigma)$", labelpad=10)
+
+    for ax in axs.flatten():
+        ax.set_xticks([])
+        ax.set_yticks([])
 
     plt.savefig(f"darcy_n_train_{n_train_samples}_comparison.png")
     plt.close()
@@ -300,7 +304,7 @@ def plot_pareto():
     ax.set_yscale("log")
     ax.set_xscale("log")
     ax.set_xlim(1e-7, 1e-1)
-    # ax.set_ylim(1e-1, 1e2)
+    ax.set_ylim(1e0, 1e2)
 
     # Optional: make legend cleaner
     handles, labels = ax.get_legend_handles_labels()
@@ -316,4 +320,4 @@ if __name__ == "__main__":
     # plot field
     plot_field(n_train_samples=n_train_samples_list[0])
     # plot pareto front
-    # plot_pareto()
+    plot_pareto()
