@@ -230,10 +230,10 @@ class OpDataModule(L.LightningDataModule):
         else:
             target_field = HF_field
         # check availabe samples
-        assert self.n_samples <= len(
-            target_field
-        ), f"Requested samples: {self.n_samples} > "
-        f"available samples: {len(target_field)}"
+        assert self.n_samples <= len(target_field), (
+            f"Requested samples: {self.n_samples} > "
+            f"available samples: {len(target_field)}"
+        )
         # create operator data dict
         op_data_dict = {}
         op_data_dict["target_field"] = target_field[: self.n_samples]

@@ -172,15 +172,23 @@ class Flow(L.LightningModule):
         operator_config = flow_config.get("operator")
         # check required keys in flow config
         required_keys = ["field"]
-        required_sub_keys = ["hidden_channels", "modes", "n_layers"]
+        required_sub_keys = [
+            "hidden_channels",
+            "lifting_channel_ratio",
+            "projection_channel_ratio",
+            "modes",
+            "n_layers",
+        ]
+
         check_keys(operator_config, required_keys)
+        check_keys(operator_config["field"], required_sub_keys)
 
         # add field details
-        check_keys(operator_config["field"], required_sub_keys)
         operator_config["field"]["channels"] = deep_get(
             self.shape_dict, ["field", "channels"]
         )
         operator_config["field"]["ndim"] = deep_get(self.shape_dict, ["field", "ndim"])
+
         # add condition details
         operator_config["condition"] = {}
         operator_config["condition"]["channels"] = deep_get(

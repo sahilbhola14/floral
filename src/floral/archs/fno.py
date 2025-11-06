@@ -18,7 +18,7 @@ from neuralop.layers.fno_block import FNOBlocks
 from neuralop.layers.channel_mlp import ChannelMLP
 from neuralop.layers.complex import ComplexValued
 from typing import Tuple, List, Union, Literal, Optional
-from floral.archs import ChannelFiLM
+from .embedding import ChannelFiLM
 
 warnings.filterwarnings("once", category=UserWarning)
 
