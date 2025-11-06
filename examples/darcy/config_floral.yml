@@ -11,8 +11,8 @@ logger_name: "darcy" # Logger folder
 # configuration for data
 data:
   n_samples: 11000 # total samples for training + validation (for tractability)
-  n_train: 10000
-  n_val: 1000
+  n_train: 5000
+  n_val: 10
   LF: # low fidelity
     path: "./low_fidelity.npz"
   HF: # high fidelity
@@ -40,7 +40,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 8
+  devices: 1
   precision: '32-true'
 
 # configuration for flow-matching
@@ -49,7 +49,9 @@ flow:
   operator:
     # operator parameters
     field:
-      hidden_channels: 128
+      hidden_channels: 64
+      lifting_channel_ratio: 4
+      projection_channel_ratio: 4
       n_layers: 4
       modes: 32
   prior:
