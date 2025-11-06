@@ -391,8 +391,8 @@ class Darcysolver:
         }
         toc = time.time()
         avg_time = (toc - tic) / n_samples
-        print(f"Total solve time for {n_samples} samples: {toc - tic: .2f} seconds")
-        print(f"Average solve time per sample: {avg_time: .2f} seconds")
+        print(f"Total solve time for {n_samples} samples: {toc - tic: .2e} seconds")
+        print(f"Average solve time per sample: {avg_time: .2e} seconds")
         return data_dict
 
 
@@ -846,8 +846,8 @@ class MultiFidelity:
             "field": np.expand_dims(
                 data_dict_HF["pressure"], 1
             ),  # (B, channel_f, *dim_f)
-            "condition": np.expand_dims(
-                data_dict_HF["permeability"], 1
+            "condition": np.log(
+                np.expand_dims(data_dict_HF["permeability"], 1)
             ),  # (B, channel_c, *dim_c)
             "field_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
             "condition_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
@@ -856,8 +856,8 @@ class MultiFidelity:
             "field": np.expand_dims(
                 data_dict_LF["pressure"], 1
             ),  # (B, channel_f, *dim_f)
-            "condition": np.expand_dims(
-                data_dict_HF["permeability"], 1
+            "condition": np.log(
+                np.expand_dims(data_dict_HF["permeability"], 1)
             ),  # (B, channel_c, *dim_c)
             "field_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
             "condition_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
