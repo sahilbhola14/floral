@@ -2,15 +2,14 @@
 """
 Darcy flow plots
 """
+import pandas as pd
 import torch
 import matplotlib.pyplot as plt
-from floral.utils import twoDPlot
+from floral.utils import twoDPlot, ParetoPlot
 
 # Begin user input
 n_train_samples_list = [10000]
 n_val_samples = 1000
-plot_idx = {"automatic": False, "idx": 32}  # Set to True for automatic index selection
-plot_error = False  # Whether to plot error or not
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -44,11 +43,27 @@ def plot_field(n_train_samples):
     # load the data
     data_flora, data_floral = load_data(n_train_samples)
     # create plot object
-    plotter = twoDPlot(data_flora, data_floral)
+    plotter = twoDPlot(data_flora=data_flora, data_floral=data_floral)
     # create sample plot
     plotter.make_field_sample_plot()
+    # create sample error plot
+    plotter.make_error_sample_plot()
+
+
+def plot_pareto(n_train_samples_list):
+    all_data = []
+    for n_train_samples in n_train_samples_list:
+        # load the data
+        data_flora, data_floral = load_data(n_train_samples)
+        # get pareto data
+        df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
+        all_data.append(df)
+    combined_df = pd.concat(all_data, ignore_index=True)
+    ParetoPlot.plot_pareto(combined_df)
 
 
 if __name__ == "__main__":
     # plot field
     plot_field(n_train_samples=n_train_samples_list[0])
+    # pareto
+    plot_pareto(n_train_samples_list)
