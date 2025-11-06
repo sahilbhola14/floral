@@ -1,17 +1,19 @@
 # scripts/darcy/plot.py
 """
-Plot HF mean removed 2D fields.
+Darcy flow plots
 """
 import torch
-
-# from floral.utils import twoDPlot
+import matplotlib.pyplot as plt
+from floral.utils import twoDPlot
 
 # Begin user input
-n_train_samples_list = [500]
-n_val_samples = 500
+n_train_samples_list = [10000]
+n_val_samples = 1000
 plot_idx = {"automatic": False, "idx": 32}  # Set to True for automatic index selection
 plot_error = False  # Whether to plot error or not
 # End user input
+
+plt.style.use("../journal.mplstyle")
 
 
 def load_data(n_train_samples):
@@ -42,10 +44,11 @@ def plot_field(n_train_samples):
     # load the data
     data_flora, data_floral = load_data(n_train_samples)
     # create plot object
-    # plotter = twoDPlot(data_flora, data_floral)
-    raise NotImplementedError("Plotting function is not yet implemented.")
+    plotter = twoDPlot(data_flora, data_floral)
+    # create sample plot
+    plotter.make_field_sample_plot()
 
 
 if __name__ == "__main__":
     # plot field
-    plot_field()
+    plot_field(n_train_samples=n_train_samples_list[0])
