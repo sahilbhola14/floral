@@ -857,7 +857,7 @@ class MultiFidelity:
                 data_dict_LF["pressure"], 1
             ),  # (B, channel_f, *dim_f)
             "condition": np.log(
-                np.expand_dims(data_dict_HF["permeability"], 1)
+                np.expand_dims(data_dict_LF["permeability"], 1)
             ),  # (B, channel_c, *dim_c)
             "field_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
             "condition_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
