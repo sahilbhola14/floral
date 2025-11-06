@@ -402,7 +402,7 @@ def test_train():
     fno = fno.to(device)
     optim = torch.optim.Adam(fno.parameters(), lr=1e-3)
     criterion = torch.nn.MSELoss()
-    for epoch in range(1000):
+    for epoch in range(300):
         # training
         fno.train()
         train_loss = 0.0
@@ -439,6 +439,15 @@ def test_train():
                 f"Epoch [{epoch:04d}] | Train Loss: {train_loss:.6f} | "
                 f"Val Loss: {val_loss:.6f}"
             )
+
+    # testing
+    cond_testing = torch.FloatTensor(1.2 * x).view(1, 1, -1).to(device)
+    state_testing = torch.FloatTensor(torch.cos(x)).view(1, 1, -1).to(device)
+    true = torch.sin(cond_testing * state_testing).to("cpu")
+    with torch.no_grad():
+        pred = fno(state_testing, cond=cond_testing).to("cpu")
+        error = torch.norm(pred - true, p=2)
+        print(f"prediction error: {error.item()}")
 
 
 if __name__ == "__main__":
