@@ -515,7 +515,7 @@ class MultiFidelity:
 
             return ax
 
-        fig, axs = plt.subplots(1, 2, figsize=(8, 4), dpi=300, layout="constrained")
+        fig, axs = plt.subplots(1, 2, figsize=(8, 4), dpi=300, layout="compressed")
         _plot(K_LF, K_HF, axs[0])
         axs[0].set_title(r"Permeability, $K$")
         _plot(P_LF, P_HF, axs[1])
@@ -542,7 +542,7 @@ class MultiFidelity:
             3,
             figsize=(6, 2 * n_samples),
             dpi=300,
-            layout="constrained",
+            layout="compressed",
             sharex=True,
             sharey=True,
         )
@@ -621,7 +621,7 @@ class MultiFidelity:
             3,
             figsize=(12, 6),
             dpi=300,
-            layout="constrained",
+            layout="compressed",
             sharex=True,
             sharey=True,
         )
