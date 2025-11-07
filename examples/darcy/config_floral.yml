@@ -12,7 +12,7 @@ logger_name: "darcy" # Logger folder
 data:
   n_samples: 11000 # total samples for training + validation (for tractability)
   n_train: 5000
-  n_val: 10
+  n_val: 1000
   LF: # low fidelity
     path: "./low_fidelity.npz"
   HF: # high fidelity
@@ -40,13 +40,14 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 1
+  devices: 8
   precision: '32-true'
 
 # configuration for flow-matching
 flow:
   sig_min: 1.0e-5 # gaussian std for the data
   operator:
+    method: FiLMFNO
     # operator parameters
     field:
       hidden_channels: 64
@@ -65,5 +66,5 @@ generate:
   n_gen: 100 # number of samples generated (for UQ purposes)
   nT: 50 # number of time steps for integration
   method: "dopri5" # method for ODE solver
-  atol: 1.0e-4 # absolute tolerance for ODE solver
-  rtol: 1.0e-4 # relative tolerance for ODE solver
+  atol: 1.0e-5 # absolute tolerance for ODE solver
+  rtol: 1.0e-5 # relative tolerance for ODE solver

@@ -171,7 +171,7 @@ class Flow(L.LightningModule):
         """get the operator config"""
         operator_config = flow_config.get("operator")
         # check required keys in flow config
-        required_keys = ["field"]
+        required_keys = ["field", "method"]
         required_sub_keys = [
             "hidden_channels",
             "lifting_channel_ratio",
