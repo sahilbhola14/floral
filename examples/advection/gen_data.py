@@ -45,7 +45,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=16,
+        default=32,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -65,7 +65,7 @@ def parse_args():
 
     args = parser.parse_args()
     print("#" * 50)
-    print("Viscous Burger equation")
+    print("Viscous Advection equation")
     print("#" * 50)
     print(f"Number of samples: {args.n_samples}")
     print(f"Number of modes: {args.n_modes}")
@@ -189,9 +189,13 @@ class AdvectionSolver:
         central difference.
         """
         assert isinstance(u, torch.Tensor) and u.ndim == 1
-        u_im1 = torch.roll(u, 1)
-        u_ip1 = torch.roll(u, -1)
-        dudx = (u_ip1 - u_im1) / (2.0 * self.dx)
+        # u_im1 = torch.roll(u, 1)
+        # u_ip1 = torch.roll(u, -1)
+        # dudx = (u_ip1 - u_im1) / (2.0 * self.dx)
+        if self.beta > 0:
+            dudx = (u - torch.roll(u, 1)) / self.dx
+        else:
+            dudx = (torch.roll(u, -1) - u) / self.dx
         return -self.beta * dudx
 
     def step_rk3(self, u):
@@ -226,23 +230,39 @@ class AdvectionSolver:
         energy = torch.zeros(self.Nt + 1, device=self.device)
         energy[0] = 0.5 * torch.sum(sol[0] * sol[0])
         for ii in range(1, self.Nt + 1):
-            # u = self.step_rk3(u)
             u = self.step_euler(u)
             sol[ii] = u.clone()
             energy[ii] = 0.5 * torch.sum(sol[ii] * sol[ii])
-        return sol.cpu().numpy(), energy.cpu().numpy()
+            sol_exact[ii] = self.comp_exact_solution(sol_exact[0], ii * self.dt)
+        return sol.cpu().numpy(), energy.cpu().numpy(), sol_exact
 
     def solve(self):
         """all solve"""
         all_uT = []
         all_energy = []
+        all_uT_exact = []
         pbar = tqdm(range(self.n_samples), desc="Advection")
         for ii in pbar:
             u0 = self.u0[ii]
-            sol, energy = self.solve_single(u0)
+            sol, energy, sol_exact = self.solve_single(u0)
             all_uT.append(sol)
             all_energy.append(energy)
+            all_uT_exact.append(sol_exact)
         pbar.close()
+        all_uT = np.array(all_uT)
+        all_uT_exact = np.array(all_uT_exact)
+        all_energy = np.array(all_energy)
+
+        # fig, axs = plt.subplots(10, 3, figsize=(6, 20), sharex=True, sharey=True)
+        # for ii in range(len(axs)):
+        #     vmin = min(all_uT[ii].min(), all_uT_exact[ii].min())
+        #     vmax = max(all_uT[ii].max(), all_uT_exact[ii].max())
+        #     axs[ii, 0].imshow(all_uT_exact[ii], interpolation="bicubic")
+        #     axs[ii, 1].imshow(all_uT[ii], interpolation="bicubic")
+        # axs[ii, 2].imshow(np.abs(all_uT[ii], all_uT_exact[ii]),
+        #         interpolation="bicubic")
+        # plt.savefig("true_compare.png")
+        print(f"Error norm: {np.linalg.norm(all_uT - all_uT_exact)}")
         return np.array(all_uT), np.array(all_energy)
 
 
