@@ -113,6 +113,7 @@ class AdvectionSolver:
         self.t = np.arange(0, self.Nt + 1) * self.dt
         self.dx = self.x[1] - self.x[0]
         self.cfl = abs(self.beta) * self.dt / self.dx
+        print(f"CFL: {self.cfl}")
         assert self.cfl < 1.0, "CFL must be less than 1.0 for numerical stability"
         XX, TT = np.meshgrid(self.x, self.t[1:])
         self.domain = np.concatenate((XX.reshape(-1, 1), TT.reshape(-1, 1)), axis=1)
@@ -567,7 +568,7 @@ if __name__ == "__main__":
     args = parse_args()
     mf = MultiFidelity(
         T=1.0,
-        beta=1,
+        beta=0.05,
         n_modes=args.n_modes,
         resolution_HF=args.resolution_HF,
         resolution_LF=args.resolution_LF,
