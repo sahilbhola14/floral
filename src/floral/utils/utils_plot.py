@@ -26,7 +26,9 @@ def compute_RMSE(true, pred):
 
 
 def compute_NRMSE(true, pred):
-    """Normalized RMSE = ||u_pred - u_true||_2 / ||u_true||_2"""
+    """Normalized RMSE = ||u_pred - u_true||_2 / ||u_true||_2.
+    normalized RMSE (ensuring scale independence)
+    """
     assert pred.shape == true.shape
     num = torch.norm(pred - true, p=2)
     den = torch.norm(true, p=2)
@@ -36,7 +38,7 @@ def compute_NRMSE(true, pred):
 def compute_CRMSE(true, pred):
     """
     Conserved RMSE = || sum(u_pred) - sum(u_true) ||_2 / N
-    Measures global conservation property deviation.
+    RMSE of conserved value (deviation from conserved physical quantity)
     """
     assert pred.shape == true.shape
     batch_size = len(pred)
@@ -175,10 +177,16 @@ class twoDPlot(BasePlot):
             sharey=True,
         )
         # compute range
-        vmin = min(data[:n_samples].min() for data in self.mean_dict.values())
-        vmax = max(data[:n_samples].max() for data in self.mean_dict.values())
-        vmin = torch.floor(vmin)
-        vmax = torch.ceil(vmax)
+        if kwargs.get("vmin", None) is None:
+            vmin = min(data[:n_samples].min() for data in self.mean_dict.values())
+            vmin = torch.floor(vmin)
+        else:
+            vmin = kwargs.get("vmin")
+        if kwargs.get("vmax", None) is None:
+            vmax = max(data[:n_samples].max() for data in self.mean_dict.values())
+            vmax = torch.ceil(vmax)
+        else:
+            vmax = kwargs.get("vmax")
         for jj, k in enumerate(self.mean_dict.keys()):
             axs[0, jj].set_title(k)
             for ii in range(n_samples):
@@ -222,10 +230,16 @@ class twoDPlot(BasePlot):
             sharey=True,
         )
         # compute range
-        vmin = min(data[:n_samples].min() for data in data_dict.values())
-        vmax = max(data[:n_samples].max() for data in data_dict.values())
-        vmin = torch.floor(vmin)
-        vmax = torch.ceil(vmax)
+        if kwargs.get("vmin", None) is None:
+            vmin = min(data[:n_samples].min() for data in data_dict.values())
+            vmin = torch.floor(vmin)
+        else:
+            vmin = kwargs.get("vmin")
+        if kwargs.get("vmax", None) is None:
+            vmax = max(data[:n_samples].max() for data in data_dict.values())
+            vmax = torch.ceil(vmax)
+        else:
+            vmax = kwargs.get("vmax")
         for jj, k in enumerate(data_dict.keys()):
             axs[0, jj].set_title(k)
             for ii in range(n_samples):
