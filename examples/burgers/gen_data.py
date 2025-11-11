@@ -508,7 +508,7 @@ class MultiFidelity:
                 samples_LF[:, 1:, :], 1
             ),  # do not save initial condition
             "condition": np.expand_dims(
-                np.tile(np.expand_dims(self.solver_LF.u0, 1), (1, self.Nt, 1)), 1
+                np.tile(np.expand_dims(self.solver_HF.u0, 1), (1, self.Nt, 1)), 1
             ),
             "field_domain": self.solver_HF.domain,
             "condition_domain": self.solver_HF.domain,
