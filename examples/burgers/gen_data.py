@@ -25,7 +25,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=11000,
+        default=5000,
         help="Number of samples to generate",
     )
 
@@ -41,7 +41,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=8,
+        default=15,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -253,6 +253,9 @@ class MultiFidelity:
         Nt: int = 64,
         threads: int = 32,
         nu: float = 0.01,
+        Lx: float = 1.0,
+        T: float = 0.2,
+        recalculate_LF_time: bool = False,
     ):
         self.n_modes = n_modes
         self.resolution_HF = resolution_HF
@@ -271,14 +274,24 @@ class MultiFidelity:
             Nt=self.Nt,
             n_modes=self.n_modes,
             n_samples=self.n_samples,
+            Lx=Lx,
+            T=T,
         )
+        ratio = self.solver_HF.dt / self.solver_HF.dx
         # low-fidelity solver
+        if recalculate_LF_time:
+            dt_LF = ratio * (Lx / self.resolution_LF)
+            Nt_LF = int(T / dt_LF)
+        else:
+            Nt_LF = self.Nt
         self.solver_LF = BurgersSolver(
             nu=self.nu,
             Nx=self.resolution_LF,
-            Nt=self.Nt,
+            Nt=Nt_LF,
             n_modes=self.n_modes,
             n_samples=self.n_samples,
+            Lx=Lx,
+            T=T,
         )
         # update low-fidelity initial conditon
         u0_LF = self._restrict_ic(self.solver_HF.u0)
@@ -403,6 +416,7 @@ class MultiFidelity:
 
             # Create scatter plot with KDE coloring
             xy = np.vstack([x, y])
+            xy = xy + 1e-6 * np.random.randn(*xy.shape)  # add jitter
             z = gaussian_kde(xy)(xy)
 
             # Sort points by density for better visualization
@@ -512,7 +526,7 @@ class MultiFidelity:
         tic = time.time()
         uT_LF, energy_LF = self.solver_LF.solve()
         elapsed_LF = time.time() - tic
-        print(f"Compute time for High-fidelity : {elapsed_LF: .4f}")
+        print(f"Compute time for Low-fidelity : {elapsed_LF: .4f}")
         print(f"Cost savings with Low-fidelity: {elapsed_HF/elapsed_LF : .4f}")
         # check blowup
         check_blowup(uT_HF, "High-fidelity solution")
@@ -546,5 +560,6 @@ if __name__ == "__main__":
         resolution_LF=args.resolution_LF,
         Nt=args.Nt,
         n_samples=args.n_samples,
+        recalculate_LF_time=True,
     )
     mf.simulate()
