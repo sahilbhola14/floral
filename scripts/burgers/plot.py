@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from floral.utils import twoDPlot, ParetoPlot
 
 # Begin user input
-n_train_samples_list = [5000]
-n_val_samples = 1000
+n_train_samples_list = [1000]
+n_val_samples = 20
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -45,7 +45,7 @@ def plot_field(n_train_samples):
     # create plot object
     plotter = twoDPlot(data_flora=data_flora, data_floral=data_floral)
     # create sample plot
-    plotter.make_field_sample_plot()
+    plotter.make_field_sample_plot(xlabel=r"x", ylabel=r"t")
     # create sample error plot
     plotter.make_error_sample_plot()
 
