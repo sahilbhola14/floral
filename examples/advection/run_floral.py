@@ -1,4 +1,4 @@
-# examples/burgers/run_floral.py
+# examples/advection/run_floral.py
 """
 Flow-matching operator for residual-augmented learning for Darcy flow.
 Notes:
@@ -20,7 +20,7 @@ from floral.utils import (
 )
 from floral.flow import perform_inference, Flow
 
-parser = argparse.ArgumentParser(description="Run burgers with specified parameters.")
+parser = argparse.ArgumentParser(description="Run advection with specified parameters.")
 parser.add_argument(
     "--config",
     type=str,
@@ -37,13 +37,13 @@ def print_header(config: dict):
     Args:
         config (dict): Configuration dictionary parameters.
     """
-    print_section("burgers config")
+    print_section("advection config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Number of samples: {config.data.n_samples}")
-    print_section("burgers config", end=True)
+    print_section("advection config", end=True)
 
 
 def train_model(hp_config: dict = None):
