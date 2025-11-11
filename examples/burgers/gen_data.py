@@ -3,6 +3,8 @@
 Burgers equation: https://arxiv.org/pdf/2210.07182
 Notes:
     1. For default config, LF has cost savings of approx. 3.01 times.
+    6000 samples HF: 377.8 seconds
+    6000 samples LF: 377.8 seconds
 """
 import torch
 import numpy as np
