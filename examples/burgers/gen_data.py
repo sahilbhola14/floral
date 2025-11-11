@@ -1,6 +1,8 @@
 # examples/burgers/gen_data.py
 """
 Burgers equation: https://arxiv.org/pdf/2210.07182
+Notes:
+    1. For default config, LF has cost savings of approx. 3.01 times.
 """
 import torch
 import numpy as np
@@ -25,7 +27,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=5000,
+        default=6000,
         help="Number of samples to generate",
     )
 
@@ -491,15 +493,23 @@ class MultiFidelity:
     def _prep_and_save(self, samples_LF, samples_HF):
         # high data
         high_data = {
-            "field": samples_HF[:, 1:, :],  # do not save initial condition
-            "condition": np.tile(np.expand_dims(self.solver_HF.u0, 1), (1, self.Nt, 1)),
+            "field": np.expand_dims(
+                samples_HF[:, 1:, :], 1
+            ),  # do not save initial condition
+            "condition": np.expand_dims(
+                np.tile(np.expand_dims(self.solver_HF.u0, 1), (1, self.Nt, 1)), 1
+            ),
             "field_domain": self.solver_HF.domain,
             "condition_domain": self.solver_HF.domain,
         }
         # low data
         low_data = {
-            "field": samples_LF[:, 1:, :],  # do not save initial condition
-            "condition": np.tile(np.expand_dims(self.solver_LF.u0, 1), (1, self.Nt, 1)),
+            "field": np.expand_dims(
+                samples_LF[:, 1:, :], 1
+            ),  # do not save initial condition
+            "condition": np.expand_dims(
+                np.tile(np.expand_dims(self.solver_LF.u0, 1), (1, self.Nt, 1)), 1
+            ),
             "field_domain": self.solver_HF.domain,
             "condition_domain": self.solver_HF.domain,
         }
@@ -521,18 +531,19 @@ class MultiFidelity:
         tic = time.time()
         uT_HF, energy_HF = self.solver_HF.solve()
         elapsed_HF = time.time() - tic
-        print(f"Compute time for High-fidelity : {elapsed_HF: .4f}")
+        print(f"Compute time for High-fidelity : {elapsed_HF: .4f} seconds")
         # solve low-fidelty
         tic = time.time()
         uT_LF, energy_LF = self.solver_LF.solve()
         elapsed_LF = time.time() - tic
-        print(f"Compute time for Low-fidelity : {elapsed_LF: .4f}")
+        print(f"Compute time for Low-fidelity : {elapsed_LF: .4f} seconds")
         print(f"Cost savings with Low-fidelity: {elapsed_HF/elapsed_LF : .4f}")
         # check blowup
         check_blowup(uT_HF, "High-fidelity solution")
         check_blowup(uT_LF, "Low-fidelity solution")
         # interpolate LF to HF grid
         uT_LF_inter = self._interpolate_solution(uT_LF)
+        check_blowup(uT_LF_inter, "Interpolated Low-fidelity solution")
         # check shape
         assert uT_HF.shape == (self.n_samples, self.Nt + 1, self.resolution_HF)
         assert uT_LF_inter.shape == (self.n_samples, self.Nt + 1, self.resolution_HF)
