@@ -41,7 +41,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=15,
+        default=16,
         help="Number of discretization points for the low-fidelity model",
     )
 
