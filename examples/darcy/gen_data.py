@@ -16,6 +16,7 @@ import scipy
 import argparse
 import matplotlib.pyplot as plt
 import time
+import random
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from scipy.stats import pearsonr, gaussian_kde
@@ -24,6 +25,12 @@ from scipy.sparse.linalg import spsolve
 from scipy.interpolate import RegularGridInterpolator
 
 plt.style.use("../../scripts/journal.mplstyle")
+
+
+def set_seed(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    print(f"Seed set to: {seed}")
 
 
 def parse_args():
@@ -877,6 +884,7 @@ class MultiFidelity:
 
 if __name__ == "__main__":
     args = parse_args()
+    set_seed()
     mf = MultiFidelity(
         ntheta_HF=args.ntheta_HF,
         ntheta_LF=args.ntheta_LF,
