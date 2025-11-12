@@ -3,6 +3,11 @@
 Darcy Flow problem with random permeabiltiy field.
 Modified from: https://github.com/christian-jacobsen/CoCoGen/tree/master
 for multi-fidelity training.
+Notes:
+    1. For default config, average times are
+        (a) High-fidelity: 1.49e-2
+        (a) Low-fidelity: 6.04e-4,
+    resulting in a cost savings of nearly 25 times.
 """
 
 import numpy as np
@@ -48,7 +53,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=8,
+        default=16,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -63,14 +68,14 @@ def parse_args():
         "--ntheta_HF",
         type=int,
         default=128,
-        help="Parammeterization dimension of permeabiltiy field",
+        help="Parammeterization dimension of permeability field",
     )
 
     parser.add_argument(
         "--ntheta_LF",
         type=int,
-        default=10,
-        help="Parameterization dimension of permeabiltiy field",
+        default=64,
+        help="Parameterization dimension of permeability field",
     )
 
     args = parser.parse_args()
@@ -343,7 +348,7 @@ class Darcysolver:
         return U1, U2
 
     def _solve(self, K: np.ndarray, sample_index: int, sparse_solve: bool = True):
-        if sample_index % 500 == 0:
+        if sample_index % 1000 == 0:
             print(f"Generating sample {sample_index}...")
         xv = np.linspace(0, 1, self.resolution)
         dx = xv[1] - xv[0]
@@ -483,6 +488,7 @@ class MultiFidelity:
 
             # Create scatter plot with KDE coloring
             xy = np.vstack([x, y])
+            xy = xy + 1e-6 * np.random.randn(*xy.shape)
             z = gaussian_kde(xy)(xy)
 
             # Sort points by density for better visualization
