@@ -48,23 +48,23 @@ def compute_CRMSE(true, pred):
     return torch.norm(diff, p=2) / batch_size
 
 
+def print_error_summary(error_dict):
+    """Print RMSE, CRMSE, and NRMSE for all models in a DataFrame format."""
+    metrics = ["RMSE", "CRMSE", "NRMSE"]
+    missing_keys = [k for k in metrics if k not in error_dict.keys()]
+    assert len(missing_keys) == 0, f"Missing keys: {', '.join(missing_keys)}"
+    data = {}
+    for metric in metrics:
+        metric_dict = error_dict.get(metric, {})
+        data[metric] = {
+            k: float(v.item() if hasattr(v, "item") else v)
+            for k, v in metric_dict.items()
+        }
+    df = pd.DataFrame(data).round(6)
+    print(df)
+
+
 class BasePlot(ABC):
-
-    def print_error_summary(self, error_dict):
-        """Print RMSE, CRMSE, and NRMSE for all models in a DataFrame format."""
-        metrics = ["RMSE", "CRMSE", "NRMSE"]
-        missing_keys = [k for k in metrics if k not in error_dict.keys()]
-        assert len(missing_keys) == 0, f"Missing keys: {', '.join(missing_keys)}"
-        data = {}
-        for metric in metrics:
-            metric_dict = error_dict.get(metric, {})
-            data[metric] = {
-                k: float(v.item() if hasattr(v, "item") else v)
-                for k, v in metric_dict.items()
-            }
-        df = pd.DataFrame(data).round(6)
-        print(df)
-
     @abstractmethod
     def make_field_sample_plot(self):
         """plot mean fields"""
@@ -73,6 +73,138 @@ class BasePlot(ABC):
     @abstractmethod
     def make_error_sample_plot(self):
         pass
+
+
+class ErrorSummary:
+    def __init__(self, data_flora: dict, data_floral: dict):
+        super(ErrorSummary, self).__init__()
+        self.data_flora = data_flora
+        self.data_floral = data_floral
+
+        # High-fidelity data (B, channels, *dims)
+        self.HF_field = self.data_floral["HF_field_plot"]
+        # Low-fidelity data (B, channels, *dims)
+        self.LF_field = self.data_floral["LF_field_plot"]
+        # Prediction Flora
+        self.HF_field_prediction_flora = self.data_flora["HF_field_prediction_plot"]
+        # Prediction Floral
+        self.HF_field_prediction_floral = self.data_floral["HF_field_prediction_plot"]
+        # extract num train and val
+        self.n_train = self.data_floral["n_train"]
+        self.n_val = self.data_floral["n_val"]
+        self.n_samples = self.data_floral["n_samples"]
+
+        self.n_avail_samples = len(self.HF_field)
+        assert len(self.LF_field) == self.n_avail_samples
+        assert len(self.HF_field_prediction_flora) == self.n_avail_samples
+        assert len(self.HF_field_prediction_floral) == self.n_avail_samples
+
+        # number of UQ samples
+        self.n_gen = self.HF_field_prediction_floral.shape[1]
+        assert self.n_gen == self.HF_field_prediction_flora.shape[1]
+
+        # compute mean and std over the UQ samples (B, C, *dims)
+        self.mean_dict = {
+            "Low-fidelity": self.LF_field,
+            "High-fidelity": self.HF_field,
+            "FLORA": self.HF_field_prediction_flora.mean(1),
+            "FLORAL": self.HF_field_prediction_floral.mean(1),
+        }
+
+    def __call__(self, verbose: bool = False):
+        error_dict = {
+            # "abs_error": {},
+            # "rel_error": {},
+            "RMSE": {},
+            "NRMSE": {},
+            "CRMSE": {},
+        }
+
+        for k in self.mean_dict:
+            true = self.mean_dict["High-fidelity"]
+            pred = self.mean_dict[k]
+            if k != "High-fidelity":
+                # # absolute error
+                # abs_error = (pred - true).abs()
+                # error_dict["abs_error"][k] = abs_error
+                # # relative error
+                # rel_error = ((pred - true) / true).abs()
+                # error_dict["rel_error"][k] = rel_error
+                # RMSE
+                RMSE = compute_RMSE(true=true, pred=pred)
+                error_dict["RMSE"][k] = RMSE
+                # NRMSE
+                NRMSE = compute_NRMSE(true=true, pred=pred)
+                error_dict["NRMSE"][k] = NRMSE
+                # CRMSE
+                CRMSE = compute_CRMSE(true=true, pred=pred)
+                error_dict["CRMSE"][k] = CRMSE
+
+        if verbose:
+            print(
+                f"\n=== Error summary for n_train: {self.n_train} "
+                f"and n_val: {self.n_val} ==="
+            )
+            print_error_summary(error_dict)
+
+        # Flatten the nested dict with fidelity names and metrics
+        df = []
+        for metric, values in error_dict.items():
+            for fidelity, val in values.items():
+                df.append(
+                    {
+                        "Samples (train)": self.n_train,
+                        "Samples (val)": self.n_val,
+                        "Samples (total)": self.n_samples,
+                        "Method": fidelity,
+                        "Metric": metric,
+                        "Value": val.item() if hasattr(val, "item") else val,
+                    }
+                )
+        return pd.DataFrame(df)
+
+    @staticmethod
+    def plot_error(combined_df, **kwargs):
+        """plot the errors"""
+        metrics = ["RMSE", "NRMSE", "CRMSE"]
+        # Create 1×3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
+        for ii, (ax, metric) in enumerate(zip(axes, metrics)):
+            # Filter dataframe for each metric
+            subset = combined_df[combined_df["Metric"] == metric]
+
+            # Scatter plot
+            sns.scatterplot(
+                data=subset,
+                x="Samples (train)",
+                y="Value",
+                style="Method",
+                style_order=["Low-fidelity", "FLORA", "FLORAL"],
+                hue="Method",
+                hue_order=["Low-fidelity", "FLORA", "FLORAL"],
+                palette="Set2",
+                s=150,
+                edgecolor="black",
+                ax=ax,
+            )
+
+            # Titles and labels
+            # ax.set_title(metric)
+            ax.set_xlabel("Samples (train)", fontsize=15)
+            ax.set_ylabel(metric, fontsize=15)
+            if ii == 0:
+                ax.legend().set_title("Method")
+            else:
+                ax.legend_.remove()
+            ax.set_yscale("log")
+            ax.set_xscale("log")
+            xlim_range = kwargs.get("xlim_range", (1e1, 1e4))
+            ylim_range = kwargs.get("ylim_range", (1e-2, 1e1))
+            ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
+            ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
+
+        plt.savefig("error_comparison.png", dpi=300)
+        plt.close()
 
 
 class twoDPlot(BasePlot):
@@ -151,7 +283,7 @@ class twoDPlot(BasePlot):
             f"\n=== Error summary for n_train: {self.n_train} "
             f"and n_val: {self.n_val} ==="
         )
-        self.print_error_summary(error_dict)
+        print_error_summary(error_dict)
         return error_dict
 
     def get_error_summary(self):
@@ -159,7 +291,7 @@ class twoDPlot(BasePlot):
             f"\n=== Error summary for n_train: {self.n_train} "
             f"and n_val: {self.n_val} ==="
         )
-        self.print_error_summary(self.error_dict)
+        print_error_summary(self.error_dict)
 
     def make_field_sample_plot(
         self, n_samples: int = 5, plot_channel: int = 0, **kwargs

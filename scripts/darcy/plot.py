@@ -5,10 +5,10 @@ Darcy flow plots
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
-from floral.utils import twoDPlot, ParetoPlot
+from floral.utils import twoDPlot, ParetoPlot, ErrorSummary
 
 # Begin user input
-n_train_samples_list = [10000]
+n_train_samples_list = [100, 5000]
 n_val_samples = 1000
 # End user input
 
@@ -62,8 +62,23 @@ def plot_pareto(n_train_samples_list):
     ParetoPlot.plot_pareto(combined_df)
 
 
+def print_error_summary(n_train_samples_list):
+    all_data = []
+    for n_train_samples in n_train_samples_list:
+        # load the data
+        data_flora, data_floral = load_data(n_train_samples)
+        # get pareto data
+        summary = ErrorSummary(data_flora=data_flora, data_floral=data_floral)
+        df = summary(verbose=False)
+        all_data.append(df)
+    combined_df = pd.concat(all_data, ignore_index=True)
+    ErrorSummary.plot_error(combined_df)
+
+
 if __name__ == "__main__":
-    # plot field
-    plot_field(n_train_samples=n_train_samples_list[0])
-    # pareto
+    # error summary
+    print_error_summary(n_train_samples_list)
+    # # plot field
+    plot_field(n_train_samples=n_train_samples_list[-1])
+    # # pareto
     plot_pareto(n_train_samples_list)
