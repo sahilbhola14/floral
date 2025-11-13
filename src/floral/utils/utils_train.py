@@ -1,4 +1,3 @@
-import os
 import wandb
 import lightning as L
 import torch
@@ -7,16 +6,16 @@ from lightning import seed_everything
 from .utils_IO import get_logger, printer, print_section, check_keys
 
 seed_everything(42, workers=True)
-torch.set_float32_matmul_precision("high")
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.deterministic = True
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
-os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
-os.environ["TORCH_ALLOW_TF32"] = "0"
-torch.use_deterministic_algorithms(True, warn_only=True)
-torch.backends.cudnn.benchmark = False
-torch.backends.cudnn.deterministic = True
+torch.set_float32_matmul_precision("medium")
+# torch.backends.cudnn.benchmark = False
+# torch.backends.cudnn.deterministic = True
+# torch.backends.cuda.matmul.allow_tf32 = False
+# torch.backends.cudnn.allow_tf32 = False
+# os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
+# os.environ["TORCH_ALLOW_TF32"] = "0"
+# torch.use_deterministic_algorithms(True, warn_only=True)
+# torch.backends.cudnn.benchmark = False
+# torch.backends.cudnn.deterministic = True
 
 
 def build_checkpointer(config: dict, verbose: bool = False):
@@ -40,7 +39,7 @@ def build_checkpointer(config: dict, verbose: bool = False):
         mode="min",
         save_top_k=1,
         dirpath=path,
-        filename="model-{epoch:02d}-{val_loss:.2f}",
+        filename="model-{epoch:04d}-{val_loss:.6f}",
     )
 
     if verbose:
@@ -105,7 +104,7 @@ def build_trainer(
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
         log_every_n_steps=10,
-        accumulate_grad_batches=1,
+        # accumulate_grad_batches=1,
     )
 
     if verbose:
