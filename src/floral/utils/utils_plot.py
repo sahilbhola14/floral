@@ -161,25 +161,34 @@ class BaseResidual(ABC):
         """plot the errors"""
         # Create 1×1 subplots
         fig, ax = plt.subplots(1, 1, figsize=(4, 4), layout="compressed")
-        subset = combined_df[
-            combined_df["Method"].isin(["Low-fidelity", "FLORA", "FLORAL"])
-        ]
+
+        # extract low-fidelity residual (same for all train samples)
+        subset_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
+        residual_LF = subset_LF["Residual Norm"].mean()
+
+        # extract subset
+        subset = combined_df[combined_df["Method"].isin(["FLORA", "FLORAL"])]
         sns.scatterplot(
             data=subset,
             x="Samples (train)",
             y="Residual Norm",
             style="Method",
-            style_order=["Low-fidelity", "FLORA", "FLORAL"],
+            style_order=["FLORA", "FLORAL"],
             hue="Method",
-            hue_order=["Low-fidelity", "FLORA", "FLORAL"],
+            hue_order=["FLORA", "FLORAL"],
             palette="Set2",
             s=150,
             edgecolor="black",
         )
 
+        # Add horizontal LF reference line
+        ax.axhline(
+            residual_LF, linestyle="--", color="k", linewidth=2, label="Low-fidelity"
+        )
+
         # ax.set_title(metric)
-        ax.set_xlabel("Samples (train)", fontsize=15)
-        ax.set_ylabel(r"Residual $L_2$ norm", fontsize=15)
+        ax.set_xlabel("Samples (train)")
+        ax.set_ylabel(r"Mean physical residual $L_2$ norm")
         ax.legend().set_title("Method")
         ax.set_yscale("log")
         ax.set_xscale("log")
@@ -188,7 +197,16 @@ class BaseResidual(ABC):
         ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
         ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
-        plt.savefig("residual_comparison.png", dpi=300)
+        # # Annotate the LF value (formatted in scientific notation)
+        # ax.text(
+        #     xlim_range[0] * 1.1,          # slightly right of the left x-limit
+        #     residual_LF * 0.90,           # slightly above the line
+        #     f"Low-fidelity",
+        #     fontsize=13,
+        #     color="k"
+        # )
+
+        plt.savefig("residual_comparison.png", dpi=300, pad_inches=0.1)
         plt.close()
 
     @abstractmethod
@@ -289,25 +307,39 @@ class ErrorSummary:
     def plot_error(combined_df, **kwargs):
         """plot the errors"""
         metrics = ["RMSE", "NRMSE", "CRMSE"]
+
+        # extract low-fidelity residual (same for all train samples)
+        subset_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
+
         # Create 1×3 subplots
         fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
         for ii, (ax, metric) in enumerate(zip(axes, metrics)):
             # Filter dataframe for each metric
-            subset = combined_df[combined_df["Metric"] == metric]
+            subset_plot = combined_df[
+                (combined_df["Metric"] == metric)
+                & (combined_df["Method"] != "Low-fidelity")
+            ]
+            subset_LF_plot = subset_LF[subset_LF["Metric"] == metric]
+            metric_LF = subset_LF_plot["Value"].mean()
 
             # Scatter plot
             sns.scatterplot(
-                data=subset,
+                data=subset_plot,
                 x="Samples (train)",
                 y="Value",
                 style="Method",
-                style_order=["Low-fidelity", "FLORA", "FLORAL"],
+                style_order=["FLORA", "FLORAL"],
                 hue="Method",
-                hue_order=["Low-fidelity", "FLORA", "FLORAL"],
+                hue_order=["FLORA", "FLORAL"],
                 palette="Set2",
                 s=150,
                 edgecolor="black",
                 ax=ax,
+            )
+
+            # Add horizontal LF reference line
+            ax.axhline(
+                metric_LF, linestyle="--", color="k", linewidth=2, label="Low-fidelity"
             )
 
             # Titles and labels
@@ -325,7 +357,7 @@ class ErrorSummary:
             ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
             ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
-        plt.savefig("error_comparison.png", dpi=300)
+        plt.savefig("error_comparison.png", dpi=300, pad_inches=0.1)
         plt.close()
 
 
@@ -650,6 +682,7 @@ class oneDPlot(BasePlot):
                         mean_pred + std_factor * std_pred,
                         mean_pred - std_factor * std_pred,
                         color=line_obj.get_color(),
+                        linewidth=0.0,
                         alpha=0.25,
                         # label=f"$\pm{std_factor}\sigma$"
                         label=None,
@@ -888,7 +921,7 @@ class ParetoPlot:
         # Optional: make legend cleaner
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1), loc="upper left")
-        ax.set_xlabel("Mean Predictive Uncertainty (Mean Std)")
-        ax.set_ylabel("Mean Predictive Error (L2 Norm)")
-        plt.savefig("pareto_comparison.png", dpi=300)
+        ax.set_xlabel("Mean Predictive Uncertainty")
+        ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
+        plt.savefig("pareto_comparison.png", dpi=300, pad_inches=0.1)
         plt.close()
