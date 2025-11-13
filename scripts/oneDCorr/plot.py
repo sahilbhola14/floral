@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [5000]
+n_train_samples_list = [100, 1000, 5000]
 n_val_samples = 1000
 # End user input
 
@@ -61,7 +61,7 @@ def plot_field(n_train_samples):
     # create plot object
     plotter = oneDPlot(data_flora=data_flora, data_floral=data_floral)
     # create sample plot
-    plotter.make_field_sample_plot(std_factor=30)
+    plotter.make_field_sample_plot(std_factor=20)
 
 
 def plot_pareto(n_train_samples_list):
@@ -73,7 +73,7 @@ def plot_pareto(n_train_samples_list):
         df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ParetoPlot.plot_pareto(combined_df, ylim_range=(1e-4, 1e2))
+    ParetoPlot.plot_pareto(combined_df, ylim_range=(1e-2, 1e1))
 
 
 def plot_residual_summary(n_train_samples_list):
@@ -96,7 +96,7 @@ def plot_error_summary(n_train_samples_list):
         data_flora, data_floral = load_data(n_train_samples)
         # get pareto data
         summary = ErrorSummary(data_flora=data_flora, data_floral=data_floral)
-        df = summary(verbose=False)
+        df = summary(verbose=True)
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
     ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e1))
@@ -105,9 +105,9 @@ def plot_error_summary(n_train_samples_list):
 if __name__ == "__main__":
     # residual summary
     plot_residual_summary(n_train_samples_list)
-    # # error summary
-    # plot_error_summary(n_train_samples_list)
-    # # # # plot field
-    # plot_field(n_train_samples=n_train_samples_list[-1])
-    # # # # pareto
-    # plot_pareto(n_train_samples_list)
+    # error summary
+    plot_error_summary(n_train_samples_list)
+    # # plot field
+    plot_field(n_train_samples=n_train_samples_list[-1])
+    # # pareto
+    plot_pareto(n_train_samples_list)
