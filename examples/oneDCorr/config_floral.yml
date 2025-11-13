@@ -2,7 +2,7 @@
 
 # general configuration
 job_name: "onedcorr" # Unique identifier for each run
-floral: True # True means residual operator is learned
+floral: False # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/onedcorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
@@ -11,7 +11,7 @@ logger_name: "onedcorr" # Logger folder
 # configuration for data
 data:
   n_samples: 6000 # total samples for training + validation (for tractability)
-  n_train: 1000
+  n_train: 50
   n_val: 1000
   LF: # low fidelity
     path: "./low_fidelity.npz"

@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [100, 1000, 5000]
+n_train_samples_list = [50, 100, 1000, 5000]
 n_val_samples = 1000
 # End user input
 
@@ -108,6 +108,6 @@ if __name__ == "__main__":
     # error summary
     plot_error_summary(n_train_samples_list)
     # # plot field
-    plot_field(n_train_samples=n_train_samples_list[-1])
+    plot_field(n_train_samples=n_train_samples_list[0])
     # # pareto
     plot_pareto(n_train_samples_list)
