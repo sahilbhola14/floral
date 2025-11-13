@@ -5,7 +5,7 @@ OneDCorr flow plots
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
-from floral.utils import oneDPlot, ParetoPlot, ErrorSummary
+from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
 n_train_samples_list = [5000]
@@ -39,13 +39,29 @@ def load_data(n_train_samples):
     return data_flora, data_floral
 
 
+class ResidualOneDCorr(BaseResidual):
+    def __init__(self, data_flora, data_floral):
+        super(ResidualOneDCorr, self).__init__(
+            data_flora=data_flora, data_floral=data_floral
+        )
+        # condition
+        self.condition = self.full_condition[
+            :, 0
+        ]  # for onedcorr, only the first channel is the condition
+
+    def comp_residual(self, prediction, condition, domain):
+        """compute the residual for the oneDcorr equation"""
+        true = self.condition.sin()
+        return prediction - true
+
+
 def plot_field(n_train_samples):
     # load the data
     data_flora, data_floral = load_data(n_train_samples)
     # create plot object
     plotter = oneDPlot(data_flora=data_flora, data_floral=data_floral)
     # create sample plot
-    plotter.make_field_sample_plot(std_factor=10)
+    plotter.make_field_sample_plot(std_factor=30)
 
 
 def plot_pareto(n_train_samples_list):
@@ -60,7 +76,20 @@ def plot_pareto(n_train_samples_list):
     ParetoPlot.plot_pareto(combined_df, ylim_range=(1e-4, 1e2))
 
 
-def print_error_summary(n_train_samples_list):
+def plot_residual_summary(n_train_samples_list):
+    all_data = []
+    for n_train_samples in n_train_samples_list:
+        # load the data
+        data_flora, data_floral = load_data(n_train_samples)
+        # compute the residual
+        residual = ResidualOneDCorr(data_flora=data_flora, data_floral=data_floral)
+        df = residual(verbose=True)
+        all_data.append(df)
+    combined_df = pd.concat(all_data, ignore_index=True)
+    ResidualOneDCorr.plot_residual(combined_df)
+
+
+def plot_error_summary(n_train_samples_list):
     all_data = []
     for n_train_samples in n_train_samples_list:
         # load the data
@@ -74,9 +103,11 @@ def print_error_summary(n_train_samples_list):
 
 
 if __name__ == "__main__":
-    # error summary
-    print_error_summary(n_train_samples_list)
-    # # # plot field
-    plot_field(n_train_samples=n_train_samples_list[-1])
-    # # # pareto
-    plot_pareto(n_train_samples_list)
+    # residual summary
+    plot_residual_summary(n_train_samples_list)
+    # # error summary
+    # plot_error_summary(n_train_samples_list)
+    # # # # plot field
+    # plot_field(n_train_samples=n_train_samples_list[-1])
+    # # # # pareto
+    # plot_pareto(n_train_samples_list)

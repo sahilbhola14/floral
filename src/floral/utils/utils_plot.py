@@ -75,6 +75,128 @@ class BasePlot(ABC):
         pass
 
 
+class BaseResidual(ABC):
+    def __init__(self, data_flora, data_floral):
+        self.data_flora = data_flora
+        self.data_floral = data_floral
+
+        # High-fidelity data (B, channels, *dims)
+        self.HF_field = self.data_floral["HF_field_plot"]
+        # Low-fidelity data (B, channels, *dims)
+        self.LF_field = self.data_floral["LF_field_plot"]
+        # Prediction Flora
+        self.HF_field_prediction_flora = self.data_flora["HF_field_prediction_plot"]
+        # Prediction Floral
+        self.HF_field_prediction_floral = self.data_floral["HF_field_prediction_plot"]
+        # condition
+        self.full_condition = self.data_floral["condition_plot"]
+        # extract num train and val
+        self.n_train = self.data_floral["n_train"]
+        self.n_val = self.data_floral["n_val"]
+        self.n_samples = self.data_floral["n_samples"]
+
+        self.n_avail_samples = len(self.HF_field)
+
+        # domains
+        self.field_domain = self.data_flora["domain_dict"]["field"].ravel()
+
+        self.n_avail_samples = len(self.HF_field)
+        assert len(self.LF_field) == self.n_avail_samples
+        assert len(self.HF_field_prediction_flora) == self.n_avail_samples
+        assert len(self.HF_field_prediction_floral) == self.n_avail_samples
+
+        # number of UQ samples
+        self.n_gen = self.HF_field_prediction_floral.shape[1]
+        assert self.n_gen == self.HF_field_prediction_flora.shape[1]
+
+        # compute mean and std over the UQ samples (B, C, *dims)
+        self.mean_dict = {
+            "Low-fidelity": self.LF_field,
+            "High-fidelity": self.HF_field,
+            "FLORA": self.HF_field_prediction_flora.mean(1),
+            "FLORAL": self.HF_field_prediction_floral.mean(1),
+        }
+
+        self.std_dict = {
+            "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
+            "FLORA": self.HF_field_prediction_flora.std(1),
+            "FLORAL": self.HF_field_prediction_floral.std(1),
+        }
+
+    def __call__(self, verbose: bool = False):
+        """compute the residual norm"""
+        df = []
+        for k in self.mean_dict.keys():
+            prediction = self.mean_dict.get(k).squeeze(1)
+            condition = self.condition
+            # compute the residual for the oneDcorr
+            residual = self.comp_residual(
+                prediction=prediction, condition=condition, domain=self.field_domain
+            )
+            # compute the residual norm
+            residual_norm = torch.norm(
+                residual, dim=tuple(range(1, prediction.ndim))
+            ).mean()
+            # update dictionary
+            df.append(
+                {
+                    "Method": k,
+                    "Samples (train)": self.n_train,
+                    "Samples (val)": self.n_val,
+                    "Samples (total)": self.n_samples,
+                    "Residual Norm": float(residual_norm),
+                }
+            )
+        df = pd.DataFrame(df)
+        if verbose:
+            print(
+                f"\n=== Residual summary for n_train: {self.n_train} "
+                f"and n_val: {self.n_val} ==="
+            )
+            print(df)
+        return df
+
+    @staticmethod
+    def plot_residual(combined_df, **kwargs):
+        """plot the errors"""
+        # Create 1×1 subplots
+        fig, ax = plt.subplots(1, 1, figsize=(4, 4), layout="compressed")
+        subset = combined_df[
+            combined_df["Method"].isin(["Low-fidelity", "FLORA", "FLORAL"])
+        ]
+        sns.scatterplot(
+            data=subset,
+            x="Samples (train)",
+            y="Residual Norm",
+            style="Method",
+            style_order=["Low-fidelity", "FLORA", "FLORAL"],
+            hue="Method",
+            hue_order=["Low-fidelity", "FLORA", "FLORAL"],
+            palette="Set2",
+            s=150,
+            edgecolor="black",
+        )
+
+        # ax.set_title(metric)
+        ax.set_xlabel("Samples (train)", fontsize=15)
+        ax.set_ylabel(r"Residual $L_2$ norm", fontsize=15)
+        ax.legend().set_title("Method")
+        ax.set_yscale("log")
+        ax.set_xscale("log")
+        xlim_range = kwargs.get("xlim_range", (1e1, 1e4))
+        ylim_range = kwargs.get("ylim_range", (1e-3, 1e1))
+        ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
+        ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
+
+        plt.savefig("residual_comparison.png", dpi=300)
+        plt.close()
+
+    @abstractmethod
+    def comp_residual(self):
+        """compute the residual"""
+        pass
+
+
 class ErrorSummary:
     def __init__(self, data_flora: dict, data_floral: dict):
         super(ErrorSummary, self).__init__()
@@ -546,7 +668,7 @@ class oneDPlot(BasePlot):
             if ii == 0:
                 ax.legend()
             row = ii // 2
-            # col = ii % 2
+            col = ii % 2
             # ax.set_xticks([])
             # ax.set_yticks([])
             if ii % 2 == 0:
@@ -558,6 +680,8 @@ class oneDPlot(BasePlot):
             else:
                 ax.set_xlabel("")  # remove label entirely
                 ax.tick_params(labelbottom=False)  # hide tick labels
+            if col == 1:
+                ax.set_yscale("log")
             # ax.label_outer()
         fig.align_ylabels()
 
