@@ -11,7 +11,7 @@ logger_name: "advection" # Logger folder
 # configuration for data
 data:
   n_samples: 6000 # total samples for training + validation (for tractability)
-  n_train: 100
+  n_train: 1000
   n_val: 1000
   LF: # low fidelity
     path: "./low_fidelity.npz"
@@ -35,6 +35,12 @@ dataloader:
       auto: True # If True, mean and std are computed.
       mean: [2.0] # For example, [0.5] if want specified (per channel)
       std: [3.5] # For example, [0.5] if want specified (per channel)
+    LF_field:
+      enabled: True # True: normalize the field
+      auto: True # If True, mean and std are computed.
+      mean: [0.1] # For example, [0.5] if want specified (per channel)
+      std: [0.5] # For example, [0.5] if want specified (per channel)
+
 
 # configuration for training
 train:

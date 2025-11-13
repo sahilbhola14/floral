@@ -41,7 +41,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=32,
+        default=40,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -109,7 +109,7 @@ class AdvectionSolver:
         self.t = np.arange(0, self.Nt + 1) * self.dt
         self.dx = self.x[1] - self.x[0]
         self.cfl = abs(self.beta) * self.dt / self.dx
-        print(f"CFL: {self.cfl}")
+        print(f"CFL: {self.cfl: .3e}")
         assert self.cfl < 1.0, "CFL must be less than 1.0 for numerical stability"
         XX, TT = np.meshgrid(self.x, self.t[1:])
         self.domain = np.concatenate((XX.reshape(-1, 1), TT.reshape(-1, 1)), axis=1)
@@ -258,7 +258,7 @@ class AdvectionSolver:
         # axs[ii, 2].imshow(np.abs(all_uT[ii], all_uT_exact[ii]),
         #         interpolation="bicubic")
         # plt.savefig("true_compare.png")
-        print(f"Error norm: {np.linalg.norm(all_uT - all_uT_exact)}")
+        print(f"Error norm: {np.linalg.norm(all_uT - all_uT_exact): .2f}")
         return np.array(all_uT), np.array(all_energy)
 
 
@@ -497,14 +497,15 @@ class MultiFidelity:
             )
         assert len(r_list) == self.n_samples, "Number of samples mismatch"
 
-        mean_r = np.mean(np.array(r_list))
-
-        std_r = np.std(np.array(r_list))
+        r_array = np.array(r_list)
+        mean_r = np.mean(r_array)
+        std_r = np.std(r_array)
+        min_r = r_array.min()
+        max_r = r_array.max()
 
         print(
             f"{self.n_samples} sample average Pearson correlation coefficient "
-            f": {mean_r: .4f} with {std_r: .4f} "
-            "standard deviation"
+            f": {mean_r: .4f}  +/- {std_r: .4f} | Min: {min_r: .4f} Max: {max_r: .4f}"
         )
 
     def _prep_and_save(self, samples_LF, samples_HF):
