@@ -1,6 +1,9 @@
-# examples/oneDCorr/run_floral.py
+# examples/onedcorr/run_floral.py
 """
-Flow-matching operator for residual-augmented learning for 1D toy problem
+Flow-matching operator for residual-augmented learning for Darcy flow.
+Notes:
+    1. To improve reproducibility across architectures, tf32 is not used.
+    Emperically, operators were producing higher losses.
 """
 import torch
 import wandb
@@ -17,7 +20,7 @@ from floral.utils import (
 )
 from floral.flow import perform_inference, Flow
 
-parser = argparse.ArgumentParser(description="Run oneDCorr with specified parameters.")
+parser = argparse.ArgumentParser(description="Run onedcorr with specified parameters.")
 parser.add_argument(
     "--config",
     type=str,
@@ -28,21 +31,19 @@ parser.add_argument(
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
 
-torch.set_float32_matmul_precision("medium")  # for tensor cores
-
 
 def print_header(config: dict):
     """Print the Header
     Args:
         config (dict): Configuration dictionary parameters.
     """
-    print_section("oneDCorr config")
+    print_section("onedcorr config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Number of samples: {config.data.n_samples}")
-    print_section("oneDCorr config", end=True)
+    print_section("onedcorr config", end=True)
 
 
 def train_model(hp_config: dict = None):
@@ -74,9 +75,9 @@ def train_model(hp_config: dict = None):
         domain_dict=data_module.domain_dict,
         shape_dict=data_module.shape_dict,
     )
-    if hasattr(flow, "compile") and torch.cuda.is_available():
-        printer("Compiling the model...")
-        flow = torch.compile(flow, mode="default")
+    # if hasattr(flow, "compile") and torch.cuda.is_available():
+    #     printer("Compiling the model...")
+    #     flow = torch.compile(flow, mode="default")
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:
         check_path(config.checkpoint_load_path)

@@ -1,18 +1,18 @@
-# examples/oneDCorr/config_floral.yml
+# examples/onedcorr/config_floral.yml
 
 # general configuration
-job_name: "oneDCorr" # Unique identifier for each run
+job_name: "onedcorr" # Unique identifier for each run
 floral: True # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
-checkpoint_save_path: "./experiments/oneDCorr/" # Save path for the checkpoints
+checkpoint_save_path: "./experiments/onedcorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
-logger_name: "oneDCorr" # Logger folder
+logger_name: "onedcorr" # Logger folder
 
 # configuration for data
 data:
-  n_samples: 2000 # total samples for training + validation (for tractability)
-  n_train: 1500
-  n_val: 500
+  n_samples: 6000 # total samples for training + validation (for tractability)
+  n_train: 1000
+  n_val: 1000
   LF: # low fidelity
     path: "./low_fidelity.npz"
   HF: # high fidelity
@@ -22,7 +22,7 @@ data:
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   train_ratio: 0.7 # percentage of {n_samples} to train
-  num_workers: 6 # Number of workers
+  num_workers: 5 # Number of workers
   normalize:
     # normalization: (x - mu) / sigma
     target_field:
@@ -35,22 +35,31 @@ dataloader:
       auto: True # If True, mean and std are computed.
       mean: [2.0] # For example, [0.5] if want specified (per channel)
       std: [3.5] # For example, [0.5] if want specified (per channel)
+    LF_field:
+      enabled: True # True: normalize the field
+      auto: True # If True, mean and std are computed.
+      mean: [0.1] # For example, [0.5] if want specified (per channel)
+      std: [0.5] # For example, [0.5] if want specified (per channel)
+
 
 # configuration for training
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 3
+  devices: 1
   precision: '32-true'
 
 # configuration for flow-matching
 flow:
   sig_min: 1.0e-5 # gaussian std for the data
   operator:
+    method: FiLMFNO
     # operator parameters
     field:
-      hidden_channels: 128
-      n_layers: 5
+      hidden_channels: 64
+      lifting_channel_ratio: 4
+      projection_channel_ratio: 4
+      n_layers: 4
       modes: 32
   prior:
     # prior GP measure parameters
@@ -63,5 +72,5 @@ generate:
   n_gen: 100 # number of samples generated (for UQ purposes)
   nT: 50 # number of time steps for integration
   method: "dopri5" # method for ODE solver
-  atol: 1.0e-4 # absolute tolerance for ODE solver
-  rtol: 1.0e-4 # relative tolerance for ODE solver
+  atol: 1.0e-5 # absolute tolerance for ODE solver
+  rtol: 1.0e-5 # relative tolerance for ODE solver
