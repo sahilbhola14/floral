@@ -395,6 +395,233 @@ class twoDPlot(BasePlot):
         plt.savefig(kwargs.get("save_name", default_save_name) + ".png")
 
 
+class oneDPlot(BasePlot):
+    """Plot multiple samples"""
+
+    def __init__(self, data_flora: dict, data_floral: dict):
+        super(oneDPlot, self).__init__()
+        self.data_flora = data_flora
+        self.data_floral = data_floral
+
+        # High-fidelity data (B, channels, *dims)
+        self.HF_field = self.data_floral["HF_field_plot"]
+        # Low-fidelity data (B, channels, *dims)
+        self.LF_field = self.data_floral["LF_field_plot"]
+        # Prediction Flora
+        self.HF_field_prediction_flora = self.data_flora["HF_field_prediction_plot"]
+        # Prediction Floral
+        self.HF_field_prediction_floral = self.data_floral["HF_field_prediction_plot"]
+        # extract num train and val
+        self.n_train = self.data_floral["n_train"]
+        self.n_val = self.data_floral["n_val"]
+        # domains
+        self.field_domain = self.data_flora["domain_dict"]["field"].ravel()
+
+        self.n_avail_samples = len(self.HF_field)
+        assert len(self.LF_field) == self.n_avail_samples
+        assert len(self.HF_field_prediction_flora) == self.n_avail_samples
+        assert len(self.HF_field_prediction_floral) == self.n_avail_samples
+
+        # number of UQ samples
+        self.n_gen = self.HF_field_prediction_floral.shape[1]
+        assert self.n_gen == self.HF_field_prediction_flora.shape[1]
+
+        # compute mean and std over the UQ samples (B, C, *dims)
+        self.mean_dict = {
+            "Low-fidelity": self.LF_field,
+            "High-fidelity": self.HF_field,
+            "FLORA": self.HF_field_prediction_flora.mean(1),
+            "FLORAL": self.HF_field_prediction_floral.mean(1),
+        }
+
+        self.std_dict = {
+            "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
+            "FLORA": self.HF_field_prediction_flora.std(1),
+            "FLORAL": self.HF_field_prediction_floral.std(1),
+        }
+        self.error_dict = self._get_error_dict()
+
+    def _get_error_dict(self):
+        error_dict = {
+            "abs_error": {},
+            "rel_error": {},
+            "RMSE": {},
+            "NRMSE": {},
+            "CRMSE": {},
+        }
+        for k in self.mean_dict:
+            true = self.mean_dict["High-fidelity"]
+            pred = self.mean_dict[k]
+            if k != "High-fidelity":
+                # absolute error
+                abs_error = (pred - true).abs()
+                error_dict["abs_error"][k] = abs_error
+                # relative error
+                rel_error = ((pred - true) / true).abs()
+                error_dict["rel_error"][k] = rel_error
+                # RMSE
+                RMSE = compute_RMSE(true=true, pred=pred)
+                error_dict["RMSE"][k] = RMSE
+                # NRMSE
+                NRMSE = compute_NRMSE(true=true, pred=pred)
+                error_dict["NRMSE"][k] = NRMSE
+                # CRMSE
+                CRMSE = compute_CRMSE(true=true, pred=pred)
+                error_dict["CRMSE"][k] = CRMSE
+
+        print(
+            f"\n=== Error summary for n_train: {self.n_train} "
+            f"and n_val: {self.n_val} ==="
+        )
+        print_error_summary(error_dict)
+        return error_dict
+
+    def get_error_summary(self):
+        print(
+            f"\n=== Error summary for n_train: {self.n_train} "
+            f"and n_val: {self.n_val} ==="
+        )
+        print_error_summary(self.error_dict)
+
+    def make_field_sample_plot(
+        self, n_samples: int = 5, plot_channel: int = 0, **kwargs
+    ):
+        """make field samples plot"""
+        std_factor = kwargs.get("std_factor", 1.0)
+        print(f"Plotting {std_factor} standard deviation")
+        assert n_samples <= self.n_avail_samples
+        print(f"Plotting {n_samples} samples for channel: {plot_channel}")
+        fig, axs = plt.subplots(
+            n_samples,
+            2,
+            figsize=kwargs.get("figsize", (len(self.mean_dict) * 3.0, n_samples * 2.0)),
+            dpi=300,
+            layout="compressed",
+            sharex=True,
+            # sharey=True,
+        )
+        for k in self.mean_dict.keys():
+            if k == "High-fidelity":
+                line_kwargs = dict(color="black", linestyle="-", linewidth=2)
+            elif k == "Low-fidelity":
+                line_kwargs = dict(color="grey", linestyle="--", linewidth=2)
+            elif k == "FLORA":
+                line_kwargs = dict(color="red", linestyle="-", linewidth=2)
+            elif k == "FLORAL":
+                line_kwargs = dict(color="blue", linestyle="-.", linewidth=2)
+            else:
+                raise ValueError(f"{k} not a valid entry")
+
+            for ii in range(n_samples):
+                mean_pred = self.mean_dict[k][ii][plot_channel].ravel()
+                (line_obj,) = axs[ii, 0].plot(
+                    self.field_domain,
+                    mean_pred,
+                    label=k,
+                    **line_kwargs,
+                )
+
+                if k in ["FLORA", "FLORAL"]:
+                    std_pred = self.std_dict[k][ii][plot_channel].ravel()
+                    axs[ii, 0].fill_between(
+                        self.field_domain,
+                        mean_pred + std_factor * std_pred,
+                        mean_pred - std_factor * std_pred,
+                        color=line_obj.get_color(),
+                        alpha=0.25,
+                        # label=f"$\pm{std_factor}\sigma$"
+                        label=None,
+                    )
+                if k != "High-fidelity":
+                    axs[ii, 1].plot(
+                        self.field_domain,
+                        torch.abs(
+                            mean_pred
+                            - self.mean_dict["High-fidelity"][ii][plot_channel].ravel()
+                        ),
+                        label=k,
+                        **line_kwargs,
+                    )
+        for ii, ax in enumerate(axs.flatten()):
+            if ii == 0:
+                ax.legend()
+            row = ii // 2
+            # col = ii % 2
+            # ax.set_xticks([])
+            # ax.set_yticks([])
+            if ii % 2 == 0:
+                ax.set_ylabel(kwargs.get("ylabel", r"$w(x)$"))
+            else:
+                ax.set_ylabel(kwargs.get("xlabel", r"$|w(x) - \hat{w}(x)|$"))
+            if row == n_samples - 1:
+                ax.set_xlabel(kwargs.get("xlabel", r"$x$"))
+            else:
+                ax.set_xlabel("")  # remove label entirely
+                ax.tick_params(labelbottom=False)  # hide tick labels
+            # ax.label_outer()
+        fig.align_ylabels()
+
+        default_save_name = f"field_samples_n_train_{self.n_train}_n_val_{self.n_val}"
+        plt.savefig(kwargs.get("save_name", default_save_name) + ".png")
+
+    def make_error_sample_plot(
+        self, n_samples: int = 5, plot_channel: int = 0, **kwargs
+    ):
+        """make field samples plot"""
+        raise NotImplementedError
+
+    #     assert n_samples <= self.n_avail_samples
+    #     error_type = kwargs.get("error_type", "abs_error")
+    #     assert error_type in ["abs_error", "rel_error"], "invalid error type"
+    #     print(
+    #         f"Plotting {n_samples} samples for channel: {plot_channel} "
+    #         f"for error type: {error_type}"
+    #     )
+    #     data_dict = self.error_dict[error_type]
+
+    #     fig, axs = plt.subplots(
+    #         n_samples,
+    #         len(data_dict),
+    #         figsize=kwargs.get("figsize", (len(data_dict) * 2.4, n_samples * 2.0)),
+    #         dpi=300,
+    #         layout="compressed",
+    #         sharex=True,
+    #         sharey=True,
+    #     )
+    #     # compute range
+    #     if kwargs.get("vmin", None) is None:
+    #         vmin = min(data[:n_samples].min() for data in data_dict.values())
+    #         vmin = torch.floor(vmin)
+    #     else:
+    #         vmin = kwargs.get("vmin")
+    #     if kwargs.get("vmax", None) is None:
+    #         vmax = max(data[:n_samples].max() for data in data_dict.values())
+    #         vmax = torch.ceil(vmax)
+    #     else:
+    #         vmax = kwargs.get("vmax")
+    #     for jj, k in enumerate(data_dict.keys()):
+    #         axs[0, jj].set_title(k)
+    #         for ii in range(n_samples):
+    #             im = axs[ii, jj].imshow(
+    #                 data_dict[k][ii][plot_channel],
+    #                 vmin=vmin,
+    #                 vmax=vmax,
+    #                 origin="lower",
+    #                 interpolation="bicubic",
+    #             )
+    #     fig.colorbar(im, ax=axs[-1], orientation="horizontal", pad=0.1)
+    #     for ax in axs.flatten():
+    #         ax.set_xticks([])
+    #         ax.set_yticks([])
+    #         ax.set_xlabel(kwargs.get("xlabel", r"$x_1$"))
+    #         ax.set_ylabel(kwargs.get("ylabel", r"$x_2$"))
+    #         ax.label_outer()
+    #     default_save_name = (
+    #         f"{error_type}_samples_n_train_{self.n_train}_n_val_{self.n_val}"
+    #     )
+    #     plt.savefig(kwargs.get("save_name", default_save_name) + ".png")
+
+
 class ParetoPlot:
     """Pareto plot class"""
 
