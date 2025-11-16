@@ -180,10 +180,7 @@ class AdvectionSolver:
         self.u0 = use_ic
 
     def _rhs(self, u):
-        """compute rhs
-        For advection term, second order upwind is used and for diffusion terms we use
-        central difference.
-        """
+        """compute rhs"""
         assert isinstance(u, torch.Tensor) and u.ndim == 1
         # u_im1 = torch.roll(u, 1)
         # u_ip1 = torch.roll(u, -1)
@@ -204,6 +201,25 @@ class AdvectionSolver:
         un = u + (self.dt / 6.0) * (k1 + k2 + 4.0 * k3)
         return un
 
+    def _check_residual(self, u):
+        """check the residual
+        u: (torch.Tensor): solution of shape (Nt+1, Nx)
+        """
+        # dudt (forward differencwe + backward difference)
+        dudt = torch.zeros_like(u)
+        dudt[:-1, :] = (u[1:, :] - u[:-1, :]) / self.dt
+        dudt[-1, :] = (u[-1, :] - u[-2, :]) / self.dt
+        # dudx (upwinding)
+        if self.beta > 0:
+            dudx = (u - torch.roll(u, shifts=1, dims=1)) / self.dx
+        else:
+            dudx = (torch.roll(u, shifts=-1, dims=1) - u) / self.dx
+
+        # residual
+        residual = dudt + self.beta * dudx
+
+        print(f"residual norm: {torch.linalg.norm(residual)}")
+
     def step_euler(self, u):
         """Forward euler"""
         return u + self.dt * self._rhs(u)
@@ -214,7 +230,7 @@ class AdvectionSolver:
         shift = (self.x - self.beta * t) % self.Lx
         return np.interp(shift, self.x, u0, period=self.Lx)
 
-    def solve_single(self, u0):
+    def solve_single(self, u0, check_resisual: bool = False):
         """Returns (nt + 1, nx) solution"""
         u = torch.tensor(u0, dtype=torch.float32, device=self.device)
         sol_exact = np.zeros((self.Nt + 1, self.Nx))
@@ -230,6 +246,8 @@ class AdvectionSolver:
             sol[ii] = u.clone()
             energy[ii] = 0.5 * torch.sum(sol[ii] * sol[ii])
             sol_exact[ii] = self.comp_exact_solution(sol_exact[0], ii * self.dt)
+        # check the residual
+        self._check_residual(sol)
         return sol.cpu().numpy(), energy.cpu().numpy(), sol_exact
 
     def solve(self):
@@ -240,7 +258,7 @@ class AdvectionSolver:
         pbar = tqdm(range(self.n_samples), desc="Advection")
         for ii in pbar:
             u0 = self.u0[ii]
-            sol, energy, sol_exact = self.solve_single(u0)
+            sol, energy, sol_exact = self.solve_single(u0, check_resisual=False)
             all_uT.append(sol)
             all_energy.append(energy)
             all_uT_exact.append(sol_exact)
