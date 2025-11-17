@@ -1,139 +1,321 @@
 # /examples/oneDCorr/gen_data.py
-"""
-Generate synthetic data for a 1D model with correlation between the
-low and high fidelity models.
-Reference: Thakur, A., Tripura, T. and Chakraborty, S., 2022. Multi-fidelity wavelet
-neural operator with application to uncertainty quantification.
-arXiv preprint arXiv:2208.05606.
-"""
+import random
 import numpy as np
+import torch
 import argparse
 import matplotlib.pyplot as plt
+from floral.solver import OneDCorr
+from scipy.stats import pearsonr, gaussian_kde
 
 plt.style.use("../../scripts/journal.mplstyle")
 
-parser = argparse.ArgumentParser(
-    prog="OneDCorrelation",
-    description="generate synthetic data for 1d model with correlation with the input",
-)
-parser.add_argument(
-    "-n", "--n_samples", type=int, default=10000, help="Number of samples to generate"
-)
 
-parser.add_argument(
-    "-mh",
-    "--m_high",
-    type=int,
-    default=128,
-    help="Number of discretization points for high fidelity",
-)
-parser.add_argument(
-    "--k_range", type=list, default=[10, 14], help="Range of k values to sample from"
-)
-parser.add_argument("--plot", action="store_true", help="Plot a snapshot of the data")
-
-args = parser.parse_args()
-
-print(f"Generating {args.n_samples} samples for training and validation")
-
-
-def eval_high_fidelity_model(a: np.ndarray, x: np.ndarray):
-    """Evaluate the high fidelity model at a given point x with parameters a."""
-    return np.sin(a)
-
-
-def eval_low_fidelity_model(a: np.ndarray, x: np.ndarray):
-    """Evaluate the low fidelity model at a given point x with parameters a."""
-    return np.sin(a) + x.reshape(1, -1) - 0.25 * a
-
-
-def sample_input_function(n_samples: int, domain: np.ndarray):
-    """sample the input function"""
-    k = np.random.uniform(args.k_range[0], args.k_range[1], n_samples).reshape(-1, 1)
-    return k * domain - 4.0
-
-
-def plot_snapshot(
-    domain: np.ndarray,
-    condition: np.ndarray,
-    hf_solution: np.ndarray,
-    lf_solution: np.ndarray,
-):
-    """Plot a snapshot of the high and low fidelity solutions."""
-    idx_plot = 0  # for reproducibility, always plot the first sample
-    condition_plot = condition[idx_plot, :].ravel()
-    lf_solution_plot = lf_solution[idx_plot, :].ravel()
-    hf_solution_plot = hf_solution[idx_plot, :].ravel()
-    domain_plot = domain.ravel()
-
-    fig, axs = plt.subplots(1, 2, figsize=(6, 2.5), sharex=True)
-    axs[0].plot(domain_plot, condition_plot, color="k")
-    axs[0].set_ylabel(r"$a(x)$")
-    axs[0].set_ylim(-10, 10)
-    axs[1].plot(domain_plot, hf_solution_plot, color="k", label="High-fidelity")
-    axs[1].plot(
-        domain_plot, lf_solution_plot, color="grey", alpha=0.6, label="Low-fidelity"
+def parse_args():
+    """parse args"""
+    parser = argparse.ArgumentParser(
+        prog="onedcorr",
+        description="generate synthetic data for onedcorr",
     )
-    axs[1].legend(fontsize=10)
-    axs[1].set_ylabel(r"$w(x)$")
-    axs[1].set_ylim(bottom=-2, top=2)
-    for ax in axs:
-        ax.set_xlabel("$x$")
-
-    plt.legend(fontsize=10, loc="upper right")
-    plt.tight_layout()
-    plt.savefig("data_snapshot.png")
-
-
-def generate():
-    """generate the data"""
-    domain = np.linspace(0, 1, args.m_high)  # high fidelity domain
-    condition = sample_input_function(
-        args.n_samples, domain
-    )  # samples of the input functions
-    hf_solution = eval_high_fidelity_model(
-        condition, domain
-    )  # evaluate high fidelity model
-    lf_solution = eval_low_fidelity_model(
-        condition, domain
-    )  # evaluate low fidelity model
-
-    # reshape
-    domain = domain.reshape(-1, 1)  # flattened domain
-    condition = np.expand_dims(condition, 1)  # (B, channel_c, *dim_c)
-    hf_solution = np.expand_dims(hf_solution, 1)  # (B, channels_f, *dim_f)
-    lf_solution = np.expand_dims(lf_solution, 1)  # (B, channels_f, *dim_f)
-
-    assert hf_solution.shape == lf_solution.shape, (
-        "Incorrect lf solution shape."
-        "Consider interpolating the low fidelity solution."
+    parser.add_argument(
+        "-n",
+        "--n_samples",
+        type=int,
+        default=10000,
+        help="Number of samples to generate",
     )
 
-    high_data = {
-        "field": hf_solution[: args.n_samples],
-        "condition": condition[: args.n_samples],
-        "field_domain": domain,
-        "condition_domain": domain,
-    }
-    # low fidelity must be interpoalted to the same domain as HF
-    low_data = {
-        "field": lf_solution[: args.n_samples],
-        "condition": condition[: args.n_samples],
-        "field_domain": domain,
-        "condition_domain": domain,
-    }
+    parser.add_argument(
+        "-res",
+        "--resolution",
+        type=int,
+        default=128,
+        help="Resolution of the grid",
+    )
+    parser.add_argument(
+        "--k_range",
+        type=list,
+        default=[10, 14],
+        help="Range of k values to sample from",
+    )
+    parser.add_argument("--plot", action="store_true")
 
-    # plot a snapshot
-    if args.plot:
-        plot_snapshot(domain, condition, hf_solution, lf_solution)
+    args = parser.parse_args()
+    print("==" * 3 + "onedcorr" + "==" * 3)
+    print(f"Number of samples: {args.n_samples}")
+    print(f"Resolution: {args.resolution}")
+    print("==" * 3 + "========" + "==" * 3)
 
-    # save
-    np.savez("high_fidelity.npz", **high_data)
-    np.savez("low_fidelity.npz", **low_data)
+    return args
 
-    print("saved high fidelity data to high_fidelity.npz")
-    print("saved low fidelity data to low_fidelity.npz")
+
+def seed_everything(seed: int = 42):
+    """seed everything"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+class MultiFidelity:
+    def __init__(self, resolution, n_samples, plot: bool = False):
+        self.resolution = resolution
+        self.n_samples = n_samples
+        self.plot = plot
+
+        self.solver_HF = OneDCorr(
+            fidelity="High", resolution=self.resolution, n_samples=n_samples
+        )
+        self.solver_LF = OneDCorr(
+            fidelity="Low", resolution=self.resolution, n_samples=n_samples
+        )
+        self.domain = self.solver_HF.domain
+
+    def _get_input_conditions(self):
+        """same HF and LF conditions"""
+        a_HF = self.solver_HF._sample_input_function()
+        return a_HF, a_HF
+
+    def _make_sample_comparison_plot(self, u_LF, u_HF, n_samples: int = 5):
+        """make sample comparison plot"""
+        assert u_LF.shape == u_HF.shape, "LF and HF samples must have the same shape"
+        assert len(u_LF) >= n_samples, "Not enough samples to plot"
+
+        fig, axs = plt.subplots(
+            n_samples, 2, figsize=(6, n_samples * 2), sharex=True, layout="compressed"
+        )
+        for ii, ax in enumerate(axs):
+            ax[0].plot(self.domain.ravel(), u_LF[ii], color="grey", alpha=0.6)
+            ax[0].plot(self.domain.ravel(), u_HF[ii], color="k")
+            ax[1].plot(self.domain.ravel(), torch.abs(u_HF[ii] - u_LF[ii]), color="k")
+            ax[0].set_xlabel(r"$x$")
+            ax[0].set_ylabel(r"$w(x)$")
+            ax[1].set_xlabel(r"$x$")
+            ax[1].set_ylabel(r"$|w_{HF}(x) - w_{LF}(x)|$")
+            # for a in ax:
+            #     a.label_outer()
+        plt.savefig("data_snapshot.png")
+
+    def _make_marginal_plot(self, u_LF, u_HF, percentage_plot: int = 0.5):
+        n_plot = int(len(u_LF) * percentage_plot)
+        print(f"Making marginal distribution using {n_plot}/{len(u_LF)} samples")
+        # extract field
+        flat_LF = u_LF[:n_plot].flatten().numpy()
+        flat_HF = u_HF[:n_plot].flatten().numpy()
+        flat_residual = flat_HF - flat_LF
+
+        fig, axs = plt.subplots(1, 2, figsize=(6, 3), layout="compressed")
+        axs[0].hist(flat_LF, density=True, bins=100, label=r"Low-fidelity")
+        axs[0].hist(flat_HF, density=True, bins=100, label=r"High-fidelity")
+        axs[0].legend()
+        axs[0].set_title("State marginal")
+        axs[1].hist(flat_residual, density=True, bins=100, label=r"Residual")
+        axs[1].set_title("Residual marginal")
+
+        plt.savefig("data_marginal.png")
+
+    def _make_joint_plot(
+        self,
+        samples_X,
+        samples_Y,
+        xlabel=r"Low-fidelity",
+        ylabel=r"High-fidelity",
+        percentage_plot: int = 0.5,
+        file_identifier: str = "LF_HF",
+    ):
+        n_plot = int(len(samples_X) * percentage_plot)
+        print(f"Making joint distribution using {n_plot}/{len(samples_X)} samples")
+        # extract field
+        flat_X = samples_X[:n_plot].flatten().numpy()
+        flat_Y = samples_Y[:n_plot].flatten().numpy()
+
+        def _plot(x, y, ax):
+            assert (
+                x.shape == y.shape
+            ), f"x ({x.shape}) and y ({y.shape}) must have the same shape"
+            r, _ = pearsonr(x, y)
+
+            # Create scatter plot with KDE coloring
+            xy = np.vstack([x, y])
+            xy = xy + 1e-6 * np.random.randn(*xy.shape)  # add jitter
+            z = gaussian_kde(xy)(xy)
+
+            # Sort points by density for better visualization
+            idx = z.argsort()
+            x_sorted, y_sorted, z_sorted = x[idx], y[idx], z[idx]
+
+            ax.scatter(
+                x_sorted,
+                y_sorted,
+                c=z_sorted,
+                s=10,
+                cmap="Blues",
+                alpha=0.6,
+                edgecolors="none",
+            )
+
+            # Add diagonal line
+            ax.plot([x.min(), x.max()], [x.min(), x.max()], "r--", lw=2)
+
+            # Add correlation text
+            ax.text(
+                0.05,
+                0.95,
+                f"$r_{{Pearson}} = {r: .2f}$",
+                transform=ax.transAxes,
+                fontsize=12,
+                verticalalignment="top",
+                bbox=dict(facecolor="white", alpha=0.8),
+            )
+
+            return ax
+
+        fig, axs = plt.subplots(1, 1, figsize=(8, 4), dpi=300, layout="compressed")
+        _plot(flat_X, flat_Y, axs)
+        axs.set_xlabel(xlabel)
+        axs.set_ylabel(ylabel)
+
+        plt.savefig(file_identifier + "_joint_plot.png", dpi=300)
+        plt.close()
+
+    def _comp_average_pearson(
+        self, samples_X, samples_Y, xlabel=r"Low-fidelity", ylabel=r"High-fidelity"
+    ):
+        def _comp_pearson(x: np.ndarray, y: np.ndarray):
+            assert x.shape == y.shape, "x and y must have the same shape"
+            assert isinstance(x, np.ndarray)
+            assert isinstance(y, np.ndarray)
+            r, _ = pearsonr(x, y)
+            return r
+
+        r_list = []
+        for ii in range(self.n_samples):
+            flat_X = samples_X[ii].flatten().numpy()
+            flat_Y = samples_Y[ii].flatten().numpy()
+            r_list.append(
+                _comp_pearson(
+                    flat_X,
+                    flat_Y,
+                )
+            )
+        assert len(r_list) == self.n_samples, "Number of samples mismatch"
+
+        r_array = np.array(r_list)
+        mean_r = np.mean(r_array)
+        std_r = np.std(r_array)
+        min_r = r_array.min()
+        max_r = r_array.max()
+
+        print(
+            f"{self.n_samples} sample average Pearson correlation coefficient "
+            f": {mean_r: .4f}  +/- {std_r: .4f} | Min: {min_r: .4f} Max: {max_r: .4f}"
+        )
+
+    def _compare(self, u_HF, u_LF):
+        """compare"""
+        assert (
+            self.n_samples <= 2000
+        ), "For making plots, reduce the number of samples to less than 2000"
+
+        # make sample comparion
+        self._make_sample_comparison_plot(
+            u_LF=u_LF,
+            u_HF=u_HF,
+        )
+        # make marginals
+        self._make_marginal_plot(
+            u_LF=u_LF,
+            u_HF=u_HF,
+            percentage_plot=0.1,
+        )
+        # make LF-Residual joint plot
+        self._make_joint_plot(
+            samples_X=u_LF,
+            samples_Y=u_HF - u_LF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"Residual",
+            percentage_plot=0.1,
+            file_identifier="Residual",
+        )
+        # make LF-HF joint plot
+        self._make_joint_plot(
+            samples_X=u_LF,
+            samples_Y=u_HF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"High-fidelity",
+            percentage_plot=0.1,
+            file_identifier="LF_HF",
+        )
+        # compute average pearson for LF-Residual
+        self._comp_average_pearson(
+            samples_X=u_LF,
+            samples_Y=u_HF - u_LF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"Residual",
+        )
+
+        # compute average pearson for LF-HF
+        self._comp_average_pearson(
+            samples_X=u_LF,
+            samples_Y=u_HF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"High-fidelity",
+        )
+
+    def _prep_and_save(self, u_HF, u_LF, a_HF, a_LF):
+        # shape to (B, C, *dims)
+        u_HF = u_HF.unsqueeze(1)
+        u_LF = u_LF.unsqueeze(1)
+        a_HF = a_HF.unsqueeze(1)
+        a_LF = a_LF.unsqueeze(1)
+        # reshape domain to (resolution, 1)
+        domain = self.domain.view(-1, 1)
+        # prep data dict
+        high_data = {
+            "field": u_HF,
+            "condition": a_HF,
+            "field_domain": domain,
+            "condition_domain": domain,
+        }
+        low_data = {
+            "field": u_LF,
+            "condition": a_LF,
+            "field_domain": domain,
+            "condition_domain": domain,
+        }
+
+        # save
+        np.savez("high_fidelity.npz", **high_data)
+        np.savez("low_fidelity.npz", **low_data)
+
+        print("saved high fidelity data to high_fidelity.npz")
+        print("saved low fidelity data to low_fidelity.npz")
+
+    def simulate(self):
+        # get the input conditions
+        a_HF, a_LF = self._get_input_conditions()
+        # solve
+        u_HF = self.solver_HF(a_HF)
+        u_LF = self.solver_LF(a_LF)
+        # compare
+        if self.plot:
+            self._compare(u_HF=u_HF, u_LF=u_LF)
+        # prep and save
+        self._prep_and_save(
+            u_HF=u_HF,
+            u_LF=u_LF,
+            a_HF=a_HF,
+            a_LF=a_LF,
+        )
 
 
 if __name__ == "__main__":
-    generate()
+    # seed
+    seed_everything()
+    # args
+    args = parse_args()
+    # Multi-fidelity setup
+    mf = MultiFidelity(
+        resolution=args.resolution, n_samples=args.n_samples, plot=args.plot
+    )
+    mf.simulate()
