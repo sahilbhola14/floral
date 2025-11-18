@@ -14,7 +14,7 @@ from .embedding import build_domain_encoder
 from .fno import FiLMFNO
 
 
-def get_vector_field_operator(operator_config: dict):
+def get_vector_field_operator(operator_config: dict, floral: bool = False):
     """build the operator modules
     Args:
         operator_config (dict):
@@ -28,6 +28,7 @@ def get_vector_field_operator(operator_config: dict):
         field_config=operator_config["field"],
         condition_config=operator_config["condition"],
         method=operator_config["method"],
+        floral=floral,
     )
 
 
@@ -37,6 +38,7 @@ class VectorField(nn.Module):
         field_config: dict,
         condition_config: dict,
         method: str = "FiLMFNO",
+        floral: bool = False,
         **kwargs,
     ):
         super(VectorField, self).__init__()
@@ -46,6 +48,7 @@ class VectorField(nn.Module):
         check_keys(condition_config, required_keys)
         # set field attributes
         self.method = method
+        self.floral = floral
         self.field_channels = field_config.get("channels")
         self.field_ndim = field_config.get("ndim")
         self.field_hidden_channels = field_config.get("hidden_channels", 128)
@@ -80,9 +83,11 @@ class VectorField(nn.Module):
         """
         # same modes in each dimension
         n_modes = (self.field_modes,) * self.field_ndim
+        # field channels
+        field_channels = self.field_channels
         # in_channels to the field
         if self.method == "FiLMFNO":
-            in_channels = self.field_channels + self.time_embed_dim
+            in_channels = field_channels + self.time_embed_dim
             # FiLMFNO
             field_model = FiLMFNO(
                 in_channels=in_channels,
@@ -94,9 +99,7 @@ class VectorField(nn.Module):
                 cond_channels=self.condition_channels,
             )
         elif self.method == "FNO":
-            in_channels = (
-                self.field_channels + self.time_embed_dim + self.condition_channels
-            )
+            in_channels = field_channels + self.time_embed_dim + self.condition_channels
             field_model = _FNO(
                 in_channels=in_channels,
                 out_channels=self.field_channels,
@@ -154,10 +157,27 @@ class VectorField(nn.Module):
         )
         return t_embed
 
+    def _get_operator_input(
+        self,
+        psi: torch.Tensor,
+        t_embed: torch.Tensor,
+        condition: torch.Tensor,
+        LF_field: torch.Tensor,
+    ):
+        """input to the operator"""
+        # psi_mod = torch.cat((psi, LF_field), dim=1) if self.floral else psi
+        psi_mod = psi
+        if self.method == "FiLMFNO":
+            input_vt = torch.cat((psi_mod, t_embed), dim=1)
+        elif self.method == "FNO":
+            input_vt = torch.cat((psi_mod, t_embed, condition), dim=1)
+        return input_vt
+
     def forward(
         self,
         psi: torch.Tensor,
         condition: torch.Tensor,
+        LF_field: torch.Tensor,
         field_domain: torch.Tensor,
         t: torch.Tensor,
     ):
@@ -186,12 +206,17 @@ class VectorField(nn.Module):
         )
         # time embedding (batch_size, embed_dim, *field_dims)
         t_embed = self._get_time_embedding(t=t, field_dims=field_dims)
+        # get the input
+        input_vt = self._get_operator_input(
+            psi=psi,
+            t_embed=t_embed,
+            condition=condition,
+            LF_field=LF_field,
+        )
         # compute the vector field
         if self.method == "FiLMFNO":
-            inp_vt = torch.cat((psi, t_embed), dim=1)
-            vt = self.field(x=inp_vt, cond=condition)
+            vt = self.field(x=input_vt, cond=condition)
         elif self.method == "FNO":
-            inp_vt = torch.cat((psi, t_embed, condition), dim=1)
-            vt = self.field(inp_vt)
+            vt = self.field(input_vt)
         check_tensor_blowup(vt, name="vector field")
         return vt

@@ -78,6 +78,12 @@ def deep_get(mapping: dict | DictConfig, keys, default=None):
     return mapping
 
 
+def type_check(data, data_type):
+    assert isinstance(
+        data, data_type
+    ), f"Expected {data_type}, got {type(data).__name__}"
+
+
 @rank_zero_only
 def printer(message):
     """Print message only on rank 0"""
@@ -101,7 +107,7 @@ def t2n(tensor: torch.Tensor) -> torch.Tensor:
 
 def n2t(array: np.ndarray) -> torch.Tensor:
     """Convert a NumPy array to a PyTorch tensor."""
-    assert isinstance(array, np.ndarray), "Input must be a NumPy array"
+    type_check(array, np.ndarray)
     return torch.FloatTensor(array)
 
 

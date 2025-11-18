@@ -375,14 +375,25 @@ class FourierEncoding(nn.Module):
             2 * self.n_fourier_modes
         )  # (sin(2 * pi * x), cos( 2 * pi * x))
         # initialize the modes
+        self.learnable_modes = learnable_modes
         modes = self._initialize_modes()
-        if learnable_modes:
+        if self.learnable_modes:
             self.modes = nn.Parameter(modes)
         else:
             self.register_buffer("modes", modes)
 
-    def _initialize_modes(self):
-        modes = torch.randn(self.ndim, self.n_fourier_modes)
+    def _initialize_modes(self, logspaced: bool = True):
+        if logspaced:
+            # log-spaced from low to high frequency
+            freqs = torch.logspace(
+                start=torch.log10(torch.tensor(1e-1)),
+                end=torch.log10(torch.tensor(1e2)),
+                steps=self.n_fourier_modes,
+            )
+            modes = freqs.expand(self.ndim, -1).clone()
+        else:
+            modes = torch.randn(self.ndim, self.n_fourier_modes)
+        assert modes.shape == (self.ndim, self.n_fourier_modes)
         return modes
 
     def _check_input(self, coords: torch.Tensor):

@@ -75,22 +75,19 @@ class Inference:
         """extract the inference input"""
         assert len(val_set.tensors) == 3, "expected (target_field, condition, LF_field)"
         # extract
-        target_field, condition, LF_field_plot = val_set.tensors
-        # compute HF_field
-        target_field_denormalize = self.data_module.denormalize_field(
-            normal_field=target_field
-        )
-        if self.floral:
-            HF_field_plot = target_field_denormalize + LF_field_plot
-        else:
-            HF_field_plot = target_field_denormalize
-        # compute condition_plot
+        target_field, condition, LF_field = val_set.tensors
+        # compute HF_field (for plot)
+        HF_field_plot = self.data_module.denormalize_field(normal_field=target_field)
+        # compute condition_plot (for plot)
         condition_plot = self.data_module.denormalize_condition(
             normal_condition=condition
         )
+        # compute the LF_field (for plot)
+        LF_field_plot = self.data_module.denormalize_LF_field(normal_field=LF_field)
         # create dict
         inference_input_dict = {
             "condition": condition,
+            "LF_field": LF_field,
             "condition_plot": condition_plot,
             "HF_field_plot": HF_field_plot,
             "LF_field_plot": LF_field_plot,
@@ -112,7 +109,9 @@ class Inference:
             ncols=150,
             leave=True,
         )
-        all_LF_field_plot = self.inference_input_dict.get("LF_field_plot")
+        # get the LF (normalized)
+        all_LF_field = self.inference_input_dict.get("LF_field")
+        # get the condition (normalized)
         all_condition = self.inference_input_dict.get("condition")
         # iterate
         all_prediction_plot = []
@@ -121,12 +120,12 @@ class Inference:
             upper_idx = (batch_idx + 1) * self.minibatch_size
             with autocast_context:
                 # get batches
-                batch_LF_field_plot = all_LF_field_plot[lower_idx:upper_idx]
+                batch_LF_field = all_LF_field[lower_idx:upper_idx]
                 batch_condition = all_condition[lower_idx:upper_idx]
                 # get prediction
-                batch_prediction_plot = self._get_prediction(condition=batch_condition)
-                if self.floral:
-                    batch_prediction_plot += batch_LF_field_plot.unsqueeze(1)
+                batch_prediction_plot = self._get_prediction(
+                    condition=batch_condition, LF_field=batch_LF_field
+                )
                 all_prediction_plot.append(batch_prediction_plot)
 
         # ensure all async transfers are complete
@@ -161,11 +160,12 @@ class Inference:
         printer(f"Saving results to {save_path}")
         torch.save(result_dict, save_path)
 
-    def _get_prediction(self, condition: torch.Tensor):
+    def _get_prediction(self, condition: torch.Tensor, LF_field: torch.Tensor):
         """integrate the ODE"""
         # normalized prediciton
         prediction = self.best_flow.integrate_flow(
             condition=condition,
+            LF_field=LF_field,
             **self.generate_config,
         ).cpu()
         # denormalize

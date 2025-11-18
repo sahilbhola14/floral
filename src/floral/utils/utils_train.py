@@ -104,6 +104,7 @@ def build_trainer(
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
         log_every_n_steps=10,
+        check_val_every_n_epoch=1,
         # accumulate_grad_batches=1,
     )
 

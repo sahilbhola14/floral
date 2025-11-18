@@ -98,7 +98,7 @@ class BaseResidual(ABC):
         self.n_avail_samples = len(self.HF_field)
 
         # domains
-        self.field_domain = self.data_flora["domain_dict"]["field"].ravel()
+        self.field_domain = self.data_flora["domain_dict"]["field"][0]
 
         self.n_avail_samples = len(self.HF_field)
         assert len(self.LF_field) == self.n_avail_samples

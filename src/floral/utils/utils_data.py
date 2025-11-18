@@ -1,5 +1,4 @@
 import math
-import numpy as np
 import lightning as L
 import wandb
 import torch
@@ -8,9 +7,9 @@ from .utils_IO import (
     check_path,
     printer,
     check_tensor_blowup,
-    n2t,
     check_keys,
     deep_get,
+    type_check,
 )
 
 
@@ -86,7 +85,7 @@ class OpDataModule(L.LightningDataModule):
         # initial check
         check_path(path)
         # load
-        data = dict(np.load(path, allow_pickle=True))
+        data = dict(torch.load(path, weights_only=False))
         # load  check
         required_keys = [
             "field",
@@ -142,18 +141,14 @@ class OpDataModule(L.LightningDataModule):
         # assert statements
         field_batch_size, field_channels, *field_dims = field.shape
         condition_batch_size, condition_channels, *condition_dims = condition.shape
-        assert isinstance(
-            field, np.ndarray
-        ), f"Expected numpy array, got {type(field).__name__}"
-        assert isinstance(
-            condition, np.ndarray
-        ), f"Expected numpy array, got {type(condition).__name__}"
-        assert isinstance(
-            field_domain, np.ndarray
-        ), f"Expected numpy array, got {type(field_domain).__name__}"
-        assert isinstance(
-            condition_domain, np.ndarray
-        ), f"Expected numpy array, got {type(condition_domain).__name__}"
+
+        # type check
+        type_check(field, torch.Tensor)
+        type_check(condition, torch.Tensor)
+        type_check(field_domain, torch.Tensor)
+        type_check(condition_domain, torch.Tensor)
+
+        # check size
         assert (
             field_batch_size == condition_batch_size
         ), "incorrect number of field and condition samples"
@@ -178,10 +173,10 @@ class OpDataModule(L.LightningDataModule):
         ), "inconsistent condition domain points"
 
         # convert to float tensor
-        field_tensor = n2t(field)
-        condition_tensor = n2t(condition)
-        field_domain_tensor = n2t(field_domain)
-        condition_domain_tensor = n2t(condition_domain)
+        field_tensor = torch.FloatTensor(field)
+        condition_tensor = torch.FloatTensor(condition)
+        field_domain_tensor = torch.FloatTensor(field_domain)
+        condition_domain_tensor = torch.FloatTensor(condition_domain)
 
         # convert domain(s) shape to match field
         field_domain_tensor = field_domain_tensor.T.view(-1, *field_dims).unsqueeze(0)
@@ -211,6 +206,7 @@ class OpDataModule(L.LightningDataModule):
             HF_field_domain,
             HF_condition_domain,
         ) = self._extract_keys(data_dict=self.HF_data)
+
         # assert statements
         assert (
             LF_field.shape == HF_field.shape
@@ -224,32 +220,39 @@ class OpDataModule(L.LightningDataModule):
         assert (
             LF_condition_domain.shape == HF_condition_domain.shape
         ), "Low-fidelity and High-fidelity must be defined on the same condition domain"
+        assert (
+            HF_condition.shape == HF_field.shape == LF_field.shape
+        ), "Low-fidelity field must be defined on the same domain"
         # create target field
         if self.floral:
-            target_field = HF_field - LF_field
+            # target_field = HF_field - LF_field
+            # all_condition = torch.cat((HF_condition, LF_field), dim=1)
+            all_condition = HF_condition
         else:
-            target_field = HF_field
+            # target_field = HF_field
+            all_condition = HF_condition
         # check availabe samples
-        assert self.n_samples <= len(target_field), (
+        assert self.n_samples <= len(HF_field), (
             f"Requested samples: {self.n_samples} > "
-            f"available samples: {len(target_field)}"
+            f"available samples: {len(HF_field)}"
         )
         # create operator data dict
         op_data_dict = {}
-        op_data_dict["target_field"] = target_field[: self.n_samples]
-        op_data_dict["condition"] = HF_condition[: self.n_samples]
+        op_data_dict["target_field"] = HF_field[: self.n_samples]
+        op_data_dict["condition"] = all_condition[: self.n_samples]
         op_data_dict["LF_field"] = LF_field[: self.n_samples]
+
         # create data shape dict
         shape_dict = {}
         shape_dict["field"] = {
-            "channels": target_field.shape[1],
-            "dims": list(target_field.shape[2:]),
-            "ndim": len(target_field.shape[2:]),
+            "channels": HF_field.shape[1],
+            "dims": list(HF_field.shape[2:]),
+            "ndim": len(HF_field.shape[2:]),
         }
         shape_dict["condition"] = {
-            "channels": HF_condition.shape[1],
-            "dims": list(HF_condition.shape[2:]),
-            "ndim": len(HF_condition.shape[2:]),
+            "channels": all_condition.shape[1],
+            "dims": list(all_condition.shape[2:]),
+            "ndim": len(all_condition.shape[2:]),
         }
         shape_dict["field_domain"] = {
             "channels": HF_field_domain.shape[1],
@@ -318,7 +321,7 @@ class OpDataModule(L.LightningDataModule):
     def _get_normalize_data_dict(self, train_data_dict, val_data_dict):
         """normalize the data using the training data statistics"""
         # initial checks
-        normalize_keys = ["target_field", "condition"]
+        normalize_keys = ["target_field", "condition", "LF_field"]
         check_keys(train_data_dict, normalize_keys)
         check_keys(val_data_dict, normalize_keys)
 
@@ -348,10 +351,6 @@ class OpDataModule(L.LightningDataModule):
             statistics[k]["mean"] = mean
             statistics[k]["std"] = std
 
-        # add LF_field (without any normalization)
-        train_norm_data_dict["LF_field"] = train_data_dict["LF_field"]
-        val_norm_data_dict["LF_field"] = val_data_dict["LF_field"]
-
         return train_norm_data_dict, val_norm_data_dict, statistics
 
     def _set_attribute(self, name, val):
@@ -367,6 +366,19 @@ class OpDataModule(L.LightningDataModule):
         # extract field statistics
         field_mean = deep_get(self.statistics, ["target_field", "mean"])
         field_std = deep_get(self.statistics, ["target_field", "std"])
+        # input check
+        assert normal_field.ndim == field_mean.ndim, "invalid normal field"
+        assert normal_field.ndim == field_std.ndim, "invalid normal field"
+        # denormalize
+        denormal_field = normal_field * field_std + field_mean
+
+        return denormal_field
+
+    def denormalize_LF_field(self, normal_field: torch.Tensor):
+        """denormalize the field"""
+        # extract field statistics
+        field_mean = deep_get(self.statistics, ["LF_field", "mean"])
+        field_std = deep_get(self.statistics, ["LF_field", "std"])
         # input check
         assert normal_field.ndim == field_mean.ndim, "invalid normal field"
         assert normal_field.ndim == field_std.ndim, "invalid normal field"

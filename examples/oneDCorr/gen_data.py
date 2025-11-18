@@ -285,11 +285,11 @@ class MultiFidelity:
         }
 
         # save
-        np.savez("high_fidelity.npz", **high_data)
-        np.savez("low_fidelity.npz", **low_data)
+        torch.save(high_data, "high_fidelity.pt")
+        torch.save(low_data, "low_fidelity.pt")
 
-        print("saved high fidelity data to high_fidelity.npz")
-        print("saved low fidelity data to low_fidelity.npz")
+        print("saved high fidelity data to high_fidelity.pt")
+        print("saved low fidelity data to low_fidelity.pt")
 
     def simulate(self):
         # get the input conditions

@@ -18,9 +18,39 @@ from neuralop.layers.fno_block import FNOBlocks
 from neuralop.layers.channel_mlp import ChannelMLP
 from neuralop.layers.complex import ComplexValued
 from typing import Tuple, List, Union, Literal, Optional
-from .embedding import ChannelFiLM
+from .embedding import ChannelFiLM, conv_nd
 
 warnings.filterwarnings("once", category=UserWarning)
+
+
+class LinearOperator(nn.Module):
+    def __init__(
+        self,
+        n_dim: int,
+        in_channels: int,
+        out_channels: int,
+        hidden_channels: int,
+        hidden_layers: int = 2,
+    ):
+        super(LinearOperator, self).__init__()
+        self.L = nn.ModuleList([])
+        self.L.append(
+            conv_nd(n_dim, in_channels, hidden_channels, kernel_size=1, padding=0)
+        )
+        for layer in range(hidden_layers):
+            self.L.append(
+                conv_nd(
+                    n_dim, hidden_channels, hidden_channels, kernel_size=1, padding=0
+                )
+            )
+        self.L.append(
+            conv_nd(n_dim, hidden_channels, out_channels, kernel_size=1, padding=0)
+        )
+
+    def forward(self, x):
+        for layer in self.L:
+            x = layer(x)
+        return x
 
 
 class FiLMFNO(BaseModel, name="FiLMFNO"):
@@ -119,6 +149,14 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
             resolution_scaling_factor
         )
 
+        # linear operator
+        self.linear_operator = LinearOperator(
+            n_dim=self.n_dim,
+            in_channels=self.in_channels,
+            out_channels=self.out_channels,
+            hidden_channels=self.hidden_channels,
+        )
+
         # lifting module
         self.lifting_module = self._get_lifting_module()
         # FNO module
@@ -133,6 +171,10 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
             )
             # lifting
             self.cond_lifting_module = self._get_cond_lifting_module()
+            # film (for linear operator)
+            self.cond_linear_op_film = ChannelFiLM(
+                target_channels=self.out_channels, embed_features=self.cond_channels
+            )
             # film layers
             self.cond_lifting_film = ChannelFiLM(
                 target_channels=self.hidden_channels,
@@ -335,20 +377,17 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
 
         return x, cond
 
-    def forward(self, x, cond=None, output_shape=None, **kwargs):
-        if kwargs:
-            warnings.warn(
-                f"FNO.forward() received unexpected keyword arguments: "
-                f"{list(kwargs.keys())}. These arguments will be ignored.",
-                UserWarning,
-                stacklevel=2,
-            )
+    def _forward_linear(self, x, cond=None, **kwargs):
+        """apply linear operator"""
+        # linera operator
+        x = self.linear_operator(x=x)
+        # film application
         if self.apply_cond is not None:
-            assert cond is not None, "condition must be provided"
-        if output_shape is None:
-            output_shape = [None] * self.n_layers
-        elif isinstance(output_shape, tuple):
-            output_shape = [None] * (self.n_layers - 1) + [output_shape]
+            x = self.cond_linear_op_film(target=x, embed=cond)
+        return x
+
+    def _forward_nonlinear(self, x, cond=None, output_shape=None, **kwargs):
+        """apply non-linear operator"""
         # lifting
         x, cond = self._forward_lifting(x=x, cond=cond)
         # fno blocks
@@ -362,7 +401,29 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
             x = self.domain_padding.unpad(x)
         # projection
         x = self.projection_module(x)
+
         return x
+
+    def forward(self, x, cond=None, output_shape=None, **kwargs):
+        if kwargs:
+            warnings.warn(
+                f"FNO.forward() received unexpected keyword arguments: "
+                f"{list(kwargs.keys())}. These arguments will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+        assert output_shape is None, "output_shape reshape not currently available"
+        if self.apply_cond is not None:
+            assert cond is not None, "condition must be provided"
+        if output_shape is None:
+            output_shape = [None] * self.n_layers
+        elif isinstance(output_shape, tuple):
+            output_shape = [None] * (self.n_layers - 1) + [output_shape]
+        # Linear Operator forward
+        x_lin = self._forward_linear(x=x, cond=cond)
+        # Non-Linera Operator forward
+        x_nlin = self._forward_nonlinear(x=x, cond=cond, output_shape=output_shape)
+        return x_lin + x_nlin
 
 
 def test_train():
