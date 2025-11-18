@@ -27,6 +27,12 @@ parser.add_argument(
     default="config_floral.yml",
     help="Path to the configuration file.",
 )
+parser.add_argument(
+    "--hp_config",
+    type=str,
+    default="config_hyperparameters.yml",
+    help="Path to the configuration file.",
+)
 
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
@@ -40,6 +46,7 @@ def print_header(config: dict):
     print_section("onedcorr config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
+    printer(f"Hyperparameter Configuration file: {args.hp_config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Number of samples: {config.data.n_samples}")
@@ -115,7 +122,7 @@ if __name__ == "__main__":
         wandb.agent(sweep_id, function=train_model, count=100)
     else:
         # load the hyperparameter config
-        with open("config_hyperparameters.yml", "r") as file:
+        with open(args.hp_config, "r") as file:
             hp_config = yaml.safe_load(file)
         # get the best model path (training or evaluation)
         if config.train.stage == "train":

@@ -14,9 +14,9 @@ data:
   n_train: 50
   n_val: 1000
   LF: # low fidelity
-    path: "./low_fidelity.npz"
+    path: "./low_fidelity.pt"
   HF: # high fidelity
-    path: "./high_fidelity.npz"
+    path: "./high_fidelity.pt"
 
 # configuration for dataloader
 dataloader:
@@ -65,6 +65,7 @@ flow:
     # prior GP measure parameters
     lengthscale: 1.0e-3
     outputscale: 1.0
+    confidence: 0.6
 
 # configuration for PDE solution generation
 generate:
