@@ -1,5 +1,4 @@
 # src/floral/flow/flow.py
-# import math
 import sys
 import lightning as L
 import matplotlib.pyplot as plt
@@ -67,17 +66,19 @@ class Flow(L.LightningModule):
         )
         # build the prior (eval mode implicit)
         self.prior_config = flow_config["prior"]
-        if self.floral:
-            self.prior = get_gp_prior(
-                lengthscale=self.prior_config.get("lengthscale", 1e-3),
-                outputscale=self.prior_config.get("outputscale", 1.0),
-                confidence=self.prior_config.get("confidence", 0.0),
-            )
+        # in case of residual, prior is scaled by 2.0 as r_0 = x_0 - \hat{x}_0, where
+        # both rhs variables are GP(0, k(x, x^\prime)).
+        prior_scale = 2.0 if self.floral else 1.0
+        self.prior = get_gp_prior(
+            lengthscale=self.prior_config.get("lengthscale", 1e-3),
+            outputscale=self.prior_config.get("outputscale", 1.0) * prior_scale,
+            confidence=0.0,  # no bias
+        )
         # noise
         self.noise = get_gp_prior(
             lengthscale=self.prior_config.get("lengthscale", 1e-3),
             outputscale=self.prior_config.get("outputscale", 1.0),
-            confidence=0.0,  # no bias should be added to the noise
+            confidence=0.0,  # no bias
         )
 
         self.debug_plot = False
@@ -277,24 +278,39 @@ class Flow(L.LightningModule):
         # field shape
         field_channels = deep_get(self.shape_dict, ["field", "channels"])
         field_dims = deep_get(self.shape_dict, ["field", "dims"])
-        # sample prior
+
+        # sample noise
         noise_samples = self.noise.sample(
             domain=domain_eval,
             batch_size=batch_size,
             field_channels=field_channels,
             field_dims=field_dims,
         )
-
         check_tensor_blowup(noise_samples, name="noise samples")
-
         assert noise_samples.shape == (batch_size, field_channels, *field_dims)
 
         return noise_samples
 
     def _sample_prior_measure(self, batch_size: int, LF_field: torch.Tensor):
         """sample the base measure"""
-        noise_samples = self._sample_noise_measure(batch_size)
+        # prepare flattened domain
+        domain_eval = self.field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
 
+        # field shape
+        field_channels = deep_get(self.shape_dict, ["field", "channels"])
+        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+
+        # sample prior
+        noise_samples = self.prior.sample(
+            domain=domain_eval,
+            batch_size=batch_size,
+            field_channels=field_channels,
+            field_dims=field_dims,
+        )
+        check_tensor_blowup(noise_samples, name="noise samples")
+        assert noise_samples.shape == (batch_size, field_channels, *field_dims)
+
+        # add bias
         if self.floral:
             # prior_samples = LF_field + noise_samples
             prior_samples = noise_samples
@@ -346,12 +362,16 @@ class Flow(L.LightningModule):
         field_ndim = deep_get(self.shape_dict, ["field", "ndim"])
         # reshape t
         t_expand = t.view(batch_size, 1, *([1] * field_ndim))
-        # sample noise (fresh draw from prior measure)
+        # sample noise (draw from noise measure)
+        noise_scale = torch.mean(
+            (target_field - prior) ** 2,
+            dim=list(range(1, target_field.ndim)),
+            keepdim=True,
+        )
         noise = self._sample_noise_measure(batch_size)
-        # sample conditional flow
-        psi = (
-            t_expand * target_field + (1.0 - t_expand) * prior
-        ) + self.sig_min * noise
+        noise = self.sig_min * noise_scale * noise
+        # sample from conditional probability path
+        psi = (t_expand * target_field + (1.0 - t_expand) * prior) + noise
 
         if self.debug_plot:
             t_test = (
@@ -364,7 +384,16 @@ class Flow(L.LightningModule):
 
             psi_test = t_test * x1_test + (1.0 - t_test) * x0_test
             noise_test = self._sample_noise_measure(10)
-            samp_test = psi_test + self.sig_min * noise_test
+            noise_test = (
+                self.sig_min
+                * noise_test
+                * torch.mean(
+                    (x1_test, x0_test) ** 2,
+                    dim=list(range(1, x1_test.ndim)),
+                    keepdim=True,
+                )
+            )
+            samp_test = psi_test + noise_test
 
             fig, axs = plt.subplots(
                 5, 2, figsize=(4, 10), sharex=True, sharey=True, layout="compressed"
@@ -451,7 +480,6 @@ class Flow(L.LightningModule):
         batch_size, field_channels, *field_dims = target_field.shape
         # sample time from U[0, 1]
         t = torch.rand(batch_size, 1, device=self.device)
-        # t = torch.cos(torch.rand(batch_size, 1, device=self.device)*math.pi/2.0)
         # sample prior measure
         prior = self._sample_prior_measure(batch_size=batch_size, LF_field=LF_field)
         # sample the conditional flow

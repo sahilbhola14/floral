@@ -76,14 +76,18 @@ class Inference:
         assert len(val_set.tensors) == 3, "expected (target_field, condition, LF_field)"
         # extract
         target_field, condition, LF_field = val_set.tensors
+
+        # compute the LF_field (for plot)
+        LF_field_plot = self.data_module.denormalize_LF_field(normal_field=LF_field)
         # compute HF_field (for plot)
         HF_field_plot = self.data_module.denormalize_field(normal_field=target_field)
+        if self.floral:
+            HF_field_plot = HF_field_plot + LF_field_plot
         # compute condition_plot (for plot)
         condition_plot = self.data_module.denormalize_condition(
             normal_condition=condition
         )
-        # compute the LF_field (for plot)
-        LF_field_plot = self.data_module.denormalize_LF_field(normal_field=LF_field)
+
         # create dict
         inference_input_dict = {
             "condition": condition,
@@ -113,6 +117,9 @@ class Inference:
         all_LF_field = self.inference_input_dict.get("LF_field")
         # get the condition (normalized)
         all_condition = self.inference_input_dict.get("condition")
+        # get the LF (unnormalized)
+        all_LF_field_plot = self.inference_input_dict.get("LF_field_plot")
+
         # iterate
         all_prediction_plot = []
         for batch_idx in pbar:
@@ -122,10 +129,18 @@ class Inference:
                 # get batches
                 batch_LF_field = all_LF_field[lower_idx:upper_idx]
                 batch_condition = all_condition[lower_idx:upper_idx]
+                batch_LF_field_plot = all_LF_field_plot[lower_idx:upper_idx]
+
                 # get prediction
                 batch_prediction_plot = self._get_prediction(
                     condition=batch_condition, LF_field=batch_LF_field
                 )
+                # add LF solution back for floral
+                if self.floral:
+                    batch_prediction_plot = (
+                        batch_prediction_plot + batch_LF_field_plot.unsqueeze(1)
+                    )
+
                 all_prediction_plot.append(batch_prediction_plot)
 
         # ensure all async transfers are complete

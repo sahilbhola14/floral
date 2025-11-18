@@ -5,17 +5,20 @@ from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning import seed_everything
 from .utils_IO import get_logger, printer, print_section, check_keys
 
-seed_everything(42, workers=True)
-torch.set_float32_matmul_precision("medium")
-# torch.backends.cudnn.benchmark = False
-# torch.backends.cudnn.deterministic = True
-# torch.backends.cuda.matmul.allow_tf32 = False
-# torch.backends.cudnn.allow_tf32 = False
-# os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
-# os.environ["TORCH_ALLOW_TF32"] = "0"
-# torch.use_deterministic_algorithms(True, warn_only=True)
-# torch.backends.cudnn.benchmark = False
-# torch.backends.cudnn.deterministic = True
+
+def seed_model(seed: int = 42):
+    """seed the model"""
+    seed_everything(42, workers=True)
+    torch.set_float32_matmul_precision("medium")
+    # torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cuda.matmul.allow_tf32 = False
+    # torch.backends.cudnn.allow_tf32 = False
+    # os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
+    # os.environ["TORCH_ALLOW_TF32"] = "0"
+    # torch.use_deterministic_algorithms(True, warn_only=True)
+    # torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.deterministic = True
 
 
 def build_checkpointer(config: dict, verbose: bool = False):
@@ -69,6 +72,9 @@ def build_trainer(
     Returns:
         trainer (L.Trainer): Trainer object for training the model.
     """
+
+    # seed
+    seed_model()
 
     # extract config and hp_config
     devices = config.train.get("devices", 1)

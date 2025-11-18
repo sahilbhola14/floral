@@ -223,14 +223,15 @@ class OpDataModule(L.LightningDataModule):
         assert (
             HF_condition.shape == HF_field.shape == LF_field.shape
         ), "Low-fidelity field must be defined on the same domain"
-        # create target field
+
+        # create target(s)
         if self.floral:
-            # target_field = HF_field - LF_field
-            # all_condition = torch.cat((HF_condition, LF_field), dim=1)
-            all_condition = HF_condition
+            target_field = HF_field - LF_field
+            target_condition = HF_condition
         else:
-            # target_field = HF_field
-            all_condition = HF_condition
+            target_field = HF_field
+            target_condition = HF_condition
+
         # check availabe samples
         assert self.n_samples <= len(HF_field), (
             f"Requested samples: {self.n_samples} > "
@@ -238,8 +239,8 @@ class OpDataModule(L.LightningDataModule):
         )
         # create operator data dict
         op_data_dict = {}
-        op_data_dict["target_field"] = HF_field[: self.n_samples]
-        op_data_dict["condition"] = all_condition[: self.n_samples]
+        op_data_dict["target_field"] = target_field[: self.n_samples]
+        op_data_dict["condition"] = target_condition[: self.n_samples]
         op_data_dict["LF_field"] = LF_field[: self.n_samples]
 
         # create data shape dict
@@ -250,9 +251,9 @@ class OpDataModule(L.LightningDataModule):
             "ndim": len(HF_field.shape[2:]),
         }
         shape_dict["condition"] = {
-            "channels": all_condition.shape[1],
-            "dims": list(all_condition.shape[2:]),
-            "ndim": len(all_condition.shape[2:]),
+            "channels": target_condition.shape[1],
+            "dims": list(target_condition.shape[2:]),
+            "ndim": len(target_condition.shape[2:]),
         }
         shape_dict["field_domain"] = {
             "channels": HF_field_domain.shape[1],
