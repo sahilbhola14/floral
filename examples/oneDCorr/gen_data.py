@@ -124,7 +124,10 @@ class MultiFidelity:
         file_identifier: str = "LF_HF",
     ):
         n_plot = int(len(samples_X) * percentage_plot)
-        print(f"Making joint distribution using {n_plot}/{len(samples_X)} samples")
+        print(
+            f"Making {xlabel} vs. {ylabel} joint distribution using "
+            f"{n_plot}/{len(samples_X)} samples"
+        )
         # extract field
         flat_X = samples_X[:n_plot].flatten().numpy()
         flat_Y = samples_Y[:n_plot].flatten().numpy()
