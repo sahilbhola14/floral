@@ -36,7 +36,7 @@ def parse_args():
         "-res_HF",
         "--resolution_HF",
         type=int,
-        default=64,
+        default=128,
         help="Number of discretization points for the high-fidelity model",
     )
 
@@ -44,14 +44,14 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=45,
+        default=128,
         help="Number of discretization points for the low-fidelity model",
     )
 
     parser.add_argument(
         "--Nt",
         type=int,
-        default=64,
+        default=128,
         help="Number of time discretization points",
     )
 
@@ -142,11 +142,11 @@ class MultiFidelity:
         # update low fidelity initial condition
         self.solver_LF.set_initial_condition(u0_LF)
 
-    def _create_low_fidelity_ic(self):
+    def _create_low_fidelity_ic(self, keep_frac=0.3, amp_scale=0.8):
         # HF initial condition
         u0_HF = self.solver_HF.u0  # (B, res_HF)
         # spectral filter
-        u0_LF = self._filter_ic(u0_HF, keep_frac=0.3, amp_scale=0.8)
+        u0_LF = self._filter_ic(u0_HF, keep_frac=keep_frac, amp_scale=amp_scale)
         # restrict to the Low-fidelity domain
         u0_LF = self._restrict_ic(u0_LF)
         return u0_LF
@@ -306,7 +306,10 @@ class MultiFidelity:
         file_identifier: str = "LF_HF",
     ):
         n_plot = int(len(samples_X) * percentage_plot)
-        print(f"Making joint distribution using {n_plot}/{len(samples_X)} samples")
+        print(
+            f"Making {xlabel} vs. {ylabel} joint distribution using "
+            f"{n_plot}/{len(samples_X)} samples"
+        )
         # extract field
         flat_X = samples_X[:n_plot].flatten()
         flat_Y = samples_Y[:n_plot].flatten()
@@ -424,13 +427,17 @@ class MultiFidelity:
         # convert to tensor and reshape to (B, C, *dims)
         u_HF = torch.Tensor(u_HF).unsqueeze(1)
         u_LF = torch.Tensor(u_LF).unsqueeze(1)
+        # remove the initial condition
+        u_HF = u_HF[:, :, 1:, :]
+        u_LF = u_LF[:, :, 1:, :]
+        # prepare the condition (tiled initial conditon)
         condition = (
             torch.Tensor(self.solver_HF.u0)
             .unsqueeze(1)
-            .expand(-1, self.Nt + 1, -1)
+            .expand(-1, self.Nt, -1)
             .unsqueeze(1)
         )
-        domain = self.solver_HF.domain
+        domain = torch.Tensor(self.solver_HF.domain)
 
         # prep data dict
         high_data = {
@@ -481,7 +488,7 @@ class MultiFidelity:
         self._make_sample_comparison_plot(
             samples_LF=uT_LF,
             samples_HF=uT_HF,
-            n_samples=10,
+            n_samples=5,
         )
         # make marginals
         self._make_marginal_plot(u_LF=uT_LF, u_HF=uT_HF, percentage_plot=0.1)
@@ -527,28 +534,6 @@ class MultiFidelity:
         uT_LF, energy_LF = self.simulate_model("LF")
         # interpolate LF to HF grid
         uT_LF_inter = self._interpolate_solution(uT_LF)
-
-        test_lf = uT_LF_inter[0].ravel()
-        test_hf = uT_HF[0].ravel()
-        test_diff = test_hf - test_lf
-        fig, axs = plt.subplots(2, 3, figsize=(6, 4))
-        axs[0, 0].hist(test_lf, density=True, bins=50)
-        axs[0, 0].hist(test_hf, density=True, bins=50)
-        # axs[1].hist(uT_HF[0].ravel() - uT_LF[0].ravel(), density=True, bins=50)
-        axs[0, 1].hist(test_diff, density=True, bins=50)
-        axs[0, 2].hist(test_diff * 100, density=True, bins=50)
-        axs[1, 0].axis("off")
-        axs[1, 1].hist(
-            (test_diff - np.mean(test_diff)) / np.std(test_diff), density=True, bins=50
-        )
-        axs[1, 2].hist(
-            (test_diff * 100 - np.mean(test_diff * 100)) / np.std(test_diff * 100),
-            density=True,
-            bins=50,
-        )
-
-        plt.savefig("test.png")
-
         # compare
         if self.plot:
             self._compare(uT_HF=uT_HF, uT_LF=uT_LF_inter)
