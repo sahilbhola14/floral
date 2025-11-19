@@ -160,7 +160,8 @@ class BaseResidual(ABC):
     def plot_residual(combined_df, **kwargs):
         """plot the errors"""
         # Create 1×1 subplots
-        fig, ax = plt.subplots(1, 1, figsize=(4, 4), layout="compressed")
+        figsize = kwargs.get("figsize", (4, 4))
+        fig, ax = plt.subplots(1, 1, figsize=figsize, layout="compressed")
 
         # extract low-fidelity residual (same for all train samples)
         subset_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
@@ -885,7 +886,8 @@ class ParetoPlot:
         df_rest = combined_df[combined_df["Method"] != "Low-fidelity"]
 
         # Plot methods that depend on Samples (Train)
-        plt.figure(figsize=(10, 5), layout="compressed")
+        figsize = kwargs.get("figsize", (10, 5))
+        plt.figure(figsize=figsize, layout="compressed")
         # Overlay the Low-fidelity baseline separately
         ax = sns.scatterplot(
             data=df_lf,
@@ -920,7 +922,9 @@ class ParetoPlot:
 
         # Optional: make legend cleaner
         handles, labels = ax.get_legend_handles_labels()
-        ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1), loc="upper left")
+        # ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1),
+        # loc="upper left")
+        ax.legend(handles, labels, title="", loc="lower left")
         ax.set_xlabel("Mean Predictive Uncertainty")
         ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
         plt.savefig("pareto_comparison.png", dpi=300, pad_inches=0.1)
