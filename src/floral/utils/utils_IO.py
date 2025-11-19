@@ -111,22 +111,34 @@ def n2t(array: np.ndarray) -> torch.Tensor:
     return torch.FloatTensor(array)
 
 
-def check_tensor_blowup(t: torch.Tensor, name: str = "tensor"):
+def check_tensor_blowup(t: torch.Tensor | np.ndarray, name: str = "tensor"):
     """
     Check if a tensor has NaN or Inf values and raise an error if so.
 
     Args:
-        t (torch.Tensor): Tensor to check.
+        t (torch.Tensor | np.ndarray): Tensor to check.
         name (str): Optional name to include in the error message.
     """
-    if not torch.isfinite(t).all():
-        n_nan = torch.isnan(t).sum().item()
-        n_inf = torch.isinf(t).sum().item()
-        raise ValueError(
-            f"{name} has blown up! "
-            f"NaNs: {n_nan}, Infs: {n_inf}, "
-            f"min={t.min().item()}, max={t.max().item()}"
-        )
+    if isinstance(t, torch.Tensor):
+        if not torch.isfinite(t).all():
+            n_nan = torch.isnan(t).sum().item()
+            n_inf = torch.isinf(t).sum().item()
+            raise ValueError(
+                f"{name} has blown up! "
+                f"NaNs: {n_nan}, Infs: {n_inf}, "
+                f"min={t.min().item()}, max={t.max().item()}"
+            )
+    elif isinstance(t, np.ndarray):
+        if np.isnan(t).any() or np.isinf(t).any():
+            n_nan = np.isnan(t).sum().item()
+            n_inf = np.isinf(t).sum().item()
+            raise ValueError(
+                f"{name} has blown up! "
+                f"NaNs: {n_nan}, Infs: {n_inf}, "
+                f"min={t.min().item()}, max={t.max().item()}"
+            )
+    else:
+        raise ValueError(f"Invalid input type: {type(t).__name__}")
 
 
 def get_logger(name: str):
