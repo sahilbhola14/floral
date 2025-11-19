@@ -207,8 +207,9 @@ class MultiFidelity:
         max_r = r_array.max()
 
         print(
-            f"{self.n_samples} sample average Pearson correlation coefficient "
-            f": {mean_r: .4f}  +/- {std_r: .4f} | Min: {min_r: .4f} Max: {max_r: .4f}"
+            f"{self.n_samples} sample average {xlabel} vs. {ylabel} "
+            f"Pearson correlation coefficient : {mean_r: .4f}  +/- {std_r: .4f} |"
+            f" Min: {min_r: .4f} Max: {max_r: .4f}"
         )
 
     def _compare(self, u_HF, u_LF):
