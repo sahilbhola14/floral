@@ -388,7 +388,7 @@ class Flow(L.LightningModule):
                 self.sig_min
                 * noise_test
                 * torch.mean(
-                    (x1_test, x0_test) ** 2,
+                    (x1_test - x0_test) ** 2,
                     dim=list(range(1, x1_test.ndim)),
                     keepdim=True,
                 )
