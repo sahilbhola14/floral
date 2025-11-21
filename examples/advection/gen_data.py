@@ -142,36 +142,81 @@ class MultiFidelity:
         # update low fidelity initial condition
         self.solver_LF.set_initial_condition(u0_LF)
 
-    def _create_low_fidelity_ic(self, keep_frac=0.3, amp_scale=0.8):
+    def _create_low_fidelity_ic(self, keep_frac=0.2, amp_scale=0.8, gamma=4.0):
         # HF initial condition
         u0_HF = self.solver_HF.u0  # (B, res_HF)
         # spectral filter
-        u0_LF = self._filter_ic(u0_HF, keep_frac=keep_frac, amp_scale=amp_scale)
+        u0_LF = self._filter_ic(
+            u0_HF, keep_frac=keep_frac, amp_scale=amp_scale, gamma=gamma
+        )
         # restrict to the Low-fidelity domain
         u0_LF = self._restrict_ic(u0_LF)
         return u0_LF
 
     def _filter_ic(
-        self, u0_HF: np.ndarray, keep_frac: float = 0.3, amp_scale: float = 0.8
+        self,
+        u0_HF: np.ndarray,
+        keep_frac: float = 0.2,
+        amp_scale: float = 0.8,
+        gamma: float = 4.0,
+        phase_bias: float = 0.2,
     ) -> torch.Tensor:
         """
-        u0_hf: (B, N) high-fidelity initial condition
+        u0_HF: (B, N) high-fidelity initial condition
         keep_frac: fraction of lowest frequencies to keep
         amp_scale: global amplitude scaling for LF
+        gamma: strength of exponential damping for kept modes
+        phase_bias: magnitude of random phase distortion
         """
         u0_HF = torch.Tensor(u0_HF)
         B, N = u0_HF.shape
-        # rfft along spatial dimension
+        # FFT
         u_hat = fft.rfft(u0_HF, dim=-1)  # (B, N//2+1)
-
         n_modes = u_hat.shape[-1]
-        k_keep = int(keep_frac * n_modes)
 
+        # keep low modes
+        k_keep = max(1, int(keep_frac * n_modes))
         mask = torch.zeros_like(u_hat)
-        mask[..., :k_keep] = 1.0  # keep only low frequencies
+        mask[..., :k_keep] = 1.0
 
-        u_hat_LF = amp_scale * u_hat * mask
+        # mode dependent amplitude bias
+        k = torch.arange(n_modes, device=u_hat.device)[None, :]
+        alpha = torch.exp(-gamma * (k / n_modes))  # smooth bias
+
+        # phase bias (structural misalignment)
+        if phase_bias > 0:
+            phase_noise = phase_bias * torch.randn_like(u_hat)  # real-valued
+            phase_factor = torch.exp(1j * phase_noise)  # abs value =1
+        else:
+            phase_factor = 1.0
+
+        # LF spectrum
+        u_hat_LF = amp_scale * (u_hat * mask * alpha) * phase_factor
+        # u_hat_LF = amp_scale * (u_hat * mask)
+
+        # inverse fft
         u0_LF = fft.irfft(u_hat_LF, n=N, dim=-1)
+
+        # frequencies (for plot)
+        N = u_hat.shape[-1] * 2 - 2
+        freqs = torch.fft.rfftfreq(N)
+
+        if self.plot:
+            assert self.n_samples >= 15, "15 initial condtions are plotted"
+            fig, axs = plt.subplots(3, 5, layout="compressed", figsize=(13, 6))
+            for ii, ax in enumerate(axs.ravel()):
+                u_hat_mag = torch.abs(u_hat)[ii]  # shape (65,)
+                u_hat_LF_mag = torch.abs(u_hat_LF)[ii]
+                # freq_modes = np.arange(n_modes)
+                ax.plot(freqs, u_hat_mag, label="High-fidelity", color="k")
+                ax.plot(freqs, u_hat_LF_mag, label="Low-fidelity", color="red")
+                ax.set_xlabel("Frequency")
+                ax.set_ylabel(r"Amplitude $|u_{hat}[k]|$")
+                ax.label_outer()
+                if ii == 0:
+                    ax.legend()
+            plt.savefig("fourier_initial_condition_comparison.png")
+
         return u0_LF.numpy()
 
     def _restrict_ic(self, u0_HF):
@@ -234,9 +279,13 @@ class MultiFidelity:
         axs_lf = axs[:, 0]
         axs_hf = axs[:, 1]
         axs_diff = axs[:, 2]
-        vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
-        vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
+        # vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
+        # vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
         for ii in range(n_samples):
+
+            vmin = min(samples_LF[ii].min(), samples_HF[ii].min())
+            vmax = max(samples_LF[ii].max(), samples_HF[ii].max())
+
             im_field = axs_lf[ii].imshow(
                 samples_LF[ii],
                 origin="lower",
