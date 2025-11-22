@@ -1,4 +1,5 @@
 """ One-D advection solver
+Author: Sahil Bhola, University of Michigan, 2025
 """
 
 import torch
