@@ -1,19 +1,18 @@
 # examples/burgers/gen_data.py
 """
-Burgers equation: https://arxiv.org/pdf/2210.07182
-Notes:
-    1. For default config, LF has cost savings of approx. 3.01 times.
-    6000 samples HF: 377.8 seconds
-    6000 samples LF: 377.8 seconds
+Burgers equation
 """
+import random
 import torch
 import numpy as np
 import argparse
 import matplotlib.pyplot as plt
 import time
-from tqdm import tqdm
+import torch.fft as fft
 from scipy.stats import pearsonr, gaussian_kde
 from scipy.interpolate import RegularGridInterpolator
+from floral.solver import Burgers
+from floral.utils import check_tensor_blowup
 
 plt.style.use("../../scripts/journal.mplstyle")
 
@@ -45,7 +44,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=16,
+        default=32,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -63,188 +62,25 @@ def parse_args():
         help="Number of modes",
     )
 
+    parser.add_argument("--plot", action="store_true")
+
     args = parser.parse_args()
-    print("#" * 50)
-    print("Viscous Burger equation")
-    print("#" * 50)
+    print("==" * 3 + "viscous burgers equation" + "==" * 3)
     print(f"Number of samples: {args.n_samples}")
     print(f"Number of modes: {args.n_modes}")
     print(f"High-fidelity resolution: {args.resolution_HF}")
     print(f"Low-fidelity resolution: {args.resolution_LF}")
-    print("#" * 50)
+    print("==" * 3 + "========================" + "==" * 3)
     return args
 
 
-def check_blowup(field: np.ndarray, string: str = ""):
-    """check if the field has blown up (nan or inf values)"""
-    if np.isnan(field).any() or np.isinf(field).any():
-        raise ValueError(f"{string} field has blown up!")
-
-
-class BurgersSolver:
-    """Viscous Burgers' solver.
-    Attributes:
-    """
-
-    def __init__(
-        self,
-        nu: float = 0.01,
-        Nx: int = 64,
-        Nt: int = 64,
-        T: float = 0.2,
-        Lx: float = 1.0,
-        n_modes: int = 2,
-        n_samples: int = 100,
-        kmax: int = 8,
-        use_ic: np.ndarray | None = None,
-    ):
-        self.nu = nu
-        self.Nx = Nx
-        self.Nt = Nt
-        self.T = T
-        self.Lx = Lx
-        self.n_modes = n_modes
-        self.n_samples = n_samples
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"running solve on: {self.device}")
-
-        self.dt = self.T / self.Nt
-        self.x = np.linspace(0, self.Lx, self.Nx, endpoint=False)
-        self.t = np.arange(0, self.Nt + 1) * self.dt
-        self.dx = self.x[1] - self.x[0]
-        XX, TT = np.meshgrid(self.x, self.t[1:])
-        self.domain = np.concatenate((XX.reshape(-1, 1), TT.reshape(-1, 1)), axis=1)
-        print(f"dt: {self.dt: .4f} dx: {self.dx: .4f}")
-
-        # initial conditions
-        if use_ic is None:
-            print("Computing IC")
-            self.u0 = self.get_initial_conditions(
-                kmax=kmax, n_modes=n_modes, n_samples=self.n_samples
-            )
-            assert isinstance(self.u0, np.ndarray) and self.u0.shape == (
-                self.n_samples,
-                self.Nx,
-            )
-        else:
-            print("Using specified IC")
-            assert isinstance(use_ic, np.ndarray) and use_ic.shape == (
-                self.n_samples,
-                self.Nx,
-            )
-            self.u0 = use_ic
-        # check blow up
-        check_blowup(self.u0, "Initial condition")
-
-    def get_initial_conditions(self, kmax: int, n_modes: int, n_samples: int):
-        """initial condition"""
-        np.random.seed(42)
-
-        n_j = np.random.randint(1, kmax + 1, size=(n_samples, n_modes))
-        wave_number = 2 * np.pi * n_j / self.Lx
-
-        amp = np.random.uniform(0, 1, size=(n_samples, n_modes))
-        phase = np.random.uniform(0, 2 * np.pi, size=(n_samples, n_modes))
-
-        u0 = np.sum(
-            amp[:, :, None]
-            * np.sin(wave_number[:, :, None] * self.x + phase[:, :, None]),
-            axis=1,
-        )
-
-        # random abs
-        mask = np.random.rand(n_samples) < 0.1
-        u0[mask] = np.abs(u0[mask])
-        # random sign flip
-        mask = np.random.rand(n_samples) < 0.5
-        u0[mask] = -u0[mask]
-        # windowing
-        mask = np.random.rand(n_samples) < 0.1
-        n_w = mask.sum()
-        if n_w > 0:
-            xL = np.random.uniform(0.1, 0.45, size=n_w)
-            xR = np.random.uniform(0.55, 0.9, size=n_w)
-            trns = 0.1
-            window = 0.5 * (
-                np.tanh((self.x - xL[:, None]) / trns)
-                - np.tanh((self.x - xR[:, None]) / trns)
-            )
-            u0[mask] *= window
-
-        return u0
-
-    def set_initial_condition(self, use_ic):
-        assert isinstance(use_ic, np.ndarray) and use_ic.shape == (
-            self.n_samples,
-            self.Nx,
-        )
-        self.u0 = use_ic
-
-    def _rhs(self, u):
-        """compute rhs
-        For advection term, second order upwind is used and for diffusion terms we use
-        central difference.
-        """
-        assert isinstance(u, torch.Tensor) and u.ndim == 1
-        u_ip1 = torch.roll(u, -1)
-        u_ip2 = torch.roll(u, -2)
-        u_im1 = torch.roll(u, 1)
-        u_im2 = torch.roll(u, 2)
-
-        dx = self.dx
-
-        # Upwind based on sign(u)
-        pos_mask = (u > 0).float()
-        neg_mask = 1.0 - pos_mask
-
-        dudx_pos = (3 * u - 4 * u_im1 + u_im2) / (2 * dx)
-        dudx_neg = (-3 * u + 4 * u_ip1 - u_ip2) / (2 * dx)
-
-        dudx = pos_mask * dudx_pos + neg_mask * dudx_neg
-
-        # diffusion term
-        d2udx2 = (u_ip1 - 2 * u + u_im1) / (dx * dx)
-
-        dudt = self.nu * d2udx2 - u * dudx
-        return dudt
-
-    def step_rk3(self, u):
-        """Third order strong stability preserving Rungu-Kutta (SSPRK3) method
-        Reference: https://en.wikipedia.org/wiki/List_of_Runge%E2%80%93Kutta_methods
-        """
-        k1 = self._rhs(u)
-        k2 = self._rhs(u + self.dt * k1)
-        k3 = self._rhs(u + self.dt * (0.25 * k1 + 0.25 * k2))
-        un = u + (self.dt / 6.0) * (k1 + k2 + 4.0 * k3)
-        return un
-
-    def solve_single(self, u0):
-        """Returns (nt + 1, nx) solution"""
-        u = torch.tensor(u0, dtype=torch.float32, device=self.device)
-        sol = torch.zeros(
-            (self.Nt + 1, self.Nx), dtype=torch.float32, device=self.device
-        )
-        sol[0] = u.clone()
-        energy = torch.zeros(self.Nt + 1, device=self.device)
-        energy[0] = 0.5 * torch.sum(sol[0] * sol[0])
-        for ii in range(1, self.Nt + 1):
-            u = self.step_rk3(u)
-            sol[ii] = u.clone()
-            energy[ii] = 0.5 * torch.sum(sol[ii] * sol[ii])
-        return sol.cpu().numpy(), energy.cpu().numpy()
-
-    def solve(self):
-        """all solve"""
-        all_uT = []
-        all_energy = []
-        pbar = tqdm(range(self.n_samples), desc="Burgers")
-        for ii in pbar:
-            u0 = self.u0[ii]
-            sol, energy = self.solve_single(u0)
-            all_uT.append(sol)
-            all_energy.append(energy)
-        pbar.close()
-        return np.array(all_uT), np.array(all_energy)
+def seed_everything(seed: int = 42):
+    """seed everything"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 class MultiFidelity:
@@ -260,6 +96,7 @@ class MultiFidelity:
         Lx: float = 1.0,
         T: float = 0.2,
         recalculate_LF_time: bool = False,
+        plot: bool = False,
     ):
         self.n_modes = n_modes
         self.resolution_HF = resolution_HF
@@ -267,12 +104,13 @@ class MultiFidelity:
         self.n_samples = n_samples
         self.Nt = Nt
         self.nu = nu
+        self.plot = plot
         assert (
             self.resolution_LF <= self.resolution_HF
         ), "Low-fidelity resolution must be less or equal than high-fidelity"
 
         # high-fidelity solver
-        self.solver_HF = BurgersSolver(
+        self.solver_HF = Burgers(
             nu=self.nu,
             Nx=self.resolution_HF,
             Nt=self.Nt,
@@ -285,21 +123,99 @@ class MultiFidelity:
         # low-fidelity solver
         if recalculate_LF_time:
             dt_LF = ratio * (Lx / self.resolution_LF)
-            Nt_LF = int(T / dt_LF)
+            self.Nt_LF = int(T / dt_LF)
         else:
-            Nt_LF = self.Nt
-        self.solver_LF = BurgersSolver(
+            self.Nt_LF = self.Nt
+        self.solver_LF = Burgers(
             nu=self.nu,
             Nx=self.resolution_LF,
-            Nt=Nt_LF,
+            Nt=self.Nt_LF,
             n_modes=self.n_modes,
             n_samples=self.n_samples,
             Lx=Lx,
             T=T,
         )
+        # create low fidelity inital condition
+        u0_LF = self._create_low_fidelity_ic()
         # update low-fidelity initial conditon
-        u0_LF = self._restrict_ic(self.solver_HF.u0)
         self.solver_LF.set_initial_condition(u0_LF)
+
+    def _create_low_fidelity_ic(self, keep_frac=0.4, amp_scale=0.8, gamma=4.0):
+        # HF initial condition
+        u0_HF = self.solver_HF.u0  # (B, res_HF)
+        # spectral filter
+        u0_LF = self._filter_ic(
+            u0_HF, keep_frac=keep_frac, amp_scale=amp_scale, gamma=gamma
+        )
+        # restrict to the Low-fidelity domain
+        u0_LF = self._restrict_ic(u0_LF)
+        return u0_LF
+
+    def _filter_ic(
+        self,
+        u0_HF: np.ndarray,
+        keep_frac: float = 0.2,
+        amp_scale: float = 0.8,
+        gamma: float = 4.0,
+        phase_bias: float = 0.2,
+    ) -> torch.Tensor:
+        """
+        u0_HF: (B, N) high-fidelity initial condition
+        keep_frac: fraction of lowest frequencies to keep
+        amp_scale: global amplitude scaling for LF
+        gamma: strength of exponential damping for kept modes
+        phase_bias: magnitude of random phase distortion
+        """
+        u0_HF = torch.Tensor(u0_HF)
+        B, N = u0_HF.shape
+        # FFT
+        u_hat = fft.rfft(u0_HF, dim=-1)  # (B, N//2+1)
+        n_modes = u_hat.shape[-1]
+
+        # keep low modes
+        k_keep = max(1, int(keep_frac * n_modes))
+        mask = torch.zeros_like(u_hat)
+        mask[..., :k_keep] = 1.0
+
+        # mode dependent amplitude bias
+        k = torch.arange(n_modes, device=u_hat.device)[None, :]
+        alpha = torch.exp(-gamma * (k / n_modes))  # smooth bias
+
+        # phase bias (structural misalignment)
+        if phase_bias > 0:
+            phase_noise = phase_bias * torch.randn_like(u_hat)  # real-valued
+            phase_factor = torch.exp(1j * phase_noise)  # abs value =1
+        else:
+            phase_factor = 1.0
+
+        # LF spectrum
+        u_hat_LF = amp_scale * (u_hat * mask * alpha) * phase_factor
+        # u_hat_LF = amp_scale * (u_hat * mask)
+
+        # inverse fft
+        u0_LF = fft.irfft(u_hat_LF, n=N, dim=-1)
+
+        # frequencies (for plot)
+        N = u_hat.shape[-1] * 2 - 2
+        freqs = torch.fft.rfftfreq(N)
+
+        if self.plot:
+            assert self.n_samples >= 15, "15 initial condtions are plotted"
+            fig, axs = plt.subplots(3, 5, layout="compressed", figsize=(13, 6))
+            for ii, ax in enumerate(axs.ravel()):
+                u_hat_mag = torch.abs(u_hat)[ii]  # shape (65,)
+                u_hat_LF_mag = torch.abs(u_hat_LF)[ii]
+                # freq_modes = np.arange(n_modes)
+                ax.plot(freqs, u_hat_mag, label="High-fidelity", color="k")
+                ax.plot(freqs, u_hat_LF_mag, label="Low-fidelity", color="red")
+                ax.set_xlabel("Frequency")
+                ax.set_ylabel(r"Amplitude $|u_{hat}[k]|$")
+                ax.label_outer()
+                if ii == 0:
+                    ax.legend()
+            plt.savefig("fourier_initial_condition_comparison.png")
+
+        return u0_LF.numpy()
 
     def _restrict_ic(self, u0_HF):
         """restrict the ic of High-fidelity to low-fidelity domain"""
@@ -340,12 +256,30 @@ class MultiFidelity:
         assert u_inter.shape == (self.n_samples, self.Nt + 1, self.resolution_HF)
         return u_inter
 
+    def simulate_model(self, model="HF"):
+        tic = time.time()
+        if model == "HF":
+            uT, energy = self.solver_HF.solve()
+            assert uT.shape == (self.n_samples, self.Nt + 1, self.resolution_HF)
+            assert energy.shape == (self.n_samples, self.Nt + 1)
+        elif model == "LF":
+            uT, energy = self.solver_LF.solve()
+            assert uT.shape == (self.n_samples, self.Nt_LF + 1, self.resolution_LF)
+            assert energy.shape == (self.n_samples, self.Nt_LF + 1)
+        else:
+            raise ValueError(f"Invalid model: {model}")
+        elapsed_HF = time.time() - tic
+        print(f"Compute time for {model} : {elapsed_HF: .4f} seconds")
+        check_tensor_blowup(uT, "state")
+        check_tensor_blowup(energy, "energy")
+        return uT, energy
+
     def _make_sample_comparison_plot(self, samples_LF, samples_HF, n_samples):
         assert (
             samples_LF.shape == samples_HF.shape
         ), "LF and HF samples must have the same shape"
         assert len(samples_LF) >= n_samples, "Not enough samples to plot"
-        # plot testing
+
         fig, axs = plt.subplots(
             n_samples,
             3,
@@ -358,9 +292,13 @@ class MultiFidelity:
         axs_lf = axs[:, 0]
         axs_hf = axs[:, 1]
         axs_diff = axs[:, 2]
-        vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
-        vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
+        # vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
+        # vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
         for ii in range(n_samples):
+
+            vmin = min(samples_LF[ii].min(), samples_HF[ii].min())
+            vmax = max(samples_LF[ii].max(), samples_HF[ii].max())
+
             im_field = axs_lf[ii].imshow(
                 samples_LF[ii],
                 origin="lower",
@@ -376,6 +314,7 @@ class MultiFidelity:
                 interpolation="bicubic",
             )
             im_diff = axs_diff[ii].imshow(
+                # samples_HF[ii] - samples_LF[ii],
                 np.abs(samples_HF[ii] - samples_LF[ii]),
                 origin="lower",
                 interpolation="bicubic",
@@ -400,17 +339,43 @@ class MultiFidelity:
             ax.set_xlabel(r"$x$")
             ax.set_ylabel(r"$t$")
             ax.label_outer()
-        plt.savefig("sample_comparison.png", dpi=300)
+        plt.savefig("data_snapshot.png", dpi=300)
 
-    def _make_joint_plot(self, samples_LF, samples_HF, random_index: bool = False):
-        if random_index:
-            sample_index = np.random.randint(0, self.n_samples)
-        else:
-            sample_index = 0
-        print(f"Making joint plot for sample index {sample_index}")
+    def _make_marginal_plot(self, u_LF, u_HF, percentage_plot: int = 0.5):
+        n_plot = int(len(u_LF) * percentage_plot)
+        print(f"Making marginal distribution using {n_plot}/{len(u_LF)} samples")
         # extract field
-        u_LF = samples_LF[sample_index].flatten()
-        u_HF = samples_HF[sample_index].flatten()
+        flat_LF = u_LF[:n_plot].flatten()
+        flat_HF = u_HF[:n_plot].flatten()
+        flat_residual = flat_HF - flat_LF
+
+        fig, axs = plt.subplots(1, 2, figsize=(6, 3), layout="compressed")
+        axs[0].hist(flat_LF, density=True, bins=100, label=r"Low-fidelity")
+        axs[0].hist(flat_HF, density=True, bins=100, label=r"High-fidelity")
+        axs[0].legend()
+        axs[0].set_title("State marginal")
+        axs[1].hist(flat_residual, density=True, bins=100, label=r"Residual")
+        axs[1].set_title("Residual marginal")
+
+        plt.savefig("data_marginal.png")
+
+    def _make_joint_plot(
+        self,
+        samples_X,
+        samples_Y,
+        xlabel=r"Low-fidelity",
+        ylabel=r"High-fidelity",
+        percentage_plot: int = 0.5,
+        file_identifier: str = "LF_HF",
+    ):
+        n_plot = int(len(samples_X) * percentage_plot)
+        print(
+            f"Making {xlabel} vs. {ylabel} joint distribution using "
+            f"{n_plot}/{len(samples_X)} samples"
+        )
+        # extract field
+        flat_X = samples_X[:n_plot].flatten()
+        flat_Y = samples_Y[:n_plot].flatten()
 
         def _plot(x, y, ax):
             assert (
@@ -454,118 +419,177 @@ class MultiFidelity:
             return ax
 
         fig, axs = plt.subplots(1, 1, figsize=(8, 4), dpi=300, layout="compressed")
-        _plot(u_LF, u_HF, axs)
-        axs.set_xlabel(r"Low-fidelity")
-        axs.set_ylabel(r"High-fidelity")
+        _plot(flat_X, flat_Y, axs)
+        axs.set_xlabel(xlabel)
+        axs.set_ylabel(ylabel)
 
-        plt.savefig("joint_plot.png", dpi=300)
+        plt.savefig(file_identifier + "_joint_plot.png", dpi=300)
         plt.close()
 
-    def _comp_average_pearson(self, samples_LF, samples_HF):
-        """compute the average pearson correlation coefficient"""
+    def _make_initial_condition_plot(self):
+        """make initial condition plot"""
+        fig, axs = plt.subplots(
+            5, 2, sharex=True, sharey=True, layout="compressed", figsize=(6, 10)
+        )
+        for ii, ax in enumerate(axs.flatten()):
+            ax.plot(
+                self.solver_HF.x,
+                self.solver_HF.u0[ii],
+                label="High-fidelity",
+                color="k",
+            )
+            ax.plot(
+                self.solver_LF.x,
+                self.solver_LF.u0[ii],
+                label="Low-fidelity",
+                color="grey",
+                alpha=0.6,
+                linestyle="--",
+            )
+            ax.set_xlabel(r"$x$")
+            ax.set_ylabel(r"$u(0, x)$")
+            ax.label_outer()
+            if ii == 0:
+                ax.legend(loc="lower right")
+        plt.savefig("initial_condition.png")
 
+    def _comp_average_pearson(
+        self, samples_X, samples_Y, xlabel=r"Low-fidelity", ylabel=r"High-fidelity"
+    ):
         def _comp_pearson(x: np.ndarray, y: np.ndarray):
             assert x.shape == y.shape, "x and y must have the same shape"
+            assert isinstance(x, np.ndarray)
+            assert isinstance(y, np.ndarray)
             r, _ = pearsonr(x, y)
             return r
 
         r_list = []
         for ii in range(self.n_samples):
-            # permeability
-            u_HF = samples_HF[ii].flatten()
-            u_LF = samples_LF[ii].flatten()
+            flat_X = samples_X[ii].flatten()
+            flat_Y = samples_Y[ii].flatten()
             r_list.append(
                 _comp_pearson(
-                    u_HF,
-                    u_LF,
+                    flat_X,
+                    flat_Y,
                 )
             )
         assert len(r_list) == self.n_samples, "Number of samples mismatch"
 
-        mean_r = np.mean(np.array(r_list))
-
-        std_r = np.std(np.array(r_list))
-
+        r_array = np.array(r_list)
+        mean_r = np.mean(r_array)
+        std_r = np.std(r_array)
+        min_r = r_array.min()
+        max_r = r_array.max()
         print(
-            f"{self.n_samples} sample average Pearson correlation coefficient "
-            f": {mean_r: .4f} with {std_r: .4f} "
-            "standard deviation"
+            f"{self.n_samples} sample average {xlabel} vs. {ylabel} "
+            f"Pearson correlation coefficient : {mean_r: .4f}  +/- {std_r: .4f} |"
+            f" Min: {min_r: .4f} Max: {max_r: .4f}"
         )
 
-    def _prep_and_save(self, samples_LF, samples_HF):
-        # high data
-        high_data = {
-            "field": np.expand_dims(
-                samples_HF[:, 1:, :], 1
-            ),  # do not save initial condition
-            "condition": np.expand_dims(
-                np.tile(np.expand_dims(self.solver_HF.u0, 1), (1, self.Nt, 1)), 1
-            ),
-            "field_domain": self.solver_HF.domain,
-            "condition_domain": self.solver_HF.domain,
-        }
-        # low data
-        low_data = {
-            "field": np.expand_dims(
-                samples_LF[:, 1:, :], 1
-            ),  # do not save initial condition
-            "condition": np.expand_dims(
-                np.tile(np.expand_dims(self.solver_HF.u0, 1), (1, self.Nt, 1)), 1
-            ),
-            "field_domain": self.solver_HF.domain,
-            "condition_domain": self.solver_HF.domain,
-        }
+    def _prep_and_save(self, u_LF, u_HF):
+        # convert to tensor and reshape to (B, C, *dims)
+        u_HF = torch.Tensor(u_HF).unsqueeze(1)
+        u_LF = torch.Tensor(u_LF).unsqueeze(1)
+        # remove the initial condition
+        u_HF = u_HF[:, :, 1:, :]
+        u_LF = u_LF[:, :, 1:, :]
+        # prepare the condition (tiled initial conditon)
+        condition = (
+            torch.Tensor(self.solver_HF.u0)
+            .unsqueeze(1)
+            .expand(-1, self.Nt, -1)
+            .unsqueeze(1)
+        )
+        domain = torch.Tensor(self.solver_HF.domain)
 
-        for k, v in high_data.items():
-            print(f"Shape of {k} is {v.shape}")
-        for k, v in low_data.items():
-            print(f"Shape of {k} is {v.shape}")
+        # prep data dict
+        high_data = {
+            "field": u_HF,
+            "condition": condition,
+            "field_domain": domain,
+            "condition_domain": domain,
+        }
+        low_data = {
+            "field": u_LF,
+            "condition": condition,
+            "field_domain": domain,
+            "condition_domain": domain,
+        }
 
         # save
-        np.savez("high_fidelity.npz", **high_data)
-        np.savez("low_fidelity.npz", **low_data)
-        print("Data saved to high_fidelity.npz and low_fidelity.npz")
-        print("Simulation complete.")
+        torch.save(high_data, "high_fidelity.pt")
+        torch.save(low_data, "low_fidelity.pt")
+
+        print("saved high fidelity data to high_fidelity.pt")
+        print("saved low fidelity data to low_fidelity.pt")
+
+    def _compare(self, uT_HF: np.ndarray, uT_LF: np.ndarray):
+        assert (
+            self.n_samples <= 2000
+        ), "For making plots, reduce the number of samples to less than 2000"
+        # initial condition plot
+        self._make_initial_condition_plot()
+        # make sample comparison
+        self._make_sample_comparison_plot(
+            samples_LF=uT_LF,
+            samples_HF=uT_HF,
+            n_samples=5,
+        )
+        # make marginals
+        self._make_marginal_plot(u_LF=uT_LF, u_HF=uT_HF, percentage_plot=0.1)
+        # make LF-Residual joint plot
+        self._make_joint_plot(
+            samples_X=uT_LF,
+            samples_Y=uT_HF - uT_LF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"Residual",
+            percentage_plot=0.1,
+            file_identifier="Residual",
+        )
+        # make LF-HF joint plot
+        self._make_joint_plot(
+            samples_X=uT_LF,
+            samples_Y=uT_HF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"High-fidelity",
+            percentage_plot=0.1,
+            file_identifier="LF_HF",
+        )
+        # compute average pearson for LF-Residual
+        self._comp_average_pearson(
+            samples_X=uT_LF,
+            samples_Y=uT_HF - uT_LF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"Residual",
+        )
+
+        # compute average pearson for LF-HF
+        self._comp_average_pearson(
+            samples_X=uT_LF,
+            samples_Y=uT_HF,
+            xlabel=r"Low-fidelity",
+            ylabel=r"High-fidelity",
+        )
 
     def simulate(self):
         """simulate multi-fidelity data"""
         # solve high-fidelity
-        tic = time.time()
-        uT_HF, energy_HF = self.solver_HF.solve()
-        elapsed_HF = time.time() - tic
-        print(f"Compute time for High-fidelity : {elapsed_HF: .4f} seconds")
+        uT_HF, energy_HF = self.simulate_model("HF")
         # solve low-fidelty
-        tic = time.time()
-        uT_LF, energy_LF = self.solver_LF.solve()
-        elapsed_LF = time.time() - tic
-        print(f"Compute time for Low-fidelity : {elapsed_LF: .4f} seconds")
-        print(f"Cost savings with Low-fidelity: {elapsed_HF/elapsed_LF : .4f}")
-        # check blowup
-        check_blowup(uT_HF, "High-fidelity solution")
-        check_blowup(uT_LF, "Low-fidelity solution")
+        uT_LF, energy_LF = self.simulate_model("LF")
         # interpolate LF to HF grid
         uT_LF_inter = self._interpolate_solution(uT_LF)
-        check_blowup(uT_LF_inter, "Interpolated Low-fidelity solution")
-        # check shape
-        assert uT_HF.shape == (self.n_samples, self.Nt + 1, self.resolution_HF)
-        assert uT_LF_inter.shape == (self.n_samples, self.Nt + 1, self.resolution_HF)
-        # compare state pltos
-        self._make_sample_comparison_plot(
-            samples_LF=uT_LF_inter,
-            samples_HF=uT_HF,
-            n_samples=10,
-        )
-        # make joint plot
-        self._make_joint_plot(
-            samples_LF=uT_LF_inter, samples_HF=uT_HF, random_index=False
-        )
-        # compute average pearson
-        self._comp_average_pearson(samples_LF=uT_LF_inter, samples_HF=uT_HF)
-        # reshape data for saving
-        self._prep_and_save(samples_LF=uT_LF_inter, samples_HF=uT_HF)
+        # compare
+        if self.plot:
+            self._compare(uT_HF=uT_HF, uT_LF=uT_LF_inter)
+        # prep and save
+        self._prep_and_save(u_LF=uT_LF_inter, u_HF=uT_HF)
 
 
 if __name__ == "__main__":
+    # seed
+    seed_everything()
+    # args
     args = parse_args()
     mf = MultiFidelity(
         n_modes=args.n_modes,
@@ -574,5 +598,6 @@ if __name__ == "__main__":
         Nt=args.Nt,
         n_samples=args.n_samples,
         recalculate_LF_time=True,
+        plot=args.plot,
     )
     mf.simulate()
