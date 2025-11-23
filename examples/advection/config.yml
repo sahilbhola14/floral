@@ -1,4 +1,4 @@
-# examples/advection/config_floral.yml
+# examples/advection/config.yml
 
 # general configuration
 job_name: "advection" # Unique identifier for each run
