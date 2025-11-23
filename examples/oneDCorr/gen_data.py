@@ -217,39 +217,40 @@ class MultiFidelity:
 
     def _compare(self, u_HF, u_LF):
         """compare"""
-        assert (
-            self.n_samples <= 2000
-        ), "For making plots, reduce the number of samples to less than 2000"
+        if self.plot:
+            assert (
+                self.n_samples <= 2000
+            ), "For making plots, reduce the number of samples to less than 2000"
 
-        # make sample comparion
-        self._make_sample_comparison_plot(
-            u_LF=u_LF,
-            u_HF=u_HF,
-        )
-        # make marginals
-        self._make_marginal_plot(
-            u_LF=u_LF,
-            u_HF=u_HF,
-            percentage_plot=0.1,
-        )
-        # make LF-Residual joint plot
-        self._make_joint_plot(
-            samples_X=u_LF,
-            samples_Y=u_HF - u_LF,
-            xlabel=r"Low-fidelity",
-            ylabel=r"Residual",
-            percentage_plot=0.1,
-            file_identifier="Residual",
-        )
-        # make LF-HF joint plot
-        self._make_joint_plot(
-            samples_X=u_LF,
-            samples_Y=u_HF,
-            xlabel=r"Low-fidelity",
-            ylabel=r"High-fidelity",
-            percentage_plot=0.1,
-            file_identifier="LF_HF",
-        )
+            # make sample comparion
+            self._make_sample_comparison_plot(
+                u_LF=u_LF,
+                u_HF=u_HF,
+            )
+            # make marginals
+            self._make_marginal_plot(
+                u_LF=u_LF,
+                u_HF=u_HF,
+                percentage_plot=0.1,
+            )
+            # make LF-Residual joint plot
+            self._make_joint_plot(
+                samples_X=u_LF,
+                samples_Y=u_HF - u_LF,
+                xlabel=r"Low-fidelity",
+                ylabel=r"Residual",
+                percentage_plot=0.1,
+                file_identifier="Residual",
+            )
+            # make LF-HF joint plot
+            self._make_joint_plot(
+                samples_X=u_LF,
+                samples_Y=u_HF,
+                xlabel=r"Low-fidelity",
+                ylabel=r"High-fidelity",
+                percentage_plot=0.1,
+                file_identifier="LF_HF",
+            )
         # compute average pearson for LF-Residual
         self._comp_average_pearson(
             samples_X=u_LF,
@@ -302,8 +303,7 @@ class MultiFidelity:
         u_HF = self.solver_HF(a_HF)
         u_LF = self.solver_LF(a_LF)
         # compare
-        if self.plot:
-            self._compare(u_HF=u_HF, u_LF=u_LF)
+        self._compare(u_HF=u_HF, u_LF=u_LF)
         # prep and save
         self._prep_and_save(
             u_HF=u_HF,
