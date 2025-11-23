@@ -1,7 +1,7 @@
 # examples/advection/config_hyperparameters.yml
 learning_rate: 1.0e-3
 batch_size: 16
-max_epochs: 1
+max_epochs: 500
 optimizer: "Adam"
 weight_decay: 1.0e-4
 scheduler: "exponential"

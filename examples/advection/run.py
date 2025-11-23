@@ -25,13 +25,13 @@ parser = argparse.ArgumentParser(description="Run advection with specified param
 parser.add_argument(
     "--config",
     type=str,
-    default="config_floral.yml",
+    default="config.yml",
     help="Path to the configuration file.",
 )
 parser.add_argument(
     "--hp_config",
     type=str,
-    default="config_hyperparameters.yml",
+    default="hp_config.yml",
     help="Path to the configuration file.",
 )
 
