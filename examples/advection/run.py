@@ -117,7 +117,7 @@ if __name__ == "__main__":
     # if tune hyperparameters is True, load the hyperparameter config
     if config.tune_hyperparameters:
         # load the hyperparameter config from a yaml file
-        with open("config_sweep.yml", "r") as file:
+        with open("sweep_config.yml", "r") as file:
             hp_config = yaml.safe_load(file)
         # initialize agent
         sweep_id = wandb.sweep(hp_config)
