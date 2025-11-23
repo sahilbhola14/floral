@@ -10,7 +10,7 @@ logger_name: "advection" # Logger folder
 
 # configuration for data
 data:
-  n_samples: 6000 # total samples for training + validation (for tractability)
+  n_samples: 10000 # total samples for training + validation (for tractability)
   n_train: 500
   n_val: 1000
   LF: # low fidelity
@@ -71,7 +71,7 @@ flow:
 generate:
   minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
   n_gen: 50 # number of samples generated (for UQ purposes)
-  nT: 25 # number of time steps for integration
+  nT: 2 # number of time steps for integration
   method: "dopri5" # method for ODE solver
   atol: 1.0e-5 # absolute tolerance for ODE solver
   rtol: 1.0e-5 # relative tolerance for ODE solver
