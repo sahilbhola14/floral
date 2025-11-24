@@ -204,20 +204,34 @@ class MultiFidelity:
 
         if self.plot:
             assert self.n_samples >= 4, "4 initial condtions are plotted"
-            fig, axs = plt.subplots(
-                1, 4, layout="compressed", figsize=(10, 2), sharex=True, sharey=True
-            )
-            for ii, ax in enumerate(axs.ravel()):
-                u_hat_mag = torch.abs(u_hat)[ii]  # shape (65,)
-                u_hat_LF_mag = torch.abs(u_hat_LF)[ii]
-                # freq_modes = np.arange(n_modes)
-                ax.plot(freqs, u_hat_mag, label="High-fidelity", color="k")
-                ax.plot(freqs, u_hat_LF_mag, label="Low-fidelity", color="red")
-                ax.set_xlabel("Frequency")
-                ax.set_ylabel(r"Amplitude $|\hat{u}[k]|$")
-                ax.label_outer()
+            fig, axs = plt.subplots(2, 4, layout="compressed", figsize=(13, 5))
+            # start_plot = np.random.randint(0, high=len(u_hat))
+            start_plot = 69
+            for ii in range(4):
+                # spectral
+                u_hat_HF_mag = torch.abs(u_hat)[start_plot + ii]
+                u_hat_LF_mag = torch.abs(u_hat_LF)[start_plot + ii]
+                # physical
+                u_HF = u0_HF[start_plot + ii]
+                u_LF = u0_LF[start_plot + ii]
+
+                axs[0, ii].plot(freqs, u_hat_HF_mag, label="High-fidelity", color="k")
+                axs[0, ii].plot(freqs, u_hat_LF_mag, label="Low-fidelity", color="red")
+                axs[0, ii].set_xlabel("Frequency")
+                axs[0, ii].set_ylabel(r"Amplitude $|\hat{u}[k]|$")
+
+                axs[1, ii].plot(
+                    self.solver_HF.x.ravel(), u_HF, label="High-fidelity", color="k"
+                )
+                axs[1, ii].plot(
+                    self.solver_HF.x.ravel(), u_LF, label="Low-fidelity", color="red"
+                )
+                axs[1, ii].set_xlabel("$x$")
+                axs[1, ii].set_ylabel(r"$u(x, 0)$")
+
                 if ii == 0:
-                    ax.legend()
+                    axs[0, ii].legend(loc="upper right")
+            fig.align_labels()
             plt.savefig("fourier_initial_condition_comparison.png")
         return u0_LF.numpy()
 
@@ -438,7 +452,7 @@ class MultiFidelity:
                 linestyle="--",
             )
             ax.set_xlabel(r"$x$")
-            ax.set_ylabel(r"$u(0, x)$")
+            ax.set_ylabel(r"$u(x, 0)$")
             ax.label_outer()
             if ii == 0:
                 ax.legend(loc="lower right")
