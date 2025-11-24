@@ -24,13 +24,13 @@ parser = argparse.ArgumentParser(description="Run onedcorr with specified parame
 parser.add_argument(
     "--config",
     type=str,
-    default="config_floral.yml",
+    default="config.yml",
     help="Path to the configuration file.",
 )
 parser.add_argument(
     "--hp_config",
     type=str,
-    default="config_hyperparameters.yml",
+    default="hp_config.yml",
     help="Path to the configuration file.",
 )
 
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     # if tune hyperparameters is True, load the hyperparameter config
     if config.tune_hyperparameters:
         # load the hyperparameter config from a yaml file
-        with open("config_sweep.yml", "r") as file:
+        with open("sweep_config.yml", "r") as file:
             hp_config = yaml.safe_load(file)
         # initialize agent
         sweep_id = wandb.sweep(hp_config)
