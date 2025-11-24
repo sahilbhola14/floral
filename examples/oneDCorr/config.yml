@@ -1,4 +1,4 @@
-# examples/onedcorr/config_floral.yml
+# examples/onedcorr/config.yml
 
 # general configuration
 job_name: "onedcorr" # Unique identifier for each run
