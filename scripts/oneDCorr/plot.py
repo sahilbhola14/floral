@@ -99,7 +99,7 @@ def plot_error_summary(n_train_samples_list):
         df = summary(verbose=True)
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e1))
+    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e1), xlim_range=(0, 1e4))
 
 
 if __name__ == "__main__":
