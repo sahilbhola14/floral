@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from floral.utils import twoDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [1000]
-n_val_samples = 100
+n_train_samples_list = [500, 1000, 5000]
+n_val_samples = 1000
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -85,9 +85,11 @@ def plot_field(n_train_samples):
     # create plot object
     plotter = twoDPlot(data_flora=data_flora, data_floral=data_floral)
     # create sample plot
-    plotter.make_field_sample_plot(xlabel=r"x", ylabel=r"t")
+    plotter.make_field_sample_plot(xlabel=r"$x$", ylabel=r"$t$", n_samples=4)
     # create sample error plot
-    plotter.make_error_sample_plot()
+    plotter.make_error_sample_plot(
+        xlabel=r"$x$", ylabel=r"$t$", n_samples=4, vmin=0, vmax=0.25
+    )
 
 
 def plot_pareto(n_train_samples_list):
@@ -99,7 +101,7 @@ def plot_pareto(n_train_samples_list):
         df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ParetoPlot.plot_pareto(combined_df)
+    ParetoPlot.plot_pareto(combined_df, figsize=(7, 5))
 
 
 def plot_error_summary(n_train_samples_list):
@@ -112,7 +114,7 @@ def plot_error_summary(n_train_samples_list):
         df = summary(verbose=True)
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e1))
+    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e2), xlim_range=(1e2, 1e4))
 
 
 def plot_residual_summary(n_train_samples_list):
@@ -125,7 +127,7 @@ def plot_residual_summary(n_train_samples_list):
         df = residual(verbose=True)
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ResidualAdvection.plot_residual(combined_df)
+    ResidualAdvection.plot_residual(combined_df, figsize=(7, 5), ylim_range=(1e-3, 1e2))
 
 
 if __name__ == "__main__":
@@ -135,5 +137,6 @@ if __name__ == "__main__":
     plot_error_summary(n_train_samples_list)
     # plot field
     plot_field(n_train_samples=n_train_samples_list[0])
+    plot_field(n_train_samples=n_train_samples_list[-1])
     # pareto
     plot_pareto(n_train_samples_list)
