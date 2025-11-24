@@ -137,11 +137,11 @@ class MultiFidelity:
         )
 
         # create low fidelity inital condition
-        u0_LF = self._create_low_fidelity_ic(keep_frac=0.4)
+        u0_LF = self._create_low_fidelity_ic()
         # update low fidelity initial condition
         self.solver_LF.set_initial_condition(u0_LF)
 
-    def _create_low_fidelity_ic(self, keep_frac=0.2, amp_scale=0.8, gamma=4.0):
+    def _create_low_fidelity_ic(self, keep_frac=0.4, amp_scale=0.8, gamma=4.0):
         # HF initial condition
         u0_HF = self.solver_HF.u0  # (B, res_HF)
         # spectral filter
@@ -155,7 +155,7 @@ class MultiFidelity:
     def _filter_ic(
         self,
         u0_HF: np.ndarray,
-        keep_frac: float = 0.2,
+        keep_frac: float = 0.4,
         amp_scale: float = 0.8,
         gamma: float = 4.0,
         phase_bias: float = 0.0,
@@ -203,8 +203,10 @@ class MultiFidelity:
         freqs = torch.fft.rfftfreq(N)
 
         if self.plot:
-            assert self.n_samples >= 15, "15 initial condtions are plotted"
-            fig, axs = plt.subplots(3, 5, layout="compressed", figsize=(13, 6))
+            assert self.n_samples >= 4, "4 initial condtions are plotted"
+            fig, axs = plt.subplots(
+                1, 4, layout="compressed", figsize=(10, 2), sharex=True, sharey=True
+            )
             for ii, ax in enumerate(axs.ravel()):
                 u_hat_mag = torch.abs(u_hat)[ii]  # shape (65,)
                 u_hat_LF_mag = torch.abs(u_hat_LF)[ii]
@@ -212,12 +214,11 @@ class MultiFidelity:
                 ax.plot(freqs, u_hat_mag, label="High-fidelity", color="k")
                 ax.plot(freqs, u_hat_LF_mag, label="Low-fidelity", color="red")
                 ax.set_xlabel("Frequency")
-                ax.set_ylabel(r"Amplitude $|u_{hat}[k]|$")
+                ax.set_ylabel(r"Amplitude $|\hat{u}[k]|$")
                 ax.label_outer()
                 if ii == 0:
                     ax.legend()
             plt.savefig("fourier_initial_condition_comparison.png")
-
         return u0_LF.numpy()
 
     def _restrict_ic(self, u0_HF):
