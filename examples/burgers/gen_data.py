@@ -467,7 +467,7 @@ class MultiFidelity:
                 linestyle="--",
             )
             ax.set_xlabel(r"$x$")
-            ax.set_ylabel(r"$u(0, x)$")
+            ax.set_ylabel(r"$u(x, 0)$")
             ax.label_outer()
             if ii == 0:
                 ax.legend(loc="lower right")
