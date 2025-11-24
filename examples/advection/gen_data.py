@@ -202,6 +202,8 @@ class MultiFidelity:
         N = u_hat.shape[-1] * 2 - 2
         freqs = torch.fft.rfftfreq(N)
 
+        assert u0_LF.std(1).min() > 0, "No variation in IC"
+
         if self.plot:
             assert self.n_samples >= 4, "4 initial condtions are plotted"
             fig, axs = plt.subplots(2, 4, layout="compressed", figsize=(13, 5))
