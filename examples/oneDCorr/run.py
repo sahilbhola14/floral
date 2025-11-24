@@ -1,4 +1,4 @@
-# examples/advection/run_floral.py
+# examples/onedcorr/run_floral.py
 """
 Flow-matching operator for residual-augmented learning for Darcy flow.
 Notes:
@@ -18,23 +18,21 @@ from floral.utils import (
     build_checkpointer,
     build_trainer,
 )
-
 from floral.flow import perform_inference, Flow
 
-parser = argparse.ArgumentParser(description="Run advection with specified parameters.")
+parser = argparse.ArgumentParser(description="Run onedcorr with specified parameters.")
 parser.add_argument(
     "--config",
     type=str,
-    default="config_floral.yml",
+    default="config.yml",
     help="Path to the configuration file.",
 )
 parser.add_argument(
     "--hp_config",
     type=str,
-    default="config_hyperparameters.yml",
+    default="hp_config.yml",
     help="Path to the configuration file.",
 )
-
 
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
@@ -45,14 +43,14 @@ def print_header(config: dict):
     Args:
         config (dict): Configuration dictionary parameters.
     """
-    print_section("advection config")
+    print_section("onedcorr config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
     printer(f"Hyperparameter Configuration file: {args.hp_config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Number of samples: {config.data.n_samples}")
-    print_section("advection config", end=True)
+    print_section("onedcorr config", end=True)
 
 
 def train_model(hp_config: dict = None):
@@ -117,7 +115,7 @@ if __name__ == "__main__":
     # if tune hyperparameters is True, load the hyperparameter config
     if config.tune_hyperparameters:
         # load the hyperparameter config from a yaml file
-        with open("config_sweep.yml", "r") as file:
+        with open("sweep_config.yml", "r") as file:
             hp_config = yaml.safe_load(file)
         # initialize agent
         sweep_id = wandb.sweep(hp_config)

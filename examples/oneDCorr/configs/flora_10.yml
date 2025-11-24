@@ -1,17 +1,17 @@
-# examples/advection/config_floral.yml
+# examples/onedcorr/config.yml
 
 # general configuration
-job_name: "advection" # Unique identifier for each run
+job_name: "onedcorr" # Unique identifier for each run
 floral: False # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
-checkpoint_save_path: "./experiments/advection/" # Save path for the checkpoints
+checkpoint_save_path: "./experiments/onedcorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
-logger_name: "advection" # Logger folder
+logger_name: "onedcorr" # Logger folder
 
 # configuration for data
 data:
   n_samples: 6000 # total samples for training + validation (for tractability)
-  n_train: 500
+  n_train: 10
   n_val: 1000
   LF: # low fidelity
     path: "./low_fidelity.pt"
@@ -51,7 +51,7 @@ train:
 
 # configuration for flow-matching
 flow:
-  sig_min: 1.0e-6 # gaussian std for the data
+  sig_min: 1.0e-5 # gaussian std for the data
   operator:
     method: FiLMFNO
     # operator parameters
@@ -60,7 +60,7 @@ flow:
       lifting_channel_ratio: 4
       projection_channel_ratio: 4
       n_layers: 4
-      modes: 32
+      modes: 64
   prior:
     # prior GP measure parameters
     lengthscale: 1.0e-3
@@ -70,8 +70,8 @@ flow:
 # configuration for PDE solution generation
 generate:
   minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
-  n_gen: 50 # number of samples generated (for UQ purposes)
-  nT: 25 # number of time steps for integration
+  n_gen: 100 # number of samples generated (for UQ purposes)
+  nT: 2 # number of time steps for integration
   method: "dopri5" # method for ODE solver
   atol: 1.0e-5 # absolute tolerance for ODE solver
   rtol: 1.0e-5 # relative tolerance for ODE solver
