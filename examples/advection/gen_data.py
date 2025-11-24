@@ -370,7 +370,7 @@ class MultiFidelity:
         percentage_plot: int = 0.5,
         file_identifier: str = "LF_HF",
     ):
-        n_plot = int(len(samples_X) * percentage_plot)
+        n_plot = min(1, int(len(samples_X) * percentage_plot))
         assert (
             n_plot <= 5
         ), "For making joint distribution plots tractably, reduce the percentation plot"
