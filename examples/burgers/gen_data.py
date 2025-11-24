@@ -28,7 +28,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=6000,
+        default=10000,
         help="Number of samples to generate",
     )
 
@@ -154,10 +154,11 @@ class MultiFidelity:
     def _filter_ic(
         self,
         u0_HF: np.ndarray,
-        keep_frac: float = 0.2,
+        keep_frac: float = 0.4,
         amp_scale: float = 0.8,
         gamma: float = 4.0,
-        phase_bias: float = 0.2,
+        phase_bias: float = 0.1,
+        min_kept_modes: int = 2,
     ) -> torch.Tensor:
         """
         u0_HF: (B, N) high-fidelity initial condition
@@ -165,6 +166,7 @@ class MultiFidelity:
         amp_scale: global amplitude scaling for LF
         gamma: strength of exponential damping for kept modes
         phase_bias: magnitude of random phase distortion
+        min_kept_modes: minimum number of modes to keep
         """
         u0_HF = torch.Tensor(u0_HF)
         B, N = u0_HF.shape
@@ -173,7 +175,7 @@ class MultiFidelity:
         n_modes = u_hat.shape[-1]
 
         # keep low modes
-        k_keep = max(1, int(keep_frac * n_modes))
+        k_keep = max(min_kept_modes, int(keep_frac * n_modes))
         mask = torch.zeros_like(u_hat)
         mask[..., :k_keep] = 1.0
 
@@ -200,21 +202,36 @@ class MultiFidelity:
         freqs = torch.fft.rfftfreq(N)
 
         if self.plot:
-            assert self.n_samples >= 15, "15 initial condtions are plotted"
-            fig, axs = plt.subplots(3, 5, layout="compressed", figsize=(13, 6))
-            for ii, ax in enumerate(axs.ravel()):
-                u_hat_mag = torch.abs(u_hat)[ii]  # shape (65,)
-                u_hat_LF_mag = torch.abs(u_hat_LF)[ii]
-                # freq_modes = np.arange(n_modes)
-                ax.plot(freqs, u_hat_mag, label="High-fidelity", color="k")
-                ax.plot(freqs, u_hat_LF_mag, label="Low-fidelity", color="red")
-                ax.set_xlabel("Frequency")
-                ax.set_ylabel(r"Amplitude $|u_{hat}[k]|$")
-                ax.label_outer()
-                if ii == 0:
-                    ax.legend()
-            plt.savefig("fourier_initial_condition_comparison.png")
+            assert self.n_samples >= 4, "4 initial condtions are plotted"
+            fig, axs = plt.subplots(2, 4, layout="compressed", figsize=(13, 5))
+            # start_plot = np.random.randint(0, high=len(u_hat))
+            start_plot = 0
+            for ii in range(4):
+                # spectral
+                u_hat_HF_mag = torch.abs(u_hat)[start_plot + ii]
+                u_hat_LF_mag = torch.abs(u_hat_LF)[start_plot + ii]
+                # physical
+                u_HF = u0_HF[start_plot + ii]
+                u_LF = u0_LF[start_plot + ii]
 
+                axs[0, ii].plot(freqs, u_hat_HF_mag, label="High-fidelity", color="k")
+                axs[0, ii].plot(freqs, u_hat_LF_mag, label="Low-fidelity", color="red")
+                axs[0, ii].set_xlabel("Frequency")
+                axs[0, ii].set_ylabel(r"Amplitude $|\hat{u}[k]|$")
+
+                axs[1, ii].plot(
+                    self.solver_HF.x.ravel(), u_HF, label="High-fidelity", color="k"
+                )
+                axs[1, ii].plot(
+                    self.solver_HF.x.ravel(), u_LF, label="Low-fidelity", color="red"
+                )
+                axs[1, ii].set_xlabel("$x$")
+                axs[1, ii].set_ylabel(r"$u(x, 0)$")
+
+                if ii == 0:
+                    axs[0, ii].legend(loc="upper right")
+            fig.align_labels()
+            plt.savefig("fourier_initial_condition_comparison.png")
         return u0_LF.numpy()
 
     def _restrict_ic(self, u0_HF):
@@ -368,7 +385,10 @@ class MultiFidelity:
         percentage_plot: int = 0.5,
         file_identifier: str = "LF_HF",
     ):
-        n_plot = int(len(samples_X) * percentage_plot)
+        n_plot = min(1, int(len(samples_X) * percentage_plot))
+        assert (
+            n_plot <= 20
+        ), "For making joint distribution plots tractably, reduce the percentation plot"
         print(
             f"Making {xlabel} vs. {ylabel} joint distribution using "
             f"{n_plot}/{len(samples_X)} samples"
@@ -467,6 +487,8 @@ class MultiFidelity:
         for ii in range(self.n_samples):
             flat_X = samples_X[ii].flatten()
             flat_Y = samples_Y[ii].flatten()
+            if flat_X.std() < 1e-6 or flat_Y.std() < 1e-6:
+                raise RuntimeError("No variation found in the solution field.")
             r_list.append(
                 _comp_pearson(
                     flat_X,
@@ -524,37 +546,35 @@ class MultiFidelity:
         print("saved low fidelity data to low_fidelity.pt")
 
     def _compare(self, uT_HF: np.ndarray, uT_LF: np.ndarray):
-        assert (
-            self.n_samples <= 2000
-        ), "For making plots, reduce the number of samples to less than 2000"
-        # initial condition plot
-        self._make_initial_condition_plot()
-        # make sample comparison
-        self._make_sample_comparison_plot(
-            samples_LF=uT_LF,
-            samples_HF=uT_HF,
-            n_samples=5,
-        )
-        # make marginals
-        self._make_marginal_plot(u_LF=uT_LF, u_HF=uT_HF, percentage_plot=0.1)
-        # make LF-Residual joint plot
-        self._make_joint_plot(
-            samples_X=uT_LF,
-            samples_Y=uT_HF - uT_LF,
-            xlabel=r"Low-fidelity",
-            ylabel=r"Residual",
-            percentage_plot=0.1,
-            file_identifier="Residual",
-        )
-        # make LF-HF joint plot
-        self._make_joint_plot(
-            samples_X=uT_LF,
-            samples_Y=uT_HF,
-            xlabel=r"Low-fidelity",
-            ylabel=r"High-fidelity",
-            percentage_plot=0.1,
-            file_identifier="LF_HF",
-        )
+        if self.plot:
+            # initial condition plot
+            self._make_initial_condition_plot()
+            # make sample comparison
+            self._make_sample_comparison_plot(
+                samples_LF=uT_LF,
+                samples_HF=uT_HF,
+                n_samples=5,
+            )
+            # make marginals
+            self._make_marginal_plot(u_LF=uT_LF, u_HF=uT_HF, percentage_plot=0.1)
+            # make LF-Residual joint plot
+            self._make_joint_plot(
+                samples_X=uT_LF,
+                samples_Y=uT_HF - uT_LF,
+                xlabel=r"Low-fidelity",
+                ylabel=r"Residual",
+                percentage_plot=0.001,
+                file_identifier="Residual",
+            )
+            # make LF-HF joint plot
+            self._make_joint_plot(
+                samples_X=uT_LF,
+                samples_Y=uT_HF,
+                xlabel=r"Low-fidelity",
+                ylabel=r"High-fidelity",
+                percentage_plot=0.001,
+                file_identifier="LF_HF",
+            )
         # compute average pearson for LF-Residual
         self._comp_average_pearson(
             samples_X=uT_LF,
