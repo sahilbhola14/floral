@@ -71,7 +71,7 @@ flow:
 generate:
   minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
   n_gen: 100 # number of samples generated (for UQ purposes)
-  nT: 50 # number of time steps for integration
+  nT: 2 # number of time steps for integration
   method: "dopri5" # method for ODE solver
   atol: 1.0e-5 # absolute tolerance for ODE solver
   rtol: 1.0e-5 # relative tolerance for ODE solver
