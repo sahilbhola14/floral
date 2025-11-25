@@ -1,4 +1,4 @@
-# examples/burgers/run_floral.py
+# examples/burgers/run.py
 """
 Flow-matching operator for residual-augmented learning for Darcy flow.
 Notes:
@@ -24,10 +24,15 @@ parser = argparse.ArgumentParser(description="Run burgers with specified paramet
 parser.add_argument(
     "--config",
     type=str,
-    default="config_floral.yml",
+    default="config.yml",
     help="Path to the configuration file.",
 )
-
+parser.add_argument(
+    "--hp_config",
+    type=str,
+    default="hp_config.yml",
+    help="Path to the configuration file.",
+)
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
 
@@ -108,14 +113,14 @@ if __name__ == "__main__":
     # if tune hyperparameters is True, load the hyperparameter config
     if config.tune_hyperparameters:
         # load the hyperparameter config from a yaml file
-        with open("config_sweep.yml", "r") as file:
+        with open("sweep_config.yml", "r") as file:
             hp_config = yaml.safe_load(file)
         # initialize agent
         sweep_id = wandb.sweep(hp_config)
         wandb.agent(sweep_id, function=train_model, count=100)
     else:
         # load the hyperparameter config
-        with open("config_hyperparameters.yml", "r") as file:
+        with open(args.hp_config, "r") as file:
             hp_config = yaml.safe_load(file)
         # get the best model path (training or evaluation)
         if config.train.stage == "train":
