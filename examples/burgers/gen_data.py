@@ -36,7 +36,7 @@ def parse_args():
         "-res_HF",
         "--resolution_HF",
         type=int,
-        default=64,
+        default=128,
         help="Number of discretization points for the high-fidelity model",
     )
 
@@ -44,14 +44,14 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=32,
+        default=64,
         help="Number of discretization points for the low-fidelity model",
     )
 
     parser.add_argument(
         "--Nt",
         type=int,
-        default=64,
+        default=128,
         help="Number of time discretization points",
     )
 
