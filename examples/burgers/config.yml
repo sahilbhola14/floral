@@ -11,7 +11,7 @@ logger_name: "burgers" # Logger folder
 # configuration for data
 data:
   n_samples: 6000 # total samples for training + validation (for tractability)
-  n_train: 100
+  n_train: 500
   n_val: 1000
   LF: # low fidelity
     path: "./low_fidelity.pt"
