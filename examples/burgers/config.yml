@@ -1,4 +1,4 @@
-# examples/burgers/config_floral.yml
+# examples/burgers/config.yml
 
 # general configuration
 job_name: "burgers" # Unique identifier for each run

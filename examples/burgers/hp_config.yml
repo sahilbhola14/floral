@@ -1,4 +1,4 @@
-# examples/burger/config_hyperarameters.yml
+# examples/burger/hp_config.yml
 learning_rate: 1.0e-3
 batch_size: 8
 max_epochs: 8000
