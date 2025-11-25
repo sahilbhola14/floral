@@ -454,6 +454,7 @@ class twoDPlot(BasePlot):
         """make field samples plot"""
         assert n_samples <= self.n_avail_samples
         print(f"Plotting {n_samples} samples for channel: {plot_channel}")
+        independent_colorbar = kwargs.get("independent_colorbar", True)
         fig, axs = plt.subplots(
             n_samples,
             len(self.mean_dict),
@@ -463,28 +464,49 @@ class twoDPlot(BasePlot):
             sharex=True,
             sharey=True,
         )
-        # compute range
-        if kwargs.get("vmin", None) is None:
-            vmin = min(data[:n_samples].min() for data in self.mean_dict.values())
-            vmin = torch.floor(vmin)
+
+        if independent_colorbar:
+            # compute the range for each row
+            vmin_list = [
+                float(min(data[ii].min() for data in self.mean_dict.values()))
+                for ii in range(n_samples)
+            ]
+            vmax_list = [
+                float(max(data[ii].max() for data in self.mean_dict.values()))
+                for ii in range(n_samples)
+            ]
         else:
-            vmin = kwargs.get("vmin")
-        if kwargs.get("vmax", None) is None:
-            vmax = max(data[:n_samples].max() for data in self.mean_dict.values())
-            vmax = torch.ceil(vmax)
-        else:
-            vmax = kwargs.get("vmax")
+            # compute range
+            if kwargs.get("vmin", None) is None:
+                vmin = min(data[:n_samples].min() for data in self.mean_dict.values())
+                vmin = torch.floor(vmin)
+            else:
+                vmin = kwargs.get("vmin")
+            if kwargs.get("vmax", None) is None:
+                vmax = max(data[:n_samples].max() for data in self.mean_dict.values())
+                vmax = torch.ceil(vmax)
+            else:
+                vmax = kwargs.get("vmax")
+
+            vmin_list = [vmin] * n_samples
+            vmax_list = [vmax] * n_samples
+
         for jj, k in enumerate(self.mean_dict.keys()):
             axs[0, jj].set_title(k)
             for ii in range(n_samples):
                 im = axs[ii, jj].imshow(
                     self.mean_dict[k][ii][plot_channel],
-                    vmin=vmin,
-                    vmax=vmax,
+                    vmin=vmin_list[ii],
+                    vmax=vmax_list[ii],
                     origin="lower",
                     interpolation="bicubic",
                 )
-        fig.colorbar(im, ax=axs[-1], orientation="horizontal", pad=0.1)
+
+                if (independent_colorbar is True) and jj == 0:
+                    fig.colorbar(im, ax=axs[ii, -1], orientation="vertical", pad=0.1)
+
+        if independent_colorbar is False:
+            fig.colorbar(im, ax=axs[-1], orientation="horizontal", pad=0.1)
         for ax in axs.flatten():
             ax.set_xticks([])
             ax.set_yticks([])
@@ -505,6 +527,7 @@ class twoDPlot(BasePlot):
             f"Plotting {n_samples} samples for channel: {plot_channel} "
             f"for error type: {error_type}"
         )
+        independent_colorbar = kwargs.get("independent_colorbar", True)
         data_dict = self.error_dict[error_type]
 
         fig, axs = plt.subplots(
@@ -516,28 +539,48 @@ class twoDPlot(BasePlot):
             sharex=True,
             sharey=True,
         )
-        # compute range
-        if kwargs.get("vmin", None) is None:
-            vmin = min(data[:n_samples].min() for data in data_dict.values())
-            vmin = torch.floor(vmin)
+        if independent_colorbar:
+            # compute the range for each row
+            vmin_list = [
+                float(min(data[ii].min() for data in data_dict.values()))
+                for ii in range(n_samples)
+            ]
+            vmax_list = [
+                float(max(data[ii].max() for data in data_dict.values()))
+                for ii in range(n_samples)
+            ]
         else:
-            vmin = kwargs.get("vmin")
-        if kwargs.get("vmax", None) is None:
-            vmax = max(data[:n_samples].max() for data in data_dict.values())
-            vmax = torch.ceil(vmax)
-        else:
-            vmax = kwargs.get("vmax")
+            # compute range
+            if kwargs.get("vmin", None) is None:
+                vmin = min(data[:n_samples].min() for data in data_dict.values())
+                vmin = torch.floor(vmin)
+            else:
+                vmin = kwargs.get("vmin")
+            if kwargs.get("vmax", None) is None:
+                vmax = max(data[:n_samples].max() for data in data_dict.values())
+                vmax = torch.ceil(vmax)
+            else:
+                vmax = kwargs.get("vmax")
+
+            vmin_list = [vmin] * n_samples
+            vmax_list = [vmax] * n_samples
+
         for jj, k in enumerate(data_dict.keys()):
             axs[0, jj].set_title(k)
             for ii in range(n_samples):
                 im = axs[ii, jj].imshow(
                     data_dict[k][ii][plot_channel],
-                    vmin=vmin,
-                    vmax=vmax,
+                    vmin=vmin_list[ii],
+                    vmax=vmax_list[ii],
                     origin="lower",
                     interpolation="bicubic",
                 )
-        fig.colorbar(im, ax=axs[-1], orientation="horizontal", pad=0.1)
+
+                if (independent_colorbar is True) and jj == 0:
+                    fig.colorbar(im, ax=axs[ii, -1], orientation="vertical", pad=0.1)
+
+        if independent_colorbar is False:
+            fig.colorbar(im, ax=axs[-1], orientation="horizontal", pad=0.1)
         for ax in axs.flatten():
             ax.set_xticks([])
             ax.set_yticks([])
