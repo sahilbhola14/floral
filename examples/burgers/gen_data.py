@@ -28,7 +28,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=10000,
+        default=6000,
         help="Number of samples to generate",
     )
 
@@ -140,12 +140,18 @@ class MultiFidelity:
         # update low-fidelity initial conditon
         self.solver_LF.set_initial_condition(u0_LF)
 
-    def _create_low_fidelity_ic(self, keep_frac=0.4, amp_scale=0.8, gamma=4.0):
+    def _create_low_fidelity_ic(
+        self, keep_frac=0.6, amp_scale=0.8, gamma=4.0, phase_bias=0.0
+    ):
         # HF initial condition
         u0_HF = self.solver_HF.u0  # (B, res_HF)
         # spectral filter
         u0_LF = self._filter_ic(
-            u0_HF, keep_frac=keep_frac, amp_scale=amp_scale, gamma=gamma
+            u0_HF,
+            keep_frac=keep_frac,
+            amp_scale=amp_scale,
+            gamma=gamma,
+            phase_bias=phase_bias,
         )
         # restrict to the Low-fidelity domain
         u0_LF = self._restrict_ic(u0_LF)
@@ -154,7 +160,7 @@ class MultiFidelity:
     def _filter_ic(
         self,
         u0_HF: np.ndarray,
-        keep_frac: float = 0.4,
+        keep_frac: float = 0.6,
         amp_scale: float = 0.8,
         gamma: float = 4.0,
         phase_bias: float = 0.1,
@@ -200,6 +206,8 @@ class MultiFidelity:
         # frequencies (for plot)
         N = u_hat.shape[-1] * 2 - 2
         freqs = torch.fft.rfftfreq(N)
+
+        assert u0_LF.std(1).min() > 0, "No variation in IC"
 
         if self.plot:
             assert self.n_samples >= 4, "4 initial condtions are plotted"
