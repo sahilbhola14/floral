@@ -367,7 +367,7 @@ class MultiFidelity:
         plt.savefig("data_snapshot.png", dpi=300)
 
     def _make_marginal_plot(self, u_LF, u_HF, percentage_plot: int = 0.5):
-        n_plot = int(len(u_LF) * percentage_plot)
+        n_plot = max(1, int(len(u_LF) * percentage_plot))
         print(f"Making marginal distribution using {n_plot}/{len(u_LF)} samples")
         # extract field
         flat_LF = u_LF[:n_plot].flatten()
@@ -393,7 +393,7 @@ class MultiFidelity:
         percentage_plot: int = 0.5,
         file_identifier: str = "LF_HF",
     ):
-        n_plot = min(1, int(len(samples_X) * percentage_plot))
+        n_plot = max(1, int(len(samples_X) * percentage_plot))
         assert (
             n_plot <= 20
         ), "For making joint distribution plots tractably, reduce the percentation plot"
@@ -608,8 +608,7 @@ class MultiFidelity:
         # interpolate LF to HF grid
         uT_LF_inter = self._interpolate_solution(uT_LF)
         # compare
-        if self.plot:
-            self._compare(uT_HF=uT_HF, uT_LF=uT_LF_inter)
+        self._compare(uT_HF=uT_HF, uT_LF=uT_LF_inter)
         # prep and save
         self._prep_and_save(u_LF=uT_LF_inter, u_HF=uT_HF)
 

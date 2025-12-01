@@ -97,7 +97,7 @@ class MultiFidelity:
         plt.savefig("data_snapshot.png")
 
     def _make_marginal_plot(self, u_LF, u_HF, percentage_plot: int = 0.5):
-        n_plot = int(len(u_LF) * percentage_plot)
+        n_plot = max(1, int(len(u_LF) * percentage_plot))
         print(f"Making marginal distribution using {n_plot}/{len(u_LF)} samples")
         # extract field
         flat_LF = u_LF[:n_plot].flatten().numpy()
@@ -123,7 +123,7 @@ class MultiFidelity:
         percentage_plot: int = 0.5,
         file_identifier: str = "LF_HF",
     ):
-        n_plot = int(len(samples_X) * percentage_plot)
+        n_plot = max(1, int(len(samples_X) * percentage_plot))
         print(
             f"Making {xlabel} vs. {ylabel} joint distribution using "
             f"{n_plot}/{len(samples_X)} samples"
