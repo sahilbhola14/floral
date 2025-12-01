@@ -1,11 +1,31 @@
 import numpy as np
 import torch
+import time
 import os.path as osp
 from datetime import datetime
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf, DictConfig
 from typing import Any, Dict
+from functools import wraps
+
+
+def timeit(func_name=None):
+    """Decorator to measure the runtime of a function."""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start = time.perf_counter()
+            result = func(*args, **kwargs)
+            elapsed = time.perf_counter() - start
+            name = func_name or func.__name__
+            print(f"{name} took {elapsed:.6f} seconds")
+            return result
+
+        return wrapper
+
+    return decorator
 
 
 def check_path(path: str, suggestion: str = None) -> None:
