@@ -1,6 +1,6 @@
 # examples/darcy/gen_data.py
 """
-Darcy Flow problem with random permeabiltiy field.
+Darcy Flow problem with random permeability field.
 Modified from: https://github.com/christian-jacobsen/CoCoGen/tree/master
 for multi-fidelity training.
 Notes:
@@ -10,27 +10,17 @@ Notes:
     resulting in a cost savings of nearly 25 times.
 """
 
+import torch
 import numpy as np
-import math
-import scipy
 import argparse
 import matplotlib.pyplot as plt
-import time
 import random
 from tqdm import tqdm
-from joblib import Parallel, delayed
 from scipy.stats import pearsonr, gaussian_kde
-from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
 from scipy.interpolate import RegularGridInterpolator
+from floral.solver import Darcy
 
 plt.style.use("../../scripts/journal.mplstyle")
-
-
-def set_seed(seed: int = 42):
-    random.seed(seed)
-    np.random.seed(seed)
-    print(f"Seed set to: {seed}")
 
 
 def parse_args():
@@ -84,328 +74,25 @@ def parse_args():
         default=64,
         help="Parameterization dimension of permeability field",
     )
+    parser.add_argument("--plot", action="store_true")
 
     args = parser.parse_args()
-    print("#" * 50)
-    print("Darcy Flow")
-    print("#" * 50)
+    print("==" * 3 + "darcy equation" + "==" * 3)
     print(f"Number of samples: {args.n_samples}")
     print(f"Number of threads: {args.threads}")
     print(f"High-fidelity parameterization dimension: {args.ntheta_HF}")
     print(f"High-fidelity resolution: {args.resolution_HF}")
     print(f"Low-fidelity parameterization dimension: {args.ntheta_LF}")
     print(f"Low-fidelity resolution: {args.resolution_LF}")
-    print("#" * 50)
+    print("==" * 3 + "==============" + "==" * 3)
+
     return args
 
 
-def check_blowup(field: np.ndarray, string: str = ""):
-    """check if the field has blown up (nan or inf values)"""
-    if np.isnan(field).any() or np.isinf(field).any():
-        raise ValueError(f"{string} field has blown up!")
-
-
-class Darcysolver:
-    def __init__(self, resolution: int, ntheta: int = 128, threads: int = 32):
-        self.resolution = resolution
-        self.ntheta = ntheta  # mode truncations
-        self.threads = threads  # number of threads for parallelization
-        # mesh
-        self.xv = np.linspace(0, 1, self.resolution)
-        XX, YY = np.meshgrid(self.xv, self.xv, indexing="ij")
-        self.mesh = np.concatenate((XX.reshape(-1, 1), YY.reshape(-1, 1)), axis=1)
-        self.domain = self.mesh.reshape(self.resolution, self.resolution, 2).transpose(
-            2, 0, 1
-        )
-        # correlation matrix params
-        self.corr_params = {"c0": 0.1, "sigma": 1.0, "thresh": 1e-12}  # original
-        # source
-        # self.source_strength = 10.0 # original
-        self.source_strength = 50.0  # modified
-        # A_matrix for darcy flow (with integral enforcement)
-        self.A_reg = self._get_A_matrix()
-
-    def _get_A_matrix(self):
-        """get the A matrix for the darcy flow with integral enforcement"""
-        x = np.linspace(0, 1, self.resolution)
-        dx = x[1] - x[0]
-        nx = len(x)
-        A = np.zeros((1, nx**2))
-        j = 0
-        i = 0
-        for k in range(nx**2):
-            if np.mod(k, nx) == 0:
-                j += 1
-                i = 1
-
-            if (i == 1) and (j == 1):  # bottom left corner
-                A[0, k] = 1
-            elif (i == nx) and (j == nx):  # top right corner
-                A[0, k] = 1
-            elif (i == 1) and (j == nx):  # top left corner
-                A[0, k] = 1
-            elif (i == nx) and (j == 1):  # bottom right corner
-                A[0, k] = 1
-            elif i == 1:  # left boundary
-                A[0, k] = 2
-            elif j == 1:  # bottom boundary
-                A[0, k] = 2
-            elif i == nx:  # right boundary
-                A[0, k] = 2
-            elif j == nx:  # top boundary
-                A[0, k] = 2
-            else:  # interior
-                A[0, k] = 4
-
-        return A * dx**2 / 4
-
-    def _get_correlation_matrix(self):
-        """get the correlation matrix"""
-        n = self.mesh.shape[0]
-        c0 = self.corr_params["c0"] * np.ones((self.mesh.shape[1], 1))
-        c0 = 1 / (c0**2)
-        sigma = self.corr_params["sigma"]
-        C = np.zeros((n, n))
-        for i in range(n):
-            # gaussian correlation
-            point = self.mesh[i : i + 1, :]
-            X = (self.mesh - point * np.ones((n, 2))) ** 2
-            C[:, i] = sigma * np.exp(-np.sqrt(np.matmul(X, c0)))[:, 0]
-
-        thresh = self.corr_params["thresh"]
-        C[C < thresh] = 0
-
-        return C
-
-    def _get_random_field_lu(self):
-        """compute the eigenvalues and eigenvectors of the covariance matrix"""
-        # covariance matrix
-        C = self._get_correlation_matrix()
-        # compute the eigenvalues and eigenvectors
-        S, U = scipy.sparse.linalg.eigs(C, k=self.ntheta)
-        S_t, U_t = scipy.sparse.linalg.eigs(C, k=self.ntheta + 10)
-        ev = np.abs(np.real(S))
-        inds = np.flip(np.argsort(ev))
-        ev = ev[inds]
-        U = np.real(U)[:, inds]
-        assert (
-            ev.ndim == 1 and ev.shape[0] == self.ntheta
-        ), "Eigen values dimension mismatch"
-        assert (
-            U.ndim == 2
-            and U.shape[0] == self.resolution**2
-            and U.shape[1] == self.ntheta
-        ), "Eigen vectors dimension mismatch"
-        return ev, U
-
-    def _get_generative_params(self, n_samples):
-        """get the generative parameters"""
-        theta = np.random.rand(self.ntheta, n_samples) * 2.5
-        # theta = np.ones((self.ntheta, n_samples)) * 2.5 # for testing purposes
-        return theta
-
-    def _sample_permeability(self, n_samples):
-        """sample the permeabiilty field"""
-        # get the eigen values and eigen vector os the covariance matrix
-        ev, U = self._get_random_field_lu()
-        # get the generative parameters
-        theta = self._get_generative_params(n_samples)
-        # construct permeability field (B, resolution, resolution)
-        K = self._construct_permeability_from_UL(ev, U, theta)
-
-        permeability_data = {
-            "permeability": K,
-            "generative_params": theta,
-            "eigenvalues": ev,
-            "eigenvectors": U,
-        }
-        return permeability_data
-
-    def _construct_permeability_from_UL(
-        self, ev: np.ndarray, U: np.ndarray, theta: np.ndarray
-    ):
-        """construct permeability field from eigen values,
-        eigen vectors and generative parameters"""
-        resolution = int(math.sqrt(U.shape[0]))
-        assert resolution**2 == U.shape[0], "Resolution mismatch"
-        assert (
-            theta.ndim == 2 and theta.shape[0] == self.ntheta
-        ), "Generative parameters dimension mismatch"
-        assert (
-            ev.ndim == 1 and ev.shape[0] == self.ntheta
-        ), "Eigen values dimension mismatch"
-        assert (
-            U.ndim == 2 and U.shape[0] == resolution**2 and U.shape[1] == self.ntheta
-        ), "Eigen vectors dimension mismatch"
-        UL = U * np.sqrt(ev[np.newaxis, :])
-        n_samples = theta.shape[1]
-        K = np.exp(UL @ theta).T.reshape(n_samples, resolution, resolution)
-        return K
-
-    def grad_K(self, K, i, j, dx, dim):
-        """compute gradient of K at location (i,j) in dimension dim"""
-        dK = 0
-        if dim == 1:
-            dK = (K[i + 1, j] - K[i - 1, j]) / (2 * dx)
-        elif dim == 2:
-            dK = (K[i, j + 1] - K[i, j - 1]) / (2 * dx)
-        return dK
-
-    def form_matrix(self, K, xv, dx):
-        """Form the matrix A and the source vector f for the Darcy flow problem."""
-        nx = len(xv)
-        A = np.zeros((nx**2, nx**2))
-        f = np.zeros((nx**2, 1))
-
-        j = -1
-        i = 0
-
-        dx2 = dx**2
-        for k in range(nx**2):
-            if (np.mod(k, nx)) == 0:
-                j += 1
-                i = 0
-
-            A[k, k] = K[i, j] * 4 / (dx2)
-
-            # corners
-            if (i == 0) and (j == 0):
-                A[k, k + 1] = -2 * K[i, j] / (dx2)
-                A[k, k + nx] = -2 * K[i, j] / (dx2)
-            elif (i == (nx - 1)) and (j == (nx - 1)):
-                A[k, k - 1] = -2 * K[i, j] / (dx2)
-                A[k, k - nx] = -2 * K[i, j] / (dx2)
-            elif (i == 0) and (j == (nx - 1)):
-                A[k, k + 1] = -2 * K[i, j] / (dx2)
-                A[k, k - nx] = -2 * K[i, j] / (dx2)
-            elif (i == (nx - 1)) and (j == 0):
-                A[k, k - 1] = -2 * K[i, j] / (dx2)
-                A[k, k + nx] = -2 * K[i, j] / (dx2)
-
-            # bondaries
-            elif (i == 0) or (j == 0) or (i == (nx - 1)) or (j == (nx - 1)):
-                if i == 0:
-                    gK = self.grad_K(K, i, j, dx, 2) / (2 * dx)
-                    A[k, k + 1] = -2 * K[i, j] / dx2
-                    A[k, k + nx] = -K[i, j] / dx2 - gK
-                    A[k, k - nx] = -K[i, j] / dx2 + gK
-                elif i == (nx - 1):
-                    gK = self.grad_K(K, i, j, dx, 2) / (2 * dx)
-                    A[k, k - 1] = -2 * K[i, j] / dx2
-                    A[k, k + nx] = -K[i, j] / dx2 - gK
-                    A[k, k - nx] = -K[i, j] / dx2 + gK
-                elif j == 0:
-                    gK = self.grad_K(K, i, j, dx, 1) / (2 * dx)
-                    A[k, k + nx] = -2 * K[i, j] / dx2
-                    A[k, k - 1] = -K[i, j] / dx2 + gK
-                    A[k, k + 1] = -K[i, j] / dx2 - gK
-                elif j == (nx - 1):
-                    gK = self.grad_K(K, i, j, dx, 1) / (2 * dx)
-                    A[k, k - nx] = -2 * K[i, j] / dx2
-                    A[k, k - 1] = -K[i, j] / dx2 + gK
-                    A[k, k + 1] = -K[i, j] / dx2 - gK
-
-            # interior
-            else:
-                gK1 = self.grad_K(K, i, j, dx, 1) / (2 * dx)
-                gK2 = self.grad_K(K, i, j, dx, 2) / (2 * dx)
-                fac = -K[i, j] / dx2
-                A[k, k - 1] = fac + gK1
-                A[k, k + 1] = fac - gK1
-                A[k, k + nx] = fac - gK2
-                A[k, k - nx] = fac + gK2
-
-            x, y = xv[i], xv[j]
-
-            # source function
-            if (np.abs(x - 0.0625) <= 0.0625) and (np.abs(y - 0.0625) <= 0.0625):
-                f[k, 0] = self.source_strength
-            elif (np.abs(x - 1 + 0.0625) <= 0.0625) and (
-                np.abs(y - 1 + 0.0625) <= 0.0625
-            ):
-                f[k, 0] = -self.source_strength
-
-            i += 1
-        return A, f
-
-    def compute_u(self, P, K, nx, xv, dx):
-        U1, U2 = np.zeros(P.shape), np.zeros(P.shape)
-        for i in range(nx):
-            for j in range(nx):
-                if (
-                    ((j == 0) or (j == (nx - 1))) and (i != 0) and (i != (nx - 1))
-                ):  # bottom or top boundary (no corners)
-                    U1[i, j] = -K[i, j] * (P[i + 1, j] - P[i - 1, j]) / (2 * dx)
-                elif (
-                    ((i == 0) or (i == (nx - 1))) and (j != 0) and (j != (nx - 1))
-                ):  # left or right boundary
-                    U2[i, j] = -K[i, j] * (P[i, j + 1] - P[i, j - 1]) / (2 * dx)
-                elif (
-                    (i == 0 and j == 0)
-                    or (i == (nx - 1) and j == (nx - 1))
-                    or (i == 0 and j == (nx - 1))
-                    or (j == 0 and i == (nx - 1))
-                ):  # corners
-                    U1[i, j] = 0
-                    U2[i, j] = 0
-                else:  # interior
-                    U1[i, j] = -K[i, j] * (P[i + 1, j] - P[i - 1, j]) / (2 * dx)
-                    U2[i, j] = -K[i, j] * (P[i, j + 1] - P[i, j - 1]) / (2 * dx)
-
-        return U1, U2
-
-    def _solve(self, K: np.ndarray, sample_index: int, sparse_solve: bool = True):
-        if sample_index % 1000 == 0:
-            print(f"Generating sample {sample_index}...")
-        xv = np.linspace(0, 1, self.resolution)
-        dx = xv[1] - xv[0]
-        A, f = self.form_matrix(K, xv, dx)
-        if sparse_solve:
-            # Form KKT matrix
-            n = A.shape[0]
-            KKT = np.zeros((n + 1, n + 1))
-            KKT[:n, :n] = A
-            KKT[:n, n] = self.A_reg.flatten()  # or self.A_reg.ravel()
-            KKT[n, :n] = self.A_reg.T.flatten()
-
-            # Form KKT right-hand side
-            rhs = np.zeros((n + 1, 1))
-            rhs[:n] = f
-            KKT_sparse = csr_matrix(KKT)
-            solution = spsolve(KKT_sparse, rhs.flatten())
-            P = solution[:n]
-            P = P.reshape((self.resolution, self.resolution))
-        else:
-            A = np.concatenate((A, self.A_reg), axis=0)
-            f = np.concatenate((f, np.zeros((1, 1))), axis=0)
-            P, _, _, _ = scipy.linalg.lstsq(A, f)
-            P = P.reshape((self.resolution, self.resolution))
-        U1, U2 = self.compute_u(P, K, self.resolution, xv, dx)
-
-        return P, U1, U2
-
-    def solve(self, K: np.ndarray):
-        """solve the darcy flow problem"""
-        tic = time.time()
-        n_samples = K.shape[0]
-        results = Parallel(n_jobs=self.threads)(
-            delayed(self._solve)(K[i], i) for i in range(0, n_samples)
-        )
-        P, U1, U2 = zip(*results)
-        P = np.stack(P)  # high-fidelity pressure field
-        U1 = np.stack(U1)  # high-fidelity velocity field in x-direction
-        U2 = np.stack(U2)  # high-fidelity velocity field in y-direction
-        # data dict
-        data_dict = {
-            "pressure": P,
-            "velocity_x": U1,
-            "velocity_y": U2,
-        }
-        toc = time.time()
-        avg_time = (toc - tic) / n_samples
-        print(f"Total solve time for {n_samples} samples: {toc - tic: .2e} seconds")
-        print(f"Average solve time per sample: {avg_time: .2e} seconds")
-        return data_dict
+def seed_everything(seed: int = 42):
+    """seed everything"""
+    random.seed(seed)
+    np.random.seed(seed)
 
 
 class MultiFidelity:
@@ -417,12 +104,14 @@ class MultiFidelity:
         resolution_LF: int = 32,
         n_samples: int = 1,
         threads: int = 32,
+        plot: bool = False,
     ):
         self.ntheta_HF = ntheta_HF
         self.ntheta_LF = ntheta_LF
         self.resolution_HF = resolution_HF
         self.resolution_LF = resolution_LF
         self.n_samples = n_samples
+        self.plot = plot
 
         assert (
             self.ntheta_LF <= self.ntheta_HF
@@ -432,60 +121,141 @@ class MultiFidelity:
         ), "Low-fidelity resolution must be less than or equal to high-fidelity"
 
         # high-fidelity solver
-        self.solver_HF = Darcysolver(
-            resolution=self.resolution_HF, ntheta=self.ntheta_HF, threads=threads
+        self.solver_HF = Darcy(
+            resolution=self.resolution_HF,
+            ntheta=self.ntheta_HF,
+            threads=threads,
+            n_samples=self.n_samples,
         )
         # low-fidelity solver
-        self.solver_LF = Darcysolver(
-            resolution=self.resolution_LF, ntheta=self.ntheta_LF, threads=threads
+        self.solver_LF = Darcy(
+            resolution=self.resolution_LF,
+            ntheta=self.ntheta_LF,
+            threads=threads,
+            n_samples=self.n_samples,
         )
 
-    def _get_permeability_fields(self):
-        """get the permeability fields for HF and LF"""
-        # get the high-fidelity permeability fields
-        print("generating permeability fields for high-fidelity...")
-        permeability_HF_data = self.solver_HF._sample_permeability(self.n_samples)
-        K_HF = permeability_HF_data["permeability"]
-        # truncate for low-fidelity
-        print("generating permeability fields for low-fidelity...")
-        ev_LF = permeability_HF_data["eigenvalues"][: self.ntheta_LF]
-        U_LF = permeability_HF_data["eigenvectors"][:, : self.ntheta_LF]
-        theta_LF = permeability_HF_data["generative_params"][: self.ntheta_LF, :]
-        # construct low-fidelity permeability fields (B, resolution_HF, resolution_HF)
-        K_LF = self.solver_LF._construct_permeability_from_UL(ev_LF, U_LF, theta_LF)
-        # restric to the low-fidelity resolution (B, resolution_LF, resolution_LF)
-        K_LF_int = np.zeros((self.n_samples, self.resolution_LF, self.resolution_LF))
-        print("interpolating low-fidelity permeability fields to low-fidelity mesh...")
-        pbar = tqdm(range(self.n_samples), desc="LF permeability interpolation")
+        # compute low-fidelity permeability data
+        permeability_LF_data = self._create_low_fidelity_permeability_data()
+        # update low-fidelity permeability data
+        self.solver_LF._set_permeability_data(permeability_LF_data)
+
+    def _restrict_permeability(self, K):
+        pbar = tqdm(range(len(K)), desc="Restricting permeability")
+        mv = np.zeros((self.n_samples, self.resolution_LF, self.resolution_LF))
         for ii in pbar:
             interpolator = RegularGridInterpolator(
                 (self.solver_HF.xv, self.solver_HF.xv),
-                K_LF[ii],
+                K[ii],
                 method="linear",
             )
-            K_LF_int[ii] = interpolator(self.solver_LF.mesh.reshape(-1, 2)).reshape(
+            mv[ii] = interpolator(self.solver_LF.mesh.reshape(-1, 2)).reshape(
                 self.resolution_LF, self.resolution_LF
             )
-        pbar.close()
-        self._make_sample_comparison_plot(
-            K_LF, K_HF, field_name="permeability", n_samples=10
-        )
-        return K_HF, K_LF, K_LF_int
+        return mv
+
+    def _create_low_fidelity_permeability_data(self):
+        permeability_HF_data = self.solver_HF.permeability_data
+
+        ev_LF = permeability_HF_data["eigenvalues"][: self.ntheta_LF]
+        U_LF = permeability_HF_data["eigenvectors"][:, : self.ntheta_LF]
+        theta_LF = permeability_HF_data["generative_params"][: self.ntheta_LF, :]
+
+        # construct low-fidelity permeability fields (B, resolution_HF, resolution_HF)
+        K_LF = self.solver_LF._construct_permeability_from_UL(ev_LF, U_LF, theta_LF)
+        # restrict to the low-fidelity resolution (B, resolution_LF, resolution_LF)
+        K_LF_int = self._restrict_permeability(K_LF)
+
+        permeability_LF_data = {
+            "permeability": K_LF_int,
+            "generative_params": theta_LF,
+            "eigenvalues": ev_LF,
+            "eigenvectors": U_LF,
+        }
+
+        return permeability_LF_data
+
+    def simulate_model(self, model="HF"):
+        if model == "HF":
+            data_dict = self.solver_HF.solve()
+        elif model == "LF":
+            data_dict = self.solver_LF.solve()
+        else:
+            raise ValueError(f"Invalid model selected: {model}")
+        return data_dict
+
+    def _interpolate_solution(self, data_dict):
+        data_dict_mv = {}
+        for k, ov in data_dict.items():
+            mv = np.zeros((self.n_samples, self.resolution_HF, self.resolution_HF))
+
+            pbar = tqdm(range(len(ov)), desc=f"Interpolating {k}")
+            for ii in pbar:
+                interpolator = RegularGridInterpolator(
+                    (self.solver_LF.xv, self.solver_LF.xv),
+                    ov[ii],
+                    method="linear",
+                )
+                mv[ii] = interpolator(self.solver_HF.mesh.reshape(-1, 2)).reshape(
+                    self.resolution_HF, self.resolution_HF
+                )
+
+            data_dict_mv[k] = mv
+            assert mv.shape == (self.n_samples, self.resolution_HF, self.resolution_HF)
+
+        return data_dict_mv
+
+    def _make_marginal_plot(self, dict_HF, dict_LF, percentage_plot: int = 0.5):
+        """marginal density plot"""
+        n_plot = max(1, int(self.n_samples * percentage_plot))
+        print(f"Making marginal distribution using {n_plot}/{self.n_samples} samples")
+        fig, axs = plt.subplots(1, 3, figsize=(8, 2), layout="compressed")
+        # permeability
+        flat_K_LF = dict_LF["permeability"][:n_plot].flatten()
+        flat_K_HF = dict_HF["permeability"][:n_plot].flatten()
+        flat_K_res = flat_K_HF - flat_K_LF
+        # pressure
+        flat_P_LF = dict_LF["pressure"][:n_plot].flatten()
+        flat_P_HF = dict_HF["pressure"][:n_plot].flatten()
+        flat_P_res = flat_P_HF - flat_P_LF
+
+        axs[0].hist(flat_K_LF, density=True, bins=100, label=r"Low-fidelity")
+        axs[0].hist(flat_K_HF, density=True, bins=100, label=r"Low-fidelity")
+        axs[0].set_title(r"Permeability, $K$")
+
+        axs[1].hist(flat_P_LF, density=True, bins=100, label=r"Low-fidelity")
+        axs[1].hist(flat_P_HF, density=True, bins=100, label=r"Low-fidelity")
+        axs[1].set_title(r"Pressure, $P$")
+
+        axs[2].hist(flat_K_res, density=True, bins=100, label=r"Permeability")
+        axs[2].hist(flat_P_res, density=True, bins=100, label=r"Pressure")
+        axs[2].set_title(r"Residual")
+
+        for ax in axs:
+            ax.legend()
+
+        plt.savefig("data_marginal.png")
 
     def _make_joint_plot(
-        self, data_dict_HF: dict, data_dict_LF: dict, random_index: bool = False
+        self,
+        samples_X,
+        samples_Y,
+        xlabel=r"Low-fidelity",
+        ylabel=r"High-fidelity",
+        percentage_plot: int = 0.5,
+        file_identifier: str = "LF_HF",
     ):
-        if random_index:
-            sample_index = np.random.randint(0, self.n_samples)
-        else:
-            sample_index = 0
-        print(f"Making joint plot for sample index {sample_index}")
-
-        # extract fields
-        K_HF = data_dict_HF["permeability"][sample_index].flatten()
-        P_HF = data_dict_HF["pressure"][sample_index].flatten()
-        K_LF = data_dict_LF["permeability"][sample_index].flatten()
-        P_LF = data_dict_LF["pressure"][sample_index].flatten()
+        n_plot = max(1, int(len(samples_X) * percentage_plot))
+        assert (
+            n_plot <= 20
+        ), "For making joint distribution plots tractably, reduce the percentation plot"
+        print(
+            f"Making {xlabel} vs. {ylabel} joint distribution using "
+            f"{n_plot}/{len(samples_X)} samples"
+        )
+        # extract field
+        flat_X = samples_X[:n_plot].flatten()
+        flat_Y = samples_Y[:n_plot].flatten()
 
         def _plot(x, y, ax):
             assert (
@@ -495,7 +265,7 @@ class MultiFidelity:
 
             # Create scatter plot with KDE coloring
             xy = np.vstack([x, y])
-            xy = xy + 1e-6 * np.random.randn(*xy.shape)
+            xy = xy + 1e-6 * np.random.randn(*xy.shape)  # add jitter
             z = gaussian_kde(xy)(xy)
 
             # Sort points by density for better visualization
@@ -528,28 +298,57 @@ class MultiFidelity:
 
             return ax
 
-        fig, axs = plt.subplots(1, 2, figsize=(8, 4), dpi=300, layout="compressed")
-        _plot(K_LF, K_HF, axs[0])
-        axs[0].set_title(r"Permeability, $K$")
-        _plot(P_LF, P_HF, axs[1])
-        axs[1].set_title(r"Pressure, $P$")
+        fig, axs = plt.subplots(1, 1, figsize=(8, 4), dpi=300, layout="compressed")
+        _plot(flat_X, flat_Y, axs)
+        axs.set_xlabel(xlabel)
+        axs.set_ylabel(ylabel)
 
-        for ii, ax in enumerate(axs):
-            ax.set_xlabel(r"Low-fidelity")
-            if ii == 0:
-                ax.set_ylabel(r"High-fidelity")
-
-        plt.savefig("joint_plot.png", dpi=300)
+        plt.savefig(file_identifier + "_joint_plot.png", dpi=300)
         plt.close()
 
+    def _comp_average_pearson(
+        self, samples_X, samples_Y, xlabel=r"Low-fidelity", ylabel=r"High-fidelity"
+    ):
+        def _comp_pearson(x: np.ndarray, y: np.ndarray):
+            assert x.shape == y.shape, "x and y must have the same shape"
+            assert isinstance(x, np.ndarray)
+            assert isinstance(y, np.ndarray)
+            r, _ = pearsonr(x, y)
+            return r
+
+        r_list = []
+        for ii in range(self.n_samples):
+            flat_X = samples_X[ii].flatten()
+            flat_Y = samples_Y[ii].flatten()
+            if flat_X.std() < 1e-6 or flat_Y.std() < 1e-6:
+                raise RuntimeError("No variation found in the solution field.")
+            r_list.append(
+                _comp_pearson(
+                    flat_X,
+                    flat_Y,
+                )
+            )
+        assert len(r_list) == self.n_samples, "Number of samples mismatch"
+
+        r_array = np.array(r_list)
+        mean_r = np.mean(r_array)
+        std_r = np.std(r_array)
+        min_r = r_array.min()
+        max_r = r_array.max()
+        print(
+            f"{self.n_samples} sample average {xlabel} vs. {ylabel} "
+            f"Pearson correlation coefficient : {mean_r: .4f}  +/- {std_r: .4f} |"
+            f" Min: {min_r: .4f} Max: {max_r: .4f}"
+        )
+
     def _make_sample_comparison_plot(
-        self, samples_LF, samples_HF, field_name: str, n_samples=10
+        self, samples_LF, samples_HF, n_samples, file_identifier
     ):
         assert (
             samples_LF.shape == samples_HF.shape
         ), "LF and HF samples must have the same shape"
         assert len(samples_LF) >= n_samples, "Not enough samples to plot"
-        # plot testing
+
         fig, axs = plt.subplots(
             n_samples,
             3,
@@ -562,11 +361,13 @@ class MultiFidelity:
         axs_lf = axs[:, 0]
         axs_hf = axs[:, 1]
         axs_diff = axs[:, 2]
-        vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
-        vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
+        # vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
+        # vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
         for ii in range(n_samples):
-            # vmin = min(samples_LF[ii].min(), samples_HF[ii].min())
-            # vmax = max(samples_LF[ii].max(), samples_HF[ii].max())
+
+            vmin = min(samples_LF[ii].min(), samples_HF[ii].min())
+            vmax = max(samples_LF[ii].max(), samples_HF[ii].max())
+
             im_field = axs_lf[ii].imshow(
                 samples_LF[ii],
                 origin="lower",
@@ -582,6 +383,7 @@ class MultiFidelity:
                 interpolation="bicubic",
             )
             im_diff = axs_diff[ii].imshow(
+                # samples_HF[ii] - samples_LF[ii],
                 np.abs(samples_HF[ii] - samples_LF[ii]),
                 origin="lower",
                 interpolation="bicubic",
@@ -603,288 +405,137 @@ class MultiFidelity:
         for ax in axs.flatten():
             ax.set_xticks([])
             ax.set_yticks([])
-            ax.set_xlabel(r"$x_{1}$")
-            ax.set_ylabel(r"$x_{2}$")
+            ax.set_xlabel(r"$x_1$")
+            ax.set_ylabel(r"$x_2$")
             ax.label_outer()
-        plt.savefig(f"{field_name}_sample_comparison.png", dpi=300)
+        plt.savefig(file_identifier + "_data_snapshot.png", dpi=300)
 
-    def _make_field_plot(
-        self, data_dict_HF: dict, data_dict_LF: dict, random_index: bool = False
-    ):
-        if random_index:
-            sample_index = np.random.randint(0, self.n_samples)
-        else:
-            sample_index = 0
-        print(f"Making field plot for sample index {sample_index}")
-
-        # extract fields
-        K_HF = data_dict_HF["permeability"][sample_index]
-        P_HF = data_dict_HF["pressure"][sample_index]
-        K_LF = data_dict_LF["permeability"][sample_index]
-        P_LF = data_dict_LF["pressure"][sample_index]
-        assert (
-            K_HF.shape == K_LF.shape
-        ), "HF and LF permeability fields must have the same shape for plotting"
-        assert (
-            P_HF.shape == P_LF.shape
-        ), "HF and LF pressure fields must have the same shape for plotting"
-        # plot
-        fig, axs = plt.subplots(
-            2,
-            3,
-            figsize=(12, 6),
-            dpi=300,
-            layout="compressed",
-            sharex=True,
-            sharey=True,
-        )
-        # permeability plot
-        vmin_K = min(K_LF.min(), K_HF.min())
-        vmax_K = max(K_LF.max(), K_HF.max())
-        im_K = axs[0, 0].imshow(
-            K_LF,
-            aspect="equal",
-            interpolation="bicubic",
-            vmin=vmin_K,
-            vmax=vmax_K,
-            origin="lower",
-        )
-        axs[0, 1].imshow(
-            K_HF,
-            aspect="equal",
-            interpolation="bicubic",
-            vmin=vmin_K,
-            vmax=vmax_K,
-            origin="lower",
-        )
-        axs[0, 0].set_title(r"Low-fidelity")
-        axs[0, 1].set_title(r"High-fidelity")
-        cbar_K = fig.colorbar(
-            im_K,
-            ax=axs[0, 1],
-            orientation="vertical",
-            fraction=0.046,
-            pad=0.1,
-        )
-        cbar_K.set_label(r"Permeability, $K$", labelpad=15)
-        cbar_K.ax.yaxis.set_label_coords(6.5, 0.5)
-        # permeability difference plot
-        im_Kd = axs[0, 2].imshow(
-            np.abs(K_HF - K_LF),
-            # aspect="equal",
-            interpolation="bicubic",
-            origin="lower",
-        )
-        axs[0, 2].set_title(r"Absolute error")
-        fig.colorbar(
-            im_Kd, ax=axs[0, 2], orientation="vertical", fraction=0.046, pad=0.1
-        )
-        # pressure plot
-        vmin_P = min(P_LF.min(), P_HF.min())
-        vmax_P = max(P_LF.max(), P_HF.max())
-        im_p = axs[1, 0].imshow(
-            P_LF,
-            aspect="equal",
-            interpolation="bicubic",
-            vmin=vmin_P,
-            vmax=vmax_P,
-            origin="lower",
-        )
-        axs[1, 1].imshow(
-            P_HF,
-            aspect="equal",
-            interpolation="bicubic",
-            vmin=vmin_P,
-            vmax=vmax_P,
-            origin="lower",
-        )
-        cbar_P = fig.colorbar(
-            im_p,
-            ax=axs[1, 1],
-            orientation="vertical",
-            fraction=0.046,
-            pad=0.1,
-        )
-        cbar_P.set_label(r"Pressure, $P$", labelpad=15)
-        cbar_P.ax.yaxis.set_label_coords(6.5, 0.5)
-        # pressure difference plot
-        im_Pd = axs[1, 2].imshow(
-            np.abs(P_HF - P_LF),
-            # aspect="equal",
-            interpolation="bicubic",
-            origin="lower",
-        )
-        fig.colorbar(
-            im_Pd, ax=axs[1, 2], orientation="vertical", fraction=0.046, pad=0.1
-        )
-
-        for ax in axs.flat:
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_xlabel(r"$x_{1}$")
-            ax.set_ylabel(r"$x_{2}$")
-            ax.label_outer()
-        fig.align_labels()
-        fig.set_constrained_layout_pads(
-            w_pad=0.001, h_pad=0.001, hspace=0.02, wspace=0.02
-        )
-        plt.savefig("data_snapshot.png", dpi=300)
-        plt.close()
-
-    def _comp_average_pearson(self, data_dict_HF: dict, data_dict_LF: dict):
-        """compute the average pearson correlation coefficient"""
-
-        def _comp_pearson(x: np.ndarray, y: np.ndarray):
-            assert x.shape == y.shape, "x and y must have the same shape"
-            r, _ = pearsonr(x, y)
-            return r
-
-        r_permeability_list = []
-        r_pressure_list = []
-        for ii in range(self.n_samples):
-            # permeability
-            K_HF = data_dict_HF["permeability"][ii].flatten()
-            K_LF = data_dict_LF["permeability"][ii].flatten()
-            r_permeability_list.append(
-                _comp_pearson(
-                    K_HF,
-                    K_LF,
-                )
+    def _compare(self, dict_HF: dict, dict_LF: dict):
+        if self.plot:
+            # make sample comparison
+            self._make_sample_comparison_plot(
+                samples_LF=dict_LF["permeability"],
+                samples_HF=dict_HF["permeability"],
+                n_samples=5,
+                file_identifier="Permeability",
             )
-            # pressure
-            P_HF = data_dict_HF["pressure"][ii].flatten()
-            P_LF = data_dict_LF["pressure"][ii].flatten()
-            r_pressure_list.append(
-                _comp_pearson(
-                    P_HF,
-                    P_LF,
-                )
+            self._make_sample_comparison_plot(
+                samples_LF=dict_LF["pressure"],
+                samples_HF=dict_HF["pressure"],
+                n_samples=5,
+                file_identifier="Pressure",
             )
-        assert (
-            len(r_permeability_list) == len(r_pressure_list) == self.n_samples
-        ), "Number of samples mismatch"
+            # make marginals
+            self._make_marginal_plot(
+                dict_HF=dict_HF, dict_LF=dict_LF, percentage_plot=0.1
+            )
+            # make joint plot(s)
+            self._make_joint_plot(
+                samples_X=dict_LF["permeability"],
+                samples_Y=dict_HF["permeability"],
+                xlabel=r"Low-fidelity",
+                ylabel=r"High-fidelity",
+                percentage_plot=0.001,
+                file_identifier="LF_HF_Permeability",
+            )
+            self._make_joint_plot(
+                samples_X=dict_LF["pressure"],
+                samples_Y=dict_HF["pressure"],
+                xlabel=r"Low-fidelity",
+                ylabel=r"High-fidelity",
+                percentage_plot=0.001,
+                file_identifier="LF_HF_Pressure",
+            )
 
-        mean_r_permeability = np.mean(np.array(r_permeability_list))
-        mean_r_pressure = np.mean(np.array(r_pressure_list))
+            self._make_joint_plot(
+                samples_X=dict_LF["permeability"],
+                samples_Y=dict_HF["permeability"] - dict_LF["permeability"],
+                xlabel=r"Low-fidelity",
+                ylabel=r"Residual",
+                percentage_plot=0.001,
+                file_identifier="Residual_Permeability",
+            )
 
-        std_r_permeability = np.std(np.array(r_permeability_list))
-        std_r_pressure = np.std(np.array(r_pressure_list))
+            self._make_joint_plot(
+                samples_X=dict_LF["pressure"],
+                samples_Y=dict_HF["pressure"] - dict_LF["pressure"],
+                xlabel=r"Low-fidelity",
+                ylabel=r"Residual",
+                percentage_plot=0.001,
+                file_identifier="Residual_Pressure",
+            )
 
-        print(
-            f"{self.n_samples} sample average Pearson correlation coefficient for "
-            f"permeability: {mean_r_permeability: .4f} with {std_r_permeability: .4f} "
-            "standard deviation"
+        # compare averate pearson for LF-Residual
+        self._comp_average_pearson(
+            samples_X=dict_LF["pressure"],
+            samples_Y=dict_HF["pressure"] - dict_LF["pressure"],
+            xlabel=r"Low-fidelity",
+            ylabel=r"Residual",
         )
-        print(
-            f"{self.n_samples} sample average Pearson correlation coefficient for "
-            f"pressure: {mean_r_pressure: .4f} with {std_r_pressure: .4f} "
-            "standard deviation"
+
+        self._comp_average_pearson(
+            samples_X=dict_LF["pressure"],
+            samples_Y=dict_HF["pressure"],
+            xlabel=r"Low-fidelity",
+            ylabel=r"High-fidelity",
         )
+
+    def _prep_and_save(self, dict_LF: dict, dict_HF: dict):
+        # convert to tensors and reshape
+        for k, v in dict_LF.items():
+            dict_LF[k] = torch.Tensor(dict_LF[k]).unsqueeze(1)
+
+        for k, v in dict_HF.items():
+            dict_HF[k] = torch.Tensor(dict_HF[k]).unsqueeze(1)
+
+        domain = torch.Tensor(self.solver_HF.mesh)
+
+        high_data = {
+            "field": dict_HF["pressure"],
+            "condition": dict_HF["permeability"],
+            "field_domain": domain,
+            "condition_domain": domain,
+        }
+
+        low_data = {
+            "field": dict_LF["pressure"],
+            "condition": dict_LF["permeability"],
+            "field_domain": domain,
+            "condition_domain": domain,
+        }
+
+        # save
+        torch.save(high_data, "high_fidelity.pt")
+        torch.save(low_data, "low_fidelity.pt")
+
+        print("saved high fidelity data to high_fidelity.pt")
+        print("saved low fidelity data to low_fidelity.pt")
 
     def simulate(self):
         """simulate multi-fidelity data"""
-        # get the permeability fields
-        K_HF, K_LF, K_LF_int = self._get_permeability_fields()
-        # solve high-fidelity darcy flow
-        print("solving high-fidelity darcy flow...")
-        data_dict_HF = self.solver_HF.solve(K_HF)
-        data_dict_HF["permeability"] = K_HF
-        # solve low-fidelity darcy flow
-        print("solving low-fidelity darcy flow...")
-        data_dict_LF = self.solver_LF.solve(K_LF_int)
-        data_dict_LF["permeability"] = (
-            K_LF  # original LF permeability before interpolation
+        # solve high-fidelity
+        data_dict_HF = self.simulate_model(model="HF")
+        # solve low-fidelity
+        data_dict_LF = self.simulate_model(model="LF")
+        # interpolate
+        data_dict_LF_inter = self._interpolate_solution(data_dict_LF)
+        # compare
+        self._compare(
+            dict_HF=data_dict_HF,
+            dict_LF=data_dict_LF_inter,
         )
-        # interpolate the LF solution and update the dictionary
-        P_LF_int = []
-        pbar = tqdm(range(self.n_samples), desc="LF pressure interpolation")
-        for ii in pbar:
-            # intepolate pressure
-            interpolator = RegularGridInterpolator(
-                (self.solver_LF.xv, self.solver_LF.xv),
-                data_dict_LF["pressure"][ii],
-                method="linear",
-            )
-            P_LF_int.append(
-                interpolator(self.solver_HF.mesh.reshape(-1, 2)).reshape(
-                    self.resolution_HF, self.resolution_HF
-                )
-            )
-        pbar.close()
-        P_LF_int = np.stack(P_LF_int)
-        data_dict_LF["pressure"] = P_LF_int
-
-        # compare pressure plots
-        self._make_sample_comparison_plot(
-            data_dict_LF["pressure"],
-            data_dict_HF["pressure"],
-            field_name="pressure",
-            n_samples=10,
+        # prep and save
+        self._prep_and_save(
+            dict_LF=data_dict_LF,
+            dict_HF=data_dict_HF,
         )
-
-        # check blow-up
-        check_blowup(data_dict_HF["pressure"], "High-fidelity pressure field")
-        check_blowup(data_dict_LF["pressure"], "Low-fidelity pressure field")
-        check_blowup(data_dict_HF["permeability"], "High-fidelity permeability field")
-        check_blowup(data_dict_LF["permeability"], "Low-fidelity permeability field")
-
-        # check size
-        assert (
-            data_dict_HF["pressure"].shape == data_dict_LF["pressure"].shape
-        ), "HF and LF pressure fields must have the same shape after interpolation"
-        assert (
-            data_dict_HF["permeability"].shape == data_dict_LF["permeability"].shape
-        ), "HF and LF permeability fields must have the same shape after interpolation"
-        assert (
-            len(data_dict_HF["pressure"]) == self.n_samples
-        ), "Number of HF pressure samples mismatch"
-        assert (
-            len(data_dict_LF["pressure"]) == self.n_samples
-        ), "Number of LF pressure samples mismatch"
-        assert (
-            len(data_dict_HF["permeability"]) == self.n_samples
-        ), "Number of HF permeability samples mismatch"
-        assert (
-            len(data_dict_LF["permeability"]) == self.n_samples
-        ), "Number of LF permeability samples mismatch"
-
-        # make field plot
-        self._make_field_plot(data_dict_HF, data_dict_LF, random_index=False)
-        # make joint plot
-        self._make_joint_plot(data_dict_HF, data_dict_LF, random_index=False)
-        # compute average pearson correlation coefficient
-        self._comp_average_pearson(data_dict_HF, data_dict_LF)
-        # reshape data for saving
-        high_data = {
-            "field": np.expand_dims(
-                data_dict_HF["pressure"], 1
-            ),  # (B, channel_f, *dim_f)
-            "condition": np.log(
-                np.expand_dims(data_dict_HF["permeability"], 1)
-            ),  # (B, channel_c, *dim_c)
-            "field_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
-            "condition_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
-        }
-        low_data = {
-            "field": np.expand_dims(
-                data_dict_LF["pressure"], 1
-            ),  # (B, channel_f, *dim_f)
-            "condition": np.log(
-                np.expand_dims(data_dict_LF["permeability"], 1)
-            ),  # (B, channel_c, *dim_c)
-            "field_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
-            "condition_domain": self.solver_HF.mesh,  # flattened mesh (num_points, dim)
-        }
-        # save
-        np.savez("high_fidelity.npz", **high_data)
-        np.savez("low_fidelity.npz", **low_data)
-        print("Data saved to high_fidelity.npz and low_fidelity.npz")
-        print("Simulation complete.")
 
 
 if __name__ == "__main__":
+    # seed
+    seed_everything()
+    # args
     args = parse_args()
-    set_seed()
     mf = MultiFidelity(
         ntheta_HF=args.ntheta_HF,
         ntheta_LF=args.ntheta_LF,
@@ -892,5 +543,6 @@ if __name__ == "__main__":
         resolution_LF=args.resolution_LF,
         n_samples=args.n_samples,
         threads=args.threads,
+        plot=args.plot,
     )
     mf.simulate()

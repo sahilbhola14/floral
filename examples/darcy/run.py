@@ -1,4 +1,4 @@
-# examples/darcy/run_floral.py
+# examples/darcy/run.py
 """
 Flow-matching operator for residual-augmented learning for Darcy flow.
 Notes:
@@ -19,23 +19,25 @@ from floral.utils import (
     build_trainer,
 )
 from floral.flow import perform_inference, Flow
-from lightning import seed_everything
 
 parser = argparse.ArgumentParser(description="Run darcy with specified parameters.")
 parser.add_argument(
     "--config",
     type=str,
-    default="config_floral.yml",
+    default="config.yml",
     help="Path to the configuration file.",
 )
 
+parser.add_argument(
+    "--hp_config",
+    type=str,
+    default="hp_config.yml",
+    help="Path to the configuration file.",
+)
+
+
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
-
-torch.set_float32_matmul_precision("high")  # for tensor cores
-seed_everything(42, workers=True)
-torch.backends.cuda.matmul.allow_tf32 = False  # operator stability
-torch.backends.cudnn.allow_tf32 = False  # operator stability
 
 
 def print_header(config: dict):
@@ -46,6 +48,7 @@ def print_header(config: dict):
     print_section("darcy config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
+    printer(f"Hyperparameter Configuration file: {args.hp_config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Number of samples: {config.data.n_samples}")
@@ -114,14 +117,14 @@ if __name__ == "__main__":
     # if tune hyperparameters is True, load the hyperparameter config
     if config.tune_hyperparameters:
         # load the hyperparameter config from a yaml file
-        with open("config_sweep.yml", "r") as file:
+        with open("sweep_config.yml", "r") as file:
             hp_config = yaml.safe_load(file)
         # initialize agent
         sweep_id = wandb.sweep(hp_config)
         wandb.agent(sweep_id, function=train_model, count=100)
     else:
         # load the hyperparameter config
-        with open("config_hyperparameters.yml", "r") as file:
+        with open(args.hp_config, "r") as file:
             hp_config = yaml.safe_load(file)
         # get the best model path (training or evaluation)
         if config.train.stage == "train":

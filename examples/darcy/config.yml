@@ -2,7 +2,7 @@
 
 # general configuration
 job_name: "darcy" # Unique identifier for each run
-floral: True # True means residual operator is learned
+floral: False # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/darcy/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
@@ -40,7 +40,7 @@ dataloader:
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
   accelerator: 'gpu'
-  devices: 8
+  devices: 1
   precision: '32-true'
 
 # configuration for flow-matching
