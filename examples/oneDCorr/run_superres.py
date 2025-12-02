@@ -241,6 +241,27 @@ class Flow(nn.Module):
         return loss
 
 
+class Monitor:
+    def __init__(self, gamma: float = 0.99):
+        self.gamma = gamma
+        self._reset()
+
+    def _reset(self):
+        self.current_val = None
+        self.current_avg_val = None
+
+    def update(self, val):
+
+        if self.current_avg_val is None:
+            self.current_avg_val = val
+        else:
+            self.current_avg_val = (
+                self.gamma * self.current_val + (1.0 - self.gamma) * val
+            )
+
+        self.current_val = val
+
+
 def train(
     flow,
     train_loader,
