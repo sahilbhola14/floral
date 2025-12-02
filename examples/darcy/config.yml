@@ -10,13 +10,13 @@ logger_name: "darcy" # Logger folder
 
 # configuration for data
 data:
-  n_samples: 11000 # total samples for training + validation (for tractability)
+  n_samples: 6000 # total samples for training + validation (for tractability)
   n_train: 5000
   n_val: 1000
   LF: # low fidelity
-    path: "./low_fidelity.npz"
+    path: "./low_fidelity.pt"
   HF: # high fidelity
-    path: "./high_fidelity.npz"
+    path: "./high_fidelity.pt"
 
 # configuration for dataloader
 dataloader:
@@ -35,6 +35,12 @@ dataloader:
       auto: True # If True, mean and std are computed.
       mean: [2.0] # For example, [0.5] if want specified (per channel)
       std: [3.5] # For example, [0.5] if want specified (per channel)
+    LF_field:
+      enabled: True # True: normalize the field
+      auto: True # If True, mean and std are computed.
+      mean: [0.1] # For example, [0.5] if want specified (per channel)
+      std: [0.5] # For example, [0.5] if want specified (per channel)
+
 
 # configuration for training
 train:
@@ -45,7 +51,7 @@ train:
 
 # configuration for flow-matching
 flow:
-  sig_min: 1.0e-5 # gaussian std for the data
+  sig_min: 1.0e-6 # gaussian std for the data
   operator:
     method: FiLMFNO
     # operator parameters
@@ -54,17 +60,18 @@ flow:
       lifting_channel_ratio: 4
       projection_channel_ratio: 4
       n_layers: 4
-      modes: 32
+      modes: 64
   prior:
     # prior GP measure parameters
     lengthscale: 1.0e-3
     outputscale: 1.0
+    confidence: 0.6
 
 # configuration for PDE solution generation
 generate:
   minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
-  n_gen: 100 # number of samples generated (for UQ purposes)
-  nT: 50 # number of time steps for integration
+  n_gen: 50 # number of samples generated (for UQ purposes)
+  nT: 2 # number of time steps for integration
   method: "dopri5" # method for ODE solver
   atol: 1.0e-5 # absolute tolerance for ODE solver
   rtol: 1.0e-5 # relative tolerance for ODE solver
