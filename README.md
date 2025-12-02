@@ -19,8 +19,8 @@ FLORAL is a novel method for learning neural operators by combining **flow match
 ## 📦 Installation
 
 ```bash
-git clone git@github.com:sahilbhola14/mfFlow.git
-cd mfFlow
+git clone git@github.com:sahilbhola14/floral.git
+cd floral
 conda env create -f environment.yml
 conda activate floral
 ./build.sh

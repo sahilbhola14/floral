@@ -1,192 +1,150 @@
-# scripts/Darcy/plot.py
+# scripts/darcy/plot.py
 """
-Plot HF mean removed 2D fields.
-TODO:
-    - Remove HF mean from the plots.
+Darcy flow plots
 """
+import os.path as osp
+import pandas as pd
 import torch
-import math
 import matplotlib.pyplot as plt
+from floral.utils import twoDPlot, ParetoPlot, ErrorSummary, BaseResidual
+
+# Begin user input
+n_train_samples_list = [500, 1000, 5000]
+n_val_samples = 1000
+results_folder = "./results_data"
+# End user input
 
 plt.style.use("../journal.mplstyle")
 
-# Begin user input
-n_samples = 1000
-n_sensors = 50
-# plot_idx = 2  # Select sample index (found automatically)
-plot_error = True  # Whether to plot error or not
-# End user input
+
+def combine_path(paths: list):
+    return osp.join(*paths)
 
 
-def find_best_idx(true, prediction):
-    """
-    Find the index with smallest error between true and predicted values.
-    """
-    assert (
-        true.shape == prediction.shape
-    ), "True and prediction must have the same shape."
-    error = (true - prediction).abs().mean(dim=1)
-    return error.argmin().item()
-
-
-print(f"Plotting fields for {n_samples} samples and {n_sensors} sensors...")
-
-# Load data
-data = torch.load(f"Darcy_{n_samples}_samples_{n_sensors}_sensors_results.pt")
-data_mfFlow = torch.load(
-    f"Darcy_{n_samples}_samples_{n_sensors}_sensors_results_mfFlow.pt"
-)
-data_gp = torch.load(f"Darcy_{n_samples}_samples_{n_sensors}_sensors_GP_results.pt")
-data_gp_mfFlow = torch.load(
-    f"Darcy_{n_samples}_samples_{n_sensors}_sensors_GP_results_mfFlow.pt"
-)
-
-field = data["field"]
-field_mfFlow = data_mfFlow["field"]
-field_gp = data_gp["field"]
-field_gp_mfFlow = data_gp_mfFlow["field"]
-
-domain = data_mfFlow["domain"].ravel()
-
-# Find the best idx
-plot_idx = find_best_idx(
-    true=field.get("HF_field"), prediction=field_mfFlow.get("Prediction").mean(1)
-)
-
-# Extract relevant data
-LF_field = field_gp.get("LF_field")[plot_idx]
-HF_field = field_gp.get("HF_field")[plot_idx]
-
-Prediction_flora = field.get("Prediction")[plot_idx]
-mean_flora = Prediction_flora.mean(dim=0)
-std_flora = Prediction_flora.std(dim=0)
-
-Prediction_floren = field_mfFlow.get("Prediction")[plot_idx]
-mean_floren = Prediction_floren.mean(dim=0)
-std_floren = Prediction_floren.std(dim=0)
-
-Prediction_gp = field_gp.get("Prediction")
-mean_gp = Prediction_gp["mean"][plot_idx]
-std_gp = Prediction_gp["std"][plot_idx]
-
-Prediction_regp = field_gp_mfFlow.get("Prediction")
-mean_regp = Prediction_regp["mean"][plot_idx]
-std_regp = Prediction_regp["std"][plot_idx]
-
-image_dim = int(math.sqrt(mean_regp.shape[-1]))
-assert image_dim * image_dim == mean_regp.shape[-1]
-
-
-# Ordered list of methods
-method_order = ["FLORA", "FLOREN", "GP", "REGP"]
-
-# container fo results
-means = {
-    "FLORA": mean_flora,
-    "FLOREN": mean_floren,
-    "GP": mean_gp,
-    "REGP": mean_regp,
-}
-
-stds = {
-    "FLORA": std_flora,
-    "FLOREN": std_floren,
-    "GP": std_gp,
-    "REGP": std_regp,
-}
-
-# plots
-# range of values for mean and std
-mean_vmin, mean_vmax = float("inf"), float("-inf")
-std_vmin, std_vmax = float("inf"), float("-inf")
-for ii, method in enumerate(method_order):
-    if plot_error:
-        mean_vmin = min(mean_vmin, (HF_field - means[method]).min())
-        mean_vmax = max(mean_vmax, (HF_field - means[method]).max())
-        # mean_vmin, mean_vmax = (
-        #     -0.1,
-        #     0.1,
-        # )  # manually set for error plots to visualization
-        std_vmin = min(std_vmin, stds[method].log10().min())
-        std_vmax = max(std_vmax, stds[method].log10().max())
-    else:
-        mean_vmin = min(mean_vmin, means[method].min())
-        mean_vmax = max(mean_vmax, means[method].max())
-        std_vmin = min(std_vmin, stds[method].log10().min())
-        std_vmax = max(std_vmax, stds[method].log10().max())
-
-fig, axs = plt.subplots(
-    1, 2, figsize=(10, 5), dpi=300, constrained_layout=True, sharex=True, sharey=True
-)
-axs[0].imshow(
-    HF_field.view(image_dim, image_dim),
-    origin="lower",
-    vmin=mean_vmin,
-    vmax=mean_vmax,
-    interpolation="bilinear",
-)
-axs[0].set_title("High-fidelity")
-axs[1].imshow(
-    LF_field.view(image_dim, image_dim),
-    origin="lower",
-    vmin=mean_vmin,
-    vmax=mean_vmax,
-    interpolation="bilinear",
-)
-axs[1].set_title("Low-fidelity")
-plt.savefig("Darcy_HF_LF_fields.png")
-
-fig, axs = plt.subplots(
-    2, 4, figsize=(12, 5), sharey=True, sharex=True, constrained_layout=True, dpi=300
-)
-
-for ii, method in enumerate(method_order):
-    # plot mean
-    plot_mean = (
-        (HF_field - means[method]).view(image_dim, image_dim)
-        if plot_error
-        else means[method].view(image_dim, image_dim)
+def load_data(n_train_samples):
+    nt = n_train_samples
+    nv = n_val_samples
+    file_flora = f"darcy_n_train_{nt}_n_val_{nv}_results_flora.pt"
+    file_floral = f"darcy_n_train_{nt}_n_val_{nv}_results_floral.pt"
+    print("flora file: ", file_flora)
+    print("floral file: ", file_floral)
+    print("n_train_samples: ", n_train_samples)
+    print("n_val_samples: ", n_val_samples)
+    data_flora = torch.load(
+        combine_path([results_folder, file_flora]), weights_only=False
     )
-    ax_mean = axs[0, ii].imshow(
-        plot_mean,
-        extent=(0, 1, 0, 1),
-        origin="lower",
-        aspect="equal",
-        vmin=mean_vmin,
-        vmax=mean_vmax,
-        interpolation="bilinear",
+    data_floral = torch.load(
+        combine_path([results_folder, file_floral]), weights_only=False
     )
-    # plot std
-    plot_std = stds[method].view(image_dim, image_dim).log10()
-    ax_std = axs[1, ii].imshow(
-        plot_std,
-        extent=(0, 1, 0, 1),
-        origin="lower",
-        aspect="equal",
-        vmin=std_vmin,
-        vmax=std_vmax,
-        interpolation="bilinear",
+    print(
+        "Number of samples for UQ (Flora): "
+        f"{data_flora['HF_field_prediction_plot'].shape[1]}"
     )
-    # set titles
-    axs[0, ii].set_title(method)
+    print(
+        "Number of samples for UQ (Floral): "
+        f"{data_floral['HF_field_prediction_plot'].shape[1]}"
+    )
+    print("--" * 10)
 
-# Add colorbar for row 0 (mean)
-cbar_ax_mean = fig.add_axes([1, 0.56, 0.015, 0.34])  # [left, bottom, width, height]
-cbar_mean = fig.colorbar(ax_mean, cax=cbar_ax_mean)
-cbar_mean.set_label(r"$P(K) - \hat{P}(K)$") if plot_error else cbar_mean.set_label(
-    r"$\hat{P}(K)$"
-)
+    return data_flora, data_floral
 
-# Add colorbar for row 1 (std)
-cbar_ax_std = fig.add_axes([1, 0.11, 0.015, 0.34])  # adjust to match lower row
-cbar_std = fig.colorbar(ax_std, cax=cbar_ax_std)
-cbar_std.set_label(r"$\log_{10}(\sigma)$")
 
-for ii, ax in enumerate(axs.flatten()):
-    # plot outer labels
-    ax.set_xlabel(r"$x$")
-    ax.set_ylabel(r"$y$")
-    ax.label_outer()
+class ResidualDarcy(BaseResidual):
+    def __init__(self, data_flora, data_floral):
+        super(ResidualDarcy, self).__init__(
+            data_flora=data_flora, data_floral=data_floral
+        )
+        raise NotImplementedError("Darcy residual not currently implemented")
+        # # condition
+        # self.condition = self.full_condition[
+        #     :, 0
+        # ]  # for onedcorr, only the first channel is the condition
 
-plt.savefig("Darcy_comparison.png")
-plt.close()
+    # def comp_residual(self, prediction, condition, domain):
+    # """compute the residual for the darcy equation
+    # prediciton: (batch_size, Nt, Nx)
+    # """
+    # # Unpack space / time grids
+    # x = domain[0][0]  # (Nx,)
+    # t = domain[1][:, 0]  # (Nt,)
+
+    # dx = x[1] - x[0]
+    # dt = t[1] - t[0]
+
+    # # dudt (forward difference + backward difference)
+    # dudt = torch.zeros_like(prediction)
+    # dudt[:, :-1, :] = (prediction[:, 1:, :] - prediction[:, :-1, :]) / dt
+    # dudt[:, -1, :] = (prediction[:, -1, :] - prediction[:, -2, :]) / dt
+    # # dudx (upwinding)
+    # if ADVECTION_SPEED > 0:
+    #     dudx = (prediction - torch.roll(prediction, shifts=1, dims=2)) / dx
+    # else:
+    #     dudx = (torch.roll(prediction, shifts=-1, dims=2)) / dx
+    # # residual (Nt, Nx)
+    # residual = dudt + ADVECTION_SPEED * dudx
+
+    # return residual
+
+
+def plot_field(n_train_samples):
+    # load the data
+    data_flora, data_floral = load_data(n_train_samples)
+    # create plot object
+    plotter = twoDPlot(data_flora=data_flora, data_floral=data_floral)
+    # create sample plot
+    plotter.make_field_sample_plot(xlabel=r"$x_1$", ylabel=r"$x_2$", n_samples=4)
+    # create sample error plot
+    plotter.make_error_sample_plot(
+        xlabel=r"$x_1$", ylabel=r"$x_2$", n_samples=4, vmin=0, vmax=0.25
+    )
+
+
+def plot_pareto(n_train_samples_list):
+    all_data = []
+    for n_train_samples in n_train_samples_list:
+        # load the data
+        data_flora, data_floral = load_data(n_train_samples)
+        # get pareto data
+        df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
+        all_data.append(df)
+    combined_df = pd.concat(all_data, ignore_index=True)
+    ParetoPlot.plot_pareto(combined_df, figsize=(7, 5.5))
+
+
+def plot_error_summary(n_train_samples_list):
+    all_data = []
+    for n_train_samples in n_train_samples_list:
+        # load the data
+        data_flora, data_floral = load_data(n_train_samples)
+        # get pareto data
+        summary = ErrorSummary(data_flora=data_flora, data_floral=data_floral)
+        df = summary(verbose=True)
+        all_data.append(df)
+    combined_df = pd.concat(all_data, ignore_index=True)
+    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e2), xlim_range=(1e2, 1e4))
+
+
+def plot_residual_summary(n_train_samples_list):
+    raise NotImplementedError("Darcy residual not currently implemented")
+    # all_data = []
+    # for n_train_samples in n_train_samples_list:
+    #     # load the data
+    #     data_flora, data_floral = load_data(n_train_samples)
+    #     # compute the residual
+    #     residual = ResidualDarcy(data_flora=data_flora, data_floral=data_floral)
+    #     df = residual(verbose=True)
+    #     all_data.append(df)
+    # combined_df = pd.concat(all_data, ignore_index=True)
+    # ResidualDarcy.plot_residual(combined_df, figsize=(7, 5), ylim_range=(1e-3, 1e2))
+
+
+if __name__ == "__main__":
+    # residual summary
+    # plot_residual_summary(n_train_samples_list)
+    # error summary
+    plot_error_summary(n_train_samples_list)
+    # plot field
+    plot_field(n_train_samples=n_train_samples_list[0])
+    plot_field(n_train_samples=n_train_samples_list[-1])
+    # pareto
+    plot_pareto(n_train_samples_list)

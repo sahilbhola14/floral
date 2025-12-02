@@ -1,11 +1,31 @@
 import numpy as np
 import torch
+import time
 import os.path as osp
 from datetime import datetime
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import OmegaConf, DictConfig
 from typing import Any, Dict
+from functools import wraps
+
+
+def timeit(func_name=None):
+    """Decorator to measure the runtime of a function."""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start = time.perf_counter()
+            result = func(*args, **kwargs)
+            elapsed = time.perf_counter() - start
+            name = func_name or func.__name__
+            print(f"{name} took {elapsed:.6f} seconds")
+            return result
+
+        return wrapper
+
+    return decorator
 
 
 def check_path(path: str, suggestion: str = None) -> None:
@@ -78,6 +98,12 @@ def deep_get(mapping: dict | DictConfig, keys, default=None):
     return mapping
 
 
+def type_check(data, data_type):
+    assert isinstance(
+        data, data_type
+    ), f"Expected {data_type}, got {type(data).__name__}"
+
+
 @rank_zero_only
 def printer(message):
     """Print message only on rank 0"""
@@ -101,26 +127,38 @@ def t2n(tensor: torch.Tensor) -> torch.Tensor:
 
 def n2t(array: np.ndarray) -> torch.Tensor:
     """Convert a NumPy array to a PyTorch tensor."""
-    assert isinstance(array, np.ndarray), "Input must be a NumPy array"
+    type_check(array, np.ndarray)
     return torch.FloatTensor(array)
 
 
-def check_tensor_blowup(t: torch.Tensor, name: str = "tensor"):
+def check_tensor_blowup(t: torch.Tensor | np.ndarray, name: str = "tensor"):
     """
     Check if a tensor has NaN or Inf values and raise an error if so.
 
     Args:
-        t (torch.Tensor): Tensor to check.
+        t (torch.Tensor | np.ndarray): Tensor to check.
         name (str): Optional name to include in the error message.
     """
-    if not torch.isfinite(t).all():
-        n_nan = torch.isnan(t).sum().item()
-        n_inf = torch.isinf(t).sum().item()
-        raise ValueError(
-            f"{name} has blown up! "
-            f"NaNs: {n_nan}, Infs: {n_inf}, "
-            f"min={t.min().item()}, max={t.max().item()}"
-        )
+    if isinstance(t, torch.Tensor):
+        if not torch.isfinite(t).all():
+            n_nan = torch.isnan(t).sum().item()
+            n_inf = torch.isinf(t).sum().item()
+            raise ValueError(
+                f"{name} has blown up! "
+                f"NaNs: {n_nan}, Infs: {n_inf}, "
+                f"min={t.min().item()}, max={t.max().item()}"
+            )
+    elif isinstance(t, np.ndarray):
+        if np.isnan(t).any() or np.isinf(t).any():
+            n_nan = np.isnan(t).sum().item()
+            n_inf = np.isinf(t).sum().item()
+            raise ValueError(
+                f"{name} has blown up! "
+                f"NaNs: {n_nan}, Infs: {n_inf}, "
+                f"min={t.min().item()}, max={t.max().item()}"
+            )
+    else:
+        raise ValueError(f"Invalid input type: {type(t).__name__}")
 
 
 def get_logger(name: str):

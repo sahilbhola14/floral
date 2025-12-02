@@ -1,7 +1,24 @@
 import wandb
 import lightning as L
+import torch
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning import seed_everything
 from .utils_IO import get_logger, printer, print_section, check_keys
+
+
+def seed_model(seed: int = 42):
+    """seed the model"""
+    seed_everything(42, workers=True)
+    torch.set_float32_matmul_precision("medium")
+    # torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cuda.matmul.allow_tf32 = False
+    # torch.backends.cudnn.allow_tf32 = False
+    # os.environ["NVIDIA_TF32_OVERRIDE"] = "0"
+    # os.environ["TORCH_ALLOW_TF32"] = "0"
+    # torch.use_deterministic_algorithms(True, warn_only=True)
+    # torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.deterministic = True
 
 
 def build_checkpointer(config: dict, verbose: bool = False):
@@ -25,7 +42,7 @@ def build_checkpointer(config: dict, verbose: bool = False):
         mode="min",
         save_top_k=1,
         dirpath=path,
-        filename="model-{epoch:02d}-{val_loss:.2f}",
+        filename="model-{epoch:04d}-{val_loss:.6f}",
     )
 
     if verbose:
@@ -55,6 +72,9 @@ def build_trainer(
     Returns:
         trainer (L.Trainer): Trainer object for training the model.
     """
+
+    # seed
+    seed_model()
 
     # extract config and hp_config
     devices = config.train.get("devices", 1)
@@ -89,6 +109,9 @@ def build_trainer(
         callbacks=[checkpointer, early_stop_callback],
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
+        log_every_n_steps=10,
+        check_val_every_n_epoch=1,
+        # accumulate_grad_batches=1,
     )
 
     if verbose:

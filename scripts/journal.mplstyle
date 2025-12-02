@@ -10,8 +10,8 @@ text.latex.preamble: \usepackage{amsmath}
 # Axes
 axes.grid: True
 axes.grid.which: both
-axes.labelsize: 18
-axes.titlesize: 18
+axes.labelsize: 15
+axes.titlesize: 12
 axes.linewidth: 1.0
 axes.labelpad: 2.5  # spacing between label and axis
 
@@ -53,7 +53,7 @@ figure.autolayout: True
 # Savefig
 savefig.dpi: 600
 savefig.bbox: tight
-savefig.pad_inches: 0.01
+savefig.pad_inches: 0.05
 
 # Grid
 grid.linewidth: 0.25
@@ -61,7 +61,7 @@ grid.linestyle: :
 grid.alpha: 0.5
 
 # Set Colormap
-image.cmap: inferno  # or 'plasma', 'inferno', 'magma', etc.
+image.cmap: jet  # or 'plasma', 'inferno', 'magma', 'jet', etc
 
 # Colors (optional: grayscale or colorblind-friendly palettes)
 # axes.prop_cycle: cycler('color', ['#000000', '#444444', '#888888', '#BBBBBB'])

@@ -1,0 +1,10 @@
+# examples/burger/hp_config.yml
+learning_rate: 1.0e-3
+batch_size: 16
+max_epochs: 500
+optimizer: "Adam"
+weight_decay: 1.0e-4
+scheduler: "exponential"
+exponential_scheduler_gamma: 0.99
+lr_scheduler_step: 5
+lr_scheduler_gamma: 0.1

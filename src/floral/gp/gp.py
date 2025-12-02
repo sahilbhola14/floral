@@ -5,38 +5,50 @@ GPPrior adapted from:
 https://github.com/GavinKerrigan/functional_flow_matching/blob/master/util/gaussian_process.py
 """
 import torch
-
-# import gpytorch
+import math
 from gpytorch.models import ExactGP
 from gpytorch.likelihoods import GaussianLikelihood
 from gpytorch.means import ConstantMean
 from gpytorch.kernels import MaternKernel, ScaleKernel
 from gpytorch.distributions import MultivariateNormal
-from floral.utils import check_keys
 
 
-def get_gp_prior(prior_config):
+def get_gp_prior(
+    lengthscale: float,
+    outputscale: float,
+    confidence: float = 0.0,
+):
     """build a gp prior"""
     # check keys
-    required_keys = ["lengthscale", "outputscale"]
-    check_keys(prior_config, required_keys)
-    return GPPrior(**prior_config)
+    return GPPrior(
+        lengthscale=lengthscale, outputscale=outputscale, confidence=confidence
+    )
 
 
 class GPPrior(ExactGP):
     """GP Prior for base measure"""
 
     def __init__(
-        self, kernel=None, mean=None, lengthscale=None, outputscale=None, **kwargs
+        self,
+        kernel=None,
+        mean=None,
+        lengthscale=None,
+        outputscale=None,
+        confidence=1.0,
+        **kwargs,
     ):
         likelihood = GaussianLikelihood()
         super(GPPrior, self).__init__(
             train_inputs=None, train_targets=None, likelihood=likelihood
         )
+        self.confidence = confidence
         self.likelihood = likelihood
         self.mean_module = self._build_mean_module(mean=mean)
         self.covar_module = self._build_covariance_module(
-            kernel=kernel, lengthscale=lengthscale, outputscale=outputscale
+            kernel=kernel,
+            lengthscale=lengthscale,
+            outputscale=outputscale,
+            confidence=self.confidence,
         )
         # set to eval mode
         self.eval()
@@ -61,7 +73,18 @@ class GPPrior(ExactGP):
         """
         return ConstantMean() if mean is None else mean
 
-    def _build_covariance_module(self, kernel=None, lengthscale=None, outputscale=None):
+    def _confidence_to_scale(
+        self, confidence, min_factor: float = 0.00001, max_factor: float = 1.0
+    ):
+        confidence = torch.clamp(torch.tensor(confidence), 0.0, 1.0)
+        log_min = math.log(min_factor)
+        log_max = math.log(max_factor)
+        inter = (1.0 - confidence) * log_max + confidence * log_min
+        return torch.exp(inter)
+
+    def _build_covariance_module(
+        self, kernel=None, lengthscale=None, outputscale=None, confidence=1.0
+    ):
         """build the covariance module"""
         eps = 1e-10  # jitter
         nu = 0.5  # smoothness
@@ -76,12 +99,15 @@ class GPPrior(ExactGP):
                 self.lengthscale = torch.FloatTensor([lengthscale])
             # set output scale
             if outputscale is None:
+                scale = self._confidence_to_scale(confidence=1.0)
                 self.outputscale = torch.FloatTensor([0.1])
             else:
                 assert (
                     isinstance(outputscale, float) and outputscale > 0
                 ), "outputscale must be positive float"
+                scale = self._confidence_to_scale(confidence=confidence)
                 self.outputscale = torch.FloatTensor([outputscale])
+            self.outputscale = scale * self.outputscale
             # build Matern kernel
             base_kernel = MaternKernel(nu=nu, eps=eps)
             base_kernel.lengthscale = self.lengthscale
