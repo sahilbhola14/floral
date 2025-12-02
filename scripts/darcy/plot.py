@@ -108,7 +108,7 @@ def plot_pareto(n_train_samples_list):
         df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ParetoPlot.plot_pareto(combined_df, figsize=(7, 5))
+    ParetoPlot.plot_pareto(combined_df, figsize=(7, 5.5))
 
 
 def plot_error_summary(n_train_samples_list):
