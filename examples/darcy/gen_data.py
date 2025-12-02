@@ -19,6 +19,7 @@ from tqdm import tqdm
 from scipy.stats import pearsonr, gaussian_kde
 from scipy.interpolate import RegularGridInterpolator
 from floral.solver import Darcy
+from floral.utils import check_tensor_blowup
 
 plt.style.use("../../scripts/journal.mplstyle")
 
@@ -34,7 +35,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=11000,
+        default=6000,
         help="Number of samples to generate",
     )
 
@@ -42,7 +43,7 @@ def parse_args():
         "-res_HF",
         "--resolution_HF",
         type=int,
-        default=64,
+        default=128,
         help="Number of discretization points for the high-fidelity model",
     )
 
@@ -50,14 +51,14 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=16,
+        default=32,
         help="Number of discretization points for the low-fidelity model",
     )
 
     parser.add_argument(
         "--threads",
         type=int,
-        default=32,
+        default=16,
         help="Number of cores to use during generation",
     )
 
@@ -152,6 +153,8 @@ class MultiFidelity:
             mv[ii] = interpolator(self.solver_LF.mesh.reshape(-1, 2)).reshape(
                 self.resolution_LF, self.resolution_LF
             )
+
+        check_tensor_blowup(mv, "Interpolated permeability")
         return mv
 
     def _create_low_fidelity_permeability_data(self):
@@ -209,7 +212,7 @@ class MultiFidelity:
         """marginal density plot"""
         n_plot = max(1, int(self.n_samples * percentage_plot))
         print(f"Making marginal distribution using {n_plot}/{self.n_samples} samples")
-        fig, axs = plt.subplots(1, 3, figsize=(8, 2), layout="compressed")
+        fig, axs = plt.subplots(2, 2, figsize=(6, 6), layout="compressed")
         # permeability
         flat_K_LF = dict_LF["permeability"][:n_plot].flatten()
         flat_K_HF = dict_HF["permeability"][:n_plot].flatten()
@@ -219,19 +222,20 @@ class MultiFidelity:
         flat_P_HF = dict_HF["pressure"][:n_plot].flatten()
         flat_P_res = flat_P_HF - flat_P_LF
 
-        axs[0].hist(flat_K_LF, density=True, bins=100, label=r"Low-fidelity")
-        axs[0].hist(flat_K_HF, density=True, bins=100, label=r"Low-fidelity")
-        axs[0].set_title(r"Permeability, $K$")
+        axs[0, 0].hist(flat_K_LF, density=True, bins=100, label=r"Low-fidelity")
+        axs[0, 0].hist(flat_K_HF, density=True, bins=100, label=r"High-fidelity")
+        axs[0, 0].set_title(r"Permeability, $K$")
 
-        axs[1].hist(flat_P_LF, density=True, bins=100, label=r"Low-fidelity")
-        axs[1].hist(flat_P_HF, density=True, bins=100, label=r"Low-fidelity")
-        axs[1].set_title(r"Pressure, $P$")
+        axs[1, 0].hist(flat_P_LF, density=True, bins=100, label=r"Low-fidelity")
+        axs[1, 0].hist(flat_P_HF, density=True, bins=100, label=r"High-fidelity")
+        axs[1, 0].set_title(r"Pressure, $P$")
 
-        axs[2].hist(flat_K_res, density=True, bins=100, label=r"Permeability")
-        axs[2].hist(flat_P_res, density=True, bins=100, label=r"Pressure")
-        axs[2].set_title(r"Residual")
+        axs[0, 1].hist(flat_K_res, density=True, bins=100, label=r"Permeability")
+        axs[0, 1].set_title(r"Residual")
+        axs[1, 1].hist(flat_P_res, density=True, bins=100, label=r"Pressure")
+        axs[1, 1].set_title(r"Residual")
 
-        for ax in axs:
+        for ax in axs.flatten():
             ax.legend()
 
         plt.savefig("data_marginal.png")
@@ -317,17 +321,27 @@ class MultiFidelity:
             return r
 
         r_list = []
+        raise_error = False
         for ii in range(self.n_samples):
             flat_X = samples_X[ii].flatten()
             flat_Y = samples_Y[ii].flatten()
             if flat_X.std() < 1e-6 or flat_Y.std() < 1e-6:
-                raise RuntimeError("No variation found in the solution field.")
+                raise_error = True
+                fig, axs = plt.subplots(1, 2, figsize=(4, 2))
+                axs[0].imshow(flat_X.reshape(self.resolution_HF, self.resolution_HF))
+                axs[0].set_title(xlabel)
+                axs[1].imshow(flat_Y.reshape(self.resolution_HF, self.resolution_HF))
+                axs[1].set_title(ylabel)
+                plt.savefig(f"no_variation_{xlabel}_vs_{ylabel}_{ii}.png")
             r_list.append(
                 _comp_pearson(
                     flat_X,
                     flat_Y,
                 )
             )
+
+        if raise_error:
+            raise RuntimeError("No variation found in the solution field.")
         assert len(r_list) == self.n_samples, "Number of samples mismatch"
 
         r_array = np.array(r_list)
@@ -414,10 +428,10 @@ class MultiFidelity:
         if self.plot:
             # make sample comparison
             self._make_sample_comparison_plot(
-                samples_LF=dict_LF["permeability"],
-                samples_HF=dict_HF["permeability"],
+                samples_LF=np.log(dict_LF["permeability"]),
+                samples_HF=np.log(dict_HF["permeability"]),
                 n_samples=5,
-                file_identifier="Permeability",
+                file_identifier="Log_Permeability",
             )
             self._make_sample_comparison_plot(
                 samples_LF=dict_LF["pressure"],
@@ -431,12 +445,12 @@ class MultiFidelity:
             )
             # make joint plot(s)
             self._make_joint_plot(
-                samples_X=dict_LF["permeability"],
-                samples_Y=dict_HF["permeability"],
+                samples_X=np.log(dict_LF["permeability"]),
+                samples_Y=np.log(dict_HF["permeability"]),
                 xlabel=r"Low-fidelity",
                 ylabel=r"High-fidelity",
                 percentage_plot=0.001,
-                file_identifier="LF_HF_Permeability",
+                file_identifier="LF_HF_Log_Permeability",
             )
             self._make_joint_plot(
                 samples_X=dict_LF["pressure"],
@@ -448,8 +462,9 @@ class MultiFidelity:
             )
 
             self._make_joint_plot(
-                samples_X=dict_LF["permeability"],
-                samples_Y=dict_HF["permeability"] - dict_LF["permeability"],
+                samples_X=np.log(dict_LF["permeability"]),
+                samples_Y=np.log(dict_HF["permeability"])
+                - np.log(dict_LF["permeability"]),
                 xlabel=r"Low-fidelity",
                 ylabel=r"Residual",
                 percentage_plot=0.001,
@@ -505,6 +520,11 @@ class MultiFidelity:
         }
 
         # save
+        # torch.save(high_data, f"high_fidelity_res_"
+        # f"{self.resolution_LF}_theta_{self.ntheta_LF}.pt")
+        # torch.save(low_data, f"low_fidelity_res_"
+        # f"{self.resolution_LF}_theta_{self.ntheta_LF}.pt")
+
         torch.save(high_data, "high_fidelity.pt")
         torch.save(low_data, "low_fidelity.pt")
 
@@ -526,8 +546,8 @@ class MultiFidelity:
         )
         # prep and save
         self._prep_and_save(
-            dict_LF=data_dict_LF,
             dict_HF=data_dict_HF,
+            dict_LF=data_dict_LF_inter,
         )
 
 
