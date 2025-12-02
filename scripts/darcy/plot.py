@@ -92,10 +92,10 @@ def plot_field(n_train_samples):
     # create plot object
     plotter = twoDPlot(data_flora=data_flora, data_floral=data_floral)
     # create sample plot
-    plotter.make_field_sample_plot(xlabel=r"$x$", ylabel=r"$t$", n_samples=4)
+    plotter.make_field_sample_plot(xlabel=r"$x_1$", ylabel=r"$x_2$", n_samples=4)
     # create sample error plot
     plotter.make_error_sample_plot(
-        xlabel=r"$x$", ylabel=r"$t$", n_samples=4, vmin=0, vmax=0.25
+        xlabel=r"$x_1$", ylabel=r"$x_2$", n_samples=4, vmin=0, vmax=0.25
     )
 
 
