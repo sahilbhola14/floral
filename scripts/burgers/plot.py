@@ -2,6 +2,7 @@
 """
 Burgers flow plots
 """
+import os.path as osp
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
@@ -10,6 +11,7 @@ from floral.utils import twoDPlot, ParetoPlot, ErrorSummary, BaseResidual
 # Begin user input
 n_train_samples_list = [500, 1000, 5000]
 n_val_samples = 1000
+results_folder = "./results_data"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -17,6 +19,10 @@ plt.style.use("../journal.mplstyle")
 VISCOSITY = 0.01
 SPATIAL_DOMAIN = (0, 1)
 TEMPORAL_DOMAIN = (0, 0.2)
+
+
+def combine_path(paths: list):
+    return osp.join(*paths)
 
 
 def load_data(n_train_samples):
@@ -28,8 +34,12 @@ def load_data(n_train_samples):
     print("floral file: ", file_floral)
     print("n_train_samples: ", n_train_samples)
     print("n_val_samples: ", n_val_samples)
-    data_flora = torch.load(file_flora, weights_only=False)
-    data_floral = torch.load(file_floral, weights_only=False)
+    data_flora = torch.load(
+        combine_path([results_folder, file_flora]), weights_only=False
+    )
+    data_floral = torch.load(
+        combine_path([results_folder, file_floral]), weights_only=False
+    )
     print(
         "Number of samples for UQ (Flora): "
         f"{data_flora['HF_field_prediction_plot'].shape[1]}"
