@@ -33,9 +33,12 @@ parser.add_argument(
     default="hp_config.yml",
     help="Path to the configuration file.",
 )
+parser.add_argument("overrides", nargs="*")
 
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
+cli = OmegaConf.from_dotlist(args.overrides)
+config = OmegaConf.merge(config, cli)
 
 
 def print_header(config: dict):
