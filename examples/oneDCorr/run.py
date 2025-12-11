@@ -1,6 +1,6 @@
 # examples/onedcorr/run.py
 """
-Flow-matching operator for residual-augmented learning for Darcy flow.
+Flow-matching operator for residual-augmented learning for onedcorr
 Notes:
     1. To improve reproducibility across architectures, tf32 is not used.
     Emperically, operators were producing higher losses.
