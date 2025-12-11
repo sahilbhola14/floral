@@ -305,6 +305,68 @@ class ErrorSummary:
         return pd.DataFrame(df)
 
     @staticmethod
+    def plot_error_vs_train_res(combined_df, **kwargs):
+        """plot the errors"""
+        metrics = ["RMSE", "NRMSE", "CRMSE"]
+
+        # extract low-fidelity residual (same for all train samples)
+        df_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
+        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"]
+
+        # Create 1×3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
+        for ii, (ax, metric) in enumerate(zip(axes, metrics)):
+            # Filter dataframe for each metric
+            subset_plot = df_rest[df_rest["Metric"] == metric]
+            subset_plot_LF = df_LF[df_LF["Metric"] == metric]
+
+            # Overlay the Low-fidelity baseline separately
+            sns.scatterplot(
+                data=subset_plot_LF,
+                x="Resolution (train)",
+                y="Value",
+                color="gray",
+                s=200,
+                marker="*",
+                edgecolor="black",
+                label="Low-fidelity (reference)",
+                ax=ax,
+            )
+
+            # Scatter plot
+            sns.scatterplot(
+                data=subset_plot,
+                x="Resolution (train)",
+                y="Value",
+                style="Method",
+                style_order=["FLORA", "FLORAL"],
+                hue="Method",
+                hue_order=["FLORA", "FLORAL"],
+                palette="Set2",
+                s=150,
+                edgecolor="black",
+                ax=ax,
+            )
+
+            # Titles and labels
+            # ax.set_title(metric)
+            ax.set_xlabel("Resolution (train)", fontsize=15)
+            ax.set_ylabel(metric, fontsize=15)
+            if ii == 0:
+                ax.legend().set_title("Method")
+            else:
+                ax.legend_.remove()
+            ax.set_yscale("log")
+            ax.set_xscale("log")
+            xlim_range = kwargs.get("xlim_range", (1e1, 1e4))
+            ylim_range = kwargs.get("ylim_range", (1e-2, 1e1))
+            ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
+            ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
+
+        plt.savefig("error_vs_train_res_comparison.png", dpi=300, pad_inches=0.1)
+        plt.close()
+
+    @staticmethod
     def plot_error(combined_df, **kwargs):
         """plot the errors"""
         metrics = ["RMSE", "NRMSE", "CRMSE"]
