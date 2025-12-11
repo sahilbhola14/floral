@@ -356,7 +356,7 @@ class ErrorSummary:
             ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
             ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
-        plt.savefig("error_vs_train_res_comparison.png", dpi=300, pad_inches=0.1)
+        plt.savefig("error_vs_train_resoluion_comparison.png", dpi=300, pad_inches=0.1)
         plt.close()
 
     @staticmethod
