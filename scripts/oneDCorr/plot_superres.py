@@ -9,9 +9,9 @@ import matplotlib.pyplot as plt
 from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [10, 50, 500, 1000]
+n_train_samples = 10
 n_val_samples = 1000
-train_res = "Full"
+train_res_list = [8, 16, 32, 64]
 results_folder = "./results_data"
 # End user input
 
@@ -22,7 +22,7 @@ def combine_path(paths: list):
     return osp.join(*paths)
 
 
-def load_data(n_train_samples):
+def load_data(train_res):
     nt = n_train_samples
     nv = n_val_samples
     assert isinstance(train_res, (str, int))
@@ -68,60 +68,53 @@ class ResidualOneDCorr(BaseResidual):
         return prediction - true
 
 
-def plot_field(n_train_samples):
+def plot_field(train_res):
+    save_name = f"field_samples_n_train_{n_train_samples}"
+    f"_n_val_{n_val_samples}_train_res_{train_res}"
     # load the data
-    data_flora, data_floral = load_data(n_train_samples)
+    data_flora, data_floral = load_data(train_res)
     # create plot object
     plotter = oneDPlot(data_flora=data_flora, data_floral=data_floral)
     # create sample plot
-    plotter.make_field_sample_plot(std_factor=10)
+    plotter.make_field_sample_plot(std_factor=10, save_name=save_name)
 
 
-def plot_pareto(n_train_samples_list):
+def plot_pareto(train_res_list):
     all_data = []
-    for n_train_samples in n_train_samples_list:
+    for train_res in train_res_list:
         # load the data
-        data_flora, data_floral = load_data(n_train_samples)
+        data_flora, data_floral = load_data(train_res)
         # get pareto data
         df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
+        # add the train res
+        df["Resolution (train)"] = train_res
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ParetoPlot.plot_pareto(combined_df, ylim_range=(1e-2, 1e1), figsize=(7, 5))
+    ParetoPlot.plot_pareto_res(combined_df, ylim_range=(1e-2, 1e1), figsize=(7, 5))
 
 
-def plot_residual_summary(n_train_samples_list):
+def plot_error_summary(train_res_list):
     all_data = []
-    for n_train_samples in n_train_samples_list:
+    for train_res in train_res_list:
         # load the data
-        data_flora, data_floral = load_data(n_train_samples)
-        # compute the residual
-        residual = ResidualOneDCorr(data_flora=data_flora, data_floral=data_floral)
-        df = residual(verbose=True)
-        all_data.append(df)
-    combined_df = pd.concat(all_data, ignore_index=True)
-    ResidualOneDCorr.plot_residual(combined_df, figsize=(7, 5), xlim_range=(1e0, 1e4))
-
-
-def plot_error_summary(n_train_samples_list):
-    all_data = []
-    for n_train_samples in n_train_samples_list:
-        # load the data
-        data_flora, data_floral = load_data(n_train_samples)
+        data_flora, data_floral = load_data(train_res)
         # get pareto data
         summary = ErrorSummary(data_flora=data_flora, data_floral=data_floral)
         df = summary(verbose=True)
+        # add the train res
+        df["Resolution (train)"] = train_res
         all_data.append(df)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e1), xlim_range=(0, 1e4))
+    ErrorSummary.plot_error_vs_train_res(
+        combined_df, ylim_range=(1e-2, 1e0), xlim_range=(1e0, 1e2)
+    )
 
 
 if __name__ == "__main__":
-    # residual summary
-    plot_residual_summary(n_train_samples_list)
     # error summary
-    plot_error_summary(n_train_samples_list)
-    # # plot field
-    plot_field(n_train_samples=n_train_samples_list[-1])
-    plot_field(n_train_samples=n_train_samples_list[0])
-    # pareto
-    plot_pareto(n_train_samples_list)
+    # plot_error_summary(train_res_list)
+    # plot field
+    # plot_field(train_res=train_res_list[-1])
+    # plot_field(train_res=train_res_list[0])
+    # # pareto
+    plot_pareto(train_res_list)

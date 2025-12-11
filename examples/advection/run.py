@@ -1,6 +1,6 @@
-# examples/advection/run_floral.py
+# examples/advection/run.py
 """
-Flow-matching operator for residual-augmented learning for Darcy flow.
+Flow-matching operator for residual-augmented learning for advection equation.
 Notes:
     1. To improve reproducibility across architectures, tf32 is not used.
     Emperically, operators were producing higher losses.
@@ -34,10 +34,16 @@ parser.add_argument(
     default="hp_config.yml",
     help="Path to the configuration file.",
 )
-
+parser.add_argument(
+    "overrides",
+    nargs="*",
+    help="Override config values using dotlist syntax.",
+)
 
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
+cli = OmegaConf.from_dotlist(args.overrides)
+config = OmegaConf.merge(config, cli)
 
 
 def print_header(config: dict):
@@ -51,6 +57,7 @@ def print_header(config: dict):
     printer(f"Hyperparameter Configuration file: {args.hp_config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
+    printer(f"Training resolution: {config.train.train_res}")
     printer(f"Number of samples: {config.data.n_samples}")
     print_section("advection config", end=True)
 

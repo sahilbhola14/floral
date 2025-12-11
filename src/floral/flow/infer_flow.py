@@ -36,6 +36,7 @@ def perform_inference(
         job_name=config.job_name,
         floral=config.floral,
         generate_config=config.generate,
+        train_res=config.train.train_res,
     )
 
     infer()
@@ -49,6 +50,7 @@ class Inference:
         job_name: str,
         floral: bool,
         generate_config: dict,
+        train_res: str | int,
     ):
         # set attributes
         self.best_flow = best_flow
@@ -58,6 +60,9 @@ class Inference:
         self.floral = floral
         self.generate_config = generate_config
         self.data_module = data_module
+        self.train_res = (
+            (train_res).strip().lower() if isinstance(train_res, str) else train_res
+        )
         # enable inference optimizations
         torch.backends.cudnn.benchmark = True
         self.use_amp = False
@@ -170,6 +175,7 @@ class Inference:
             self.job_name
             + f"_n_train_{self.data_module.n_train}"
             + f"_n_val_{self.data_module.n_val}"
+            + f"_train_res_{self.train_res}"
         )
         save_path = f"{job_identifier}_results_{save_path_identifier}.pt"
         printer(f"Saving results to {save_path}")

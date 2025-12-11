@@ -305,6 +305,61 @@ class ErrorSummary:
         return pd.DataFrame(df)
 
     @staticmethod
+    def plot_error_vs_train_res(combined_df, **kwargs):
+        """plot the errors"""
+        metrics = ["RMSE", "NRMSE", "CRMSE"]
+
+        # extract subsets
+        df_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
+        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"]
+
+        # Create 1×3 subplots
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
+        for ii, (ax, metric) in enumerate(zip(axes, metrics)):
+            # Filter dataframe for each metric
+            subset_plot = df_rest[df_rest["Metric"] == metric]
+            subset_plot_LF = df_LF[df_LF["Metric"] == metric]
+            metric_LF = subset_plot_LF["Value"].mean()
+
+            # Scatter plot
+            sns.scatterplot(
+                data=subset_plot,
+                x="Resolution (train)",
+                y="Value",
+                style="Method",
+                style_order=["FLORA", "FLORAL"],
+                hue="Method",
+                hue_order=["FLORA", "FLORAL"],
+                palette="Set2",
+                s=150,
+                edgecolor="black",
+                ax=ax,
+            )
+
+            # Add horizontal LF reference line
+            ax.axhline(
+                metric_LF, linestyle="--", color="k", linewidth=2, label="Low-fidelity"
+            )
+
+            # Titles and labels
+            # ax.set_title(metric)
+            ax.set_xlabel("Resolution (train)", fontsize=15)
+            ax.set_ylabel(metric, fontsize=15)
+            if ii == 0:
+                ax.legend().set_title("Method")
+            else:
+                ax.legend_.remove()
+            ax.set_yscale("log")
+            ax.set_xscale("log")
+            xlim_range = kwargs.get("xlim_range", (1e1, 1e4))
+            ylim_range = kwargs.get("ylim_range", (1e-2, 1e1))
+            ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
+            ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
+
+        plt.savefig("error_vs_train_resoluion_comparison.png", dpi=300, pad_inches=0.1)
+        plt.close()
+
+    @staticmethod
     def plot_error(combined_df, **kwargs):
         """plot the errors"""
         metrics = ["RMSE", "NRMSE", "CRMSE"]
@@ -919,6 +974,59 @@ class ParetoPlot:
         summary_df["Samples (validation)"] = data_flora["n_val"]
 
         return summary_df
+
+    @classmethod
+    def plot_pareto_res(self, combined_df, **kwargs):
+        # Split data
+        df_lf = combined_df[combined_df["Method"] == "Low-fidelity"].iloc[
+            [0]
+        ]  # take one row
+        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"]
+
+        # Plot methods that depend on Samples (Train)
+        figsize = kwargs.get("figsize", (10, 5))
+        plt.figure(figsize=figsize, layout="compressed")
+        # Overlay the Low-fidelity baseline separately
+        ax = sns.scatterplot(
+            data=df_lf,
+            x="Mean Std",
+            y="L2 Error",
+            color="gray",
+            s=200,
+            marker="*",
+            edgecolor="black",
+            label="Low-fidelity (reference)",
+        )
+
+        sns.scatterplot(
+            data=df_rest,
+            x="Mean Std",
+            y="L2 Error",
+            hue="Method",
+            hue_order=["FLORA", "FLORAL"],
+            style="Resolution (train)",
+            palette="Set2",
+            s=100,
+            edgecolor="black",
+            ax=ax,
+        )
+
+        ax.set_yscale("log")
+        ax.set_xscale("log")
+        xlim_range = kwargs.get("xlim_range", (1e-7, 1e-1))
+        ylim_range = kwargs.get("ylim_range", (1e-1, 1e2))
+        ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
+        ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
+
+        # Optional: make legend cleaner
+        handles, labels = ax.get_legend_handles_labels()
+        # ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1),
+        # loc="upper left")
+        ax.legend(handles, labels, title="", loc="lower left")
+        ax.set_xlabel("Mean Predictive Uncertainty")
+        ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
+        plt.savefig("pareto_resolution_comparison.png", dpi=300, pad_inches=0.1)
+        plt.close()
 
     @classmethod
     def plot_pareto(self, combined_df, **kwargs):

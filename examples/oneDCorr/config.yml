@@ -48,6 +48,7 @@ train:
   accelerator: 'gpu'
   devices: 1
   precision: '32-true'
+  train_res: "Full"  # Options: Full or an integer
 
 # configuration for flow-matching
 flow:

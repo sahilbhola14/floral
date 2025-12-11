@@ -11,6 +11,7 @@ from floral.utils import twoDPlot, ParetoPlot, ErrorSummary, BaseResidual
 # Begin user input
 n_train_samples_list = [500, 1000, 5000]
 n_val_samples = 1000
+train_res = "Full"
 results_folder = "./results_data"
 # End user input
 
@@ -28,8 +29,10 @@ def combine_path(paths: list):
 def load_data(n_train_samples):
     nt = n_train_samples
     nv = n_val_samples
-    file_flora = f"burgers_n_train_{nt}_n_val_{nv}_results_flora.pt"
-    file_floral = f"burgers_n_train_{nt}_n_val_{nv}_results_floral.pt"
+    assert isinstance(train_res, (str, int))
+    res = train_res.strip().lower() if isinstance(train_res, str) else train_res
+    file_flora = f"burgers_n_train_{nt}_n_val_{nv}_train_res_{res}_results_flora.pt"
+    file_floral = f"burgers_n_train_{nt}_n_val_{nv}_train_res_{res}_results_floral.pt"
     print("flora file: ", file_flora)
     print("floral file: ", file_floral)
     print("n_train_samples: ", n_train_samples)
@@ -61,7 +64,7 @@ class ResidualBurgers(BaseResidual):
         # condition
         self.condition = self.full_condition[
             :, 0
-        ]  # for onedcorr, only the first channel is the condition
+        ]  # for burgers, only the first channel is the condition
 
     def comp_residual(self, prediction, condition, domain):
         """compute the residual for the advection equation
