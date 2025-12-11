@@ -1,4 +1,4 @@
-# examples/darcy/config_floral.yml
+# examples/darcy/config.yml
 
 # general configuration
 job_name: "darcy" # Unique identifier for each run
@@ -48,6 +48,7 @@ train:
   accelerator: 'gpu'
   devices: 1
   precision: '32-true'
+  train_res: "Full"  # Options: Full or an integer
 
 # configuration for flow-matching
 flow:

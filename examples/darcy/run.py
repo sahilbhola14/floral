@@ -35,9 +35,16 @@ parser.add_argument(
     help="Path to the configuration file.",
 )
 
+parser.add_argument(
+    "overrides",
+    nargs="*",
+    help="Override config values using dotlist syntax.",
+)
 
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
+cli = OmegaConf.from_dotlist(args.overrides)
+config = OmegaConf.merge(config, cli)
 
 
 def print_header(config: dict):
@@ -51,6 +58,7 @@ def print_header(config: dict):
     printer(f"Hyperparameter Configuration file: {args.hp_config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
+    printer(f"Training resolution: {config.train.train_res}")
     printer(f"Number of samples: {config.data.n_samples}")
     print_section("darcy config", end=True)
 
