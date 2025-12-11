@@ -90,6 +90,8 @@ class Flow(L.LightningModule):
     def _check_train_resolution(self):
         """check the training resolution"""
         train_res = deep_get(self.config, ["train", "train_res"])
+        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+
         assert train_res == "Full" or isinstance(
             train_res, int
         ), "train resolution can be Full or an integer"
@@ -97,6 +99,9 @@ class Flow(L.LightningModule):
             # set the train res to the field dims
             train_res = deep_get(self.shape_dict, ["field", "dims"])
         else:
+            assert all(
+                [train_res <= dim for dim in field_dims]
+            ), "train resolution cannot be greater that field resolution"
             train_res = [train_res] * deep_get(self.shape_dict, ["field", "ndim"])
         # check field dims
         field_dims = deep_get(self.shape_dict, ["field", "dims"])
