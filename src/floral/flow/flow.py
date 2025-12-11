@@ -58,6 +58,10 @@ class Flow(L.LightningModule):
         # extract flow config
         flow_config = self.config["flow"]
         self.sig_min = flow_config.get("sig_min", 1e-5)
+        # check train resolution
+        self._check_train_resolution()
+        # get slice operator
+        self.slice_op = self._get_slice_operator()
         # build operator config
         operator_config = self._get_operator_config(flow_config=flow_config)
         # build the operator modules for the vector field
@@ -82,6 +86,57 @@ class Flow(L.LightningModule):
         )
 
         self.debug_plot = False
+
+    def _check_train_resolution(self):
+        """check the training resolution"""
+        train_res = deep_get(self.config, ["train", "train_res"])
+        assert train_res == "Full" or isinstance(
+            train_res, int
+        ), "train resolution can be Full or an integer"
+        if train_res == "Full":
+            # set the train res to the field dims
+            train_res = deep_get(self.shape_dict, ["field", "dims"])
+        else:
+            train_res = [train_res] * deep_get(self.shape_dict, ["field", "ndim"])
+        # check field dims
+        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+        assert all(
+            [dim % res == 0 for dim, res in zip(field_dims, train_res)]
+        ), "full field dims must be multiple of train_res"
+        # check conditions dims
+        condition_dims = deep_get(self.shape_dict, ["condition", "dims"])
+        assert all(
+            [dim % res == 0 for dim, res in zip(condition_dims, train_res)]
+        ), "full condition dims must be multiple of train_res"
+        # check field domain dims
+        field_domain_dims = deep_get(self.shape_dict, ["field_domain", "dims"])
+        assert all(
+            [dim % res == 0 for dim, res in zip(field_domain_dims, train_res)]
+        ), "full condition dims must be multiple of train_res"
+        # check condition domain dims
+        condition_domain_dims = deep_get(self.shape_dict, ["condition_domain", "dims"])
+        assert all(
+            [dim % res == 0 for dim, res in zip(condition_domain_dims, train_res)]
+        ), "full condition dims must be multiple of train_res"
+
+    def _get_slice_operator(self):
+        """get the slice"""
+        train_res = deep_get(self.config, ["train", "train_res"])
+        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+        assert train_res == "Full" or isinstance(
+            train_res, int
+        ), "train resolution can be Full or an integer"
+        if train_res == "Full":
+            # set the train res to the field dims
+            train_res = field_dims
+        else:
+            train_res = [train_res] * deep_get(self.shape_dict, ["field", "ndim"])
+
+        skips = [dim // res for dim, res in zip(field_dims, train_res)]
+        slice_op = (slice(None),) * 2 + tuple(
+            [slice(0, dim, skip) for dim, skip in zip(field_dims, skips)]
+        )
+        return slice_op
 
     def training_step(self, batch, batch_idx):
         """training step"""
@@ -270,14 +325,14 @@ class Flow(L.LightningModule):
 
         return stepper_config
 
-    def _sample_noise_measure(self, batch_size: int):
+    def _sample_noise_measure(self, batch_size: int, field_domain: torch.Tensor):
         """sample noise measure"""
         # prepare flattened domain
-        domain_eval = self.field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
+        domain_eval = field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
 
         # field shape
         field_channels = deep_get(self.shape_dict, ["field", "channels"])
-        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+        field_dims = field_domain.shape[2:]
 
         # sample noise
         noise_samples = self.noise.sample(
@@ -291,14 +346,16 @@ class Flow(L.LightningModule):
 
         return noise_samples
 
-    def _sample_prior_measure(self, batch_size: int, LF_field: torch.Tensor):
+    def _sample_prior_measure(
+        self, batch_size: int, LF_field: torch.Tensor, field_domain: torch.Tensor
+    ):
         """sample the base measure"""
         # prepare flattened domain
-        domain_eval = self.field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
+        domain_eval = field_domain.flatten(start_dim=2).transpose(1, 2).squeeze(0)
 
         # field shape
         field_channels = deep_get(self.shape_dict, ["field", "channels"])
-        field_dims = deep_get(self.shape_dict, ["field", "dims"])
+        field_dims = field_domain.shape[2:]
 
         # sample prior
         noise_samples = self.prior.sample(
@@ -350,7 +407,11 @@ class Flow(L.LightningModule):
         return prior_samples
 
     def _sample_conditional_flow(
-        self, target_field: torch.Tensor, prior: torch.Tensor, t: torch.Tensor
+        self,
+        target_field: torch.Tensor,
+        prior: torch.Tensor,
+        t: torch.Tensor,
+        field_domain: torch.Tensor,
     ):
         """sample the conditional flow"""
         # check shape
@@ -368,7 +429,9 @@ class Flow(L.LightningModule):
             dim=list(range(1, target_field.ndim)),
             keepdim=True,
         )
-        noise = self._sample_noise_measure(batch_size)
+        noise = self._sample_noise_measure(
+            batch_size=batch_size, field_domain=field_domain
+        )
         noise = self.sig_min * noise_scale * noise
         # sample from conditional probability path
         psi = (t_expand * target_field + (1.0 - t_expand) * prior) + noise
@@ -476,14 +539,24 @@ class Flow(L.LightningModule):
         LF_field: torch.Tensor,
     ):
         """compute the flow-matching loss"""
+        # slice
+        target_field = target_field[self.slice_op]
+        condition = condition[self.slice_op]
+        LF_field = LF_field[self.slice_op]
+        field_domain = self.field_domain[self.slice_op]
+
         # extract shape
         batch_size, field_channels, *field_dims = target_field.shape
         # sample time from U[0, 1]
         t = torch.rand(batch_size, 1, device=self.device)
         # sample prior measure
-        prior = self._sample_prior_measure(batch_size=batch_size, LF_field=LF_field)
+        prior = self._sample_prior_measure(
+            batch_size=batch_size, LF_field=LF_field, field_domain=field_domain
+        )
         # sample the conditional flow
-        psi = self._sample_conditional_flow(target_field=target_field, prior=prior, t=t)
+        psi = self._sample_conditional_flow(
+            target_field=target_field, prior=prior, t=t, field_domain=field_domain
+        )
         # compute conditional flow derivative
         psi_prime = self._comp_conditional_flow_derivative(
             target_field=target_field, prior=prior
@@ -505,9 +578,6 @@ class Flow(L.LightningModule):
         loss = (w_t.squeeze() * loss_raw).mean()
         if self.debug_plot:
             sys.exit()
-        # regularization to pay attention where vector field magnitude is large
-        # reg = ((psi_prime)**2).mean(dim=list(range(1, vt.ndim)))
-        # reg_loss = loss + reg.mean()
         return loss
 
     def _check_unused_parameters(self):
@@ -610,9 +680,12 @@ class Flow(L.LightningModule):
             .to(self.device)
         )
         LF_field_reshaped = LF_field_batch.reshape(-1, field_channels, *field_dims)
+        # full domain inference
         # sample prior
         prior = self._sample_prior_measure(
-            batch_size=batch_size * n_gen, LF_field=LF_field_reshaped
+            batch_size=batch_size * n_gen,
+            LF_field=LF_field_reshaped,
+            field_domain=self.field_domain,
         ).view(batch_size, n_gen, field_channels, *field_dims)
 
         prior = prior.to(self.device)

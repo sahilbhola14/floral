@@ -1,4 +1,4 @@
-# examples/onedcorr/run_floral.py
+# examples/onedcorr/run.py
 """
 Flow-matching operator for residual-augmented learning for Darcy flow.
 Notes:
@@ -49,6 +49,7 @@ def print_header(config: dict):
     printer(f"Hyperparameter Configuration file: {args.hp_config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
     printer(f"Multi-fidelity Flow: {config.floral}")
+    printer(f"Training resolution: {config.train.train_res}")
     printer(f"Number of samples: {config.data.n_samples}")
     print_section("onedcorr config", end=True)
 
