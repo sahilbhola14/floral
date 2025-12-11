@@ -33,7 +33,11 @@ parser.add_argument(
     default="hp_config.yml",
     help="Path to the configuration file.",
 )
-parser.add_argument("overrides", nargs="*")
+parser.add_argument(
+    "overrides",
+    nargs="*",
+    help="Override config values using dotlist syntax.",
+)
 
 args = parser.parse_args()
 config = OmegaConf.load(args.config)
