@@ -74,9 +74,9 @@ If you find this work useful, please cite:
 
 ```bash
 @article{bhola2025floral,
-  title={Flow matching Operators for Residual-Augmented Probabilistic Learning of Partial Differential Equations},
-  author={Bhola, Sahil and Karthik Duraisamy},
-  journal={arXiv preprint arXiv:2512.12749},
-  year={2025}
+  title   = {Flow matching Operators for Residual-Augmented Probabilistic Learning of Partial Differential Equations},
+  author  = {Bhola, Sahil and Duraisamy, Karthik},
+  journal = {arXiv preprint arXiv:2512.12749},
+  year    = {2025}
 }
 ```
