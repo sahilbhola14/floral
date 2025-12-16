@@ -2,11 +2,12 @@
 <h3 align="center">Flow-Matching Operators for Residual-Augmented Learning</h3>
 
 <p align="center">
-  <a href="https://arxiv.org/abs/XXXX.XXXXX">📄 arXiv</a> •
-  <a href="#overview">Overview</a>
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#citation">Citation</a> •
+  <a href="https://arxiv.org/abs/2512.12749">📄 arXiv</a> |
+  <a href="#overview">Overview</a> |
+  <a href="#features">Features</a> |
+  <a href="#features">Features</a> |
+  <a href="#installation">Installation</a> |
+  <a href="#citation">Citation</a> |
 </p>
 
 ---
@@ -34,7 +35,7 @@ arbitrary spatial resolutions *without retraining*.
 
 ---
 
-## 🚀 Features
+## Features
 
 - 🌊 **Operator-Valued Flow Matching**
   Learns probability flow ODEs in function space for stable and scalable training.
@@ -55,7 +56,7 @@ arbitrary spatial resolutions *without retraining*.
 
 ---
 
-## 📦 Installation
+## Installation
 
 ```bash
 git clone git@github.com:sahilbhola14/floral.git
