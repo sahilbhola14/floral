@@ -1,5 +1,5 @@
 <h1 align="center">FLORAL 🌸</h1>
-<h3 align="center">Flow-Matching Operators for Residual-Augmented Learning</h3>
+<h3 align="center">Flow-Matching Operator for Residual-Augmented Learning</h3>
 
 <p align="center">
   <a href="https://arxiv.org/abs/2512.12749">📄 arXiv</a> |
