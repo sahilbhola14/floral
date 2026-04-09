@@ -1,4 +1,7 @@
 # src/floral/flow/flow.py
+"""
+Flow mathching operator
+"""
 import sys
 import lightning as L
 import matplotlib.pyplot as plt
@@ -13,7 +16,76 @@ from floral.utils import (
 )
 from floral.archs import get_vector_field_operator
 from floral.gp import get_gp_prior
+from collections.abc import Mapping
+from omegaconf import DictConfig, OmegaConf
+from dataclasses import dataclass, field
 from torchdiffeq import odeint
+
+
+@dataclass
+class FlowConfig:
+    """Default config for Flow with override support."""
+
+    # config defaults
+    config: dict = field(
+        default_factory=lambda: {
+            "floral": False,
+            "flow": {
+                "sig_min": 1e-5,
+                "operator": {
+                    "method": "FiLMFNO",
+                    "field": {
+                        "hidden_channels": 64,
+                        "lifting_channel_ratio": 4,
+                        "projection_channel_ratio": 4,
+                        "n_layers": 4,
+                        "modes": 64,
+                    },
+                },
+                "prior": {
+                    "lengthscale": 1e-3,
+                    "outputscale": 1.0,
+                    "confidence": 0.6,
+                },
+            },
+        }
+    )
+
+    # hp config defaults
+    hp_config: dict = field(
+        default_factory=lambda: {
+            "learning_rate": 1e-3,
+            "optimizer": "adam",
+            "weight_decay": 1e-4,
+            "scheduler": "exponential",
+            "exponential_scheduler_gamma": 0.99,
+            "lr_scheduler_step": 5,
+            "lr_scheduler_gamma": 0.1,
+        }
+    )
+
+    @staticmethod
+    def _to_dict_config(value):
+        if value is None:
+            return OmegaConf.create({})
+        if isinstance(value, DictConfig):
+            return value
+        if isinstance(value, Mapping):
+            return OmegaConf.create(dict(value))
+        if hasattr(value, "items"):
+            return OmegaConf.create({k: v for k, v in value.items()})
+        raise TypeError(f"Unsupported config type: {type(value).__name__}")
+
+    def resolve(self, config=None, hp_config=None):
+        merged_config = OmegaConf.merge(
+            OmegaConf.create(self.config),
+            self._to_dict_config(config),
+        )
+        merged_hp_config = OmegaConf.merge(
+            OmegaConf.create(self.hp_config),
+            self._to_dict_config(hp_config),
+        )
+        return merged_config, merged_hp_config
 
 
 class Flow(L.LightningModule):
@@ -27,6 +99,9 @@ class Flow(L.LightningModule):
         shape_dict: dict[str, int],
     ):
         super(Flow, self).__init__()
+        # merge defaults with user-provided runtime config/hp_config
+        config_defaults = FlowConfig()
+        config, hp_config = config_defaults.resolve(config=config, hp_config=hp_config)
         # convert
         self.config = config if isinstance(config, dict) else omega_to_dict(config)
         self.hp_config = (
@@ -35,6 +110,7 @@ class Flow(L.LightningModule):
         assert isinstance(domain_dict, dict)
         for k, v in domain_dict.items():
             domain_dict[k] = v.tolist() if isinstance(v, torch.Tensor) else v
+
         # shape dict
         self.shape_dict = shape_dict
 
@@ -50,26 +126,28 @@ class Flow(L.LightningModule):
 
         # save domain buffer
         for k, v in domain_dict.items():
-            # conver value to tensors
+            # convert value to tensors
             v_tensor = torch.Tensor(v)
             self.register_buffer(f"{k}_domain", v_tensor, persistent=True)
+
         # floral
-        self.floral = self.config.get("floral", True)
+        self.floral = self.config.get("floral")
+
         # extract flow config
-        flow_config = self.config["flow"]
-        self.sig_min = flow_config.get("sig_min", 1e-5)
+        self.flow_config = self.config.get("flow")
+        self.sig_min = self.flow_config.get("sig_min")
         # check train resolution
         self._check_train_resolution()
         # get slice operator
         self.slice_op = self._get_slice_operator()
         # build operator config
-        operator_config = self._get_operator_config(flow_config=flow_config)
+        operator_config = self._get_operator_config()
         # build the operator modules for the vector field
         self.vector_field = get_vector_field_operator(
             operator_config=operator_config, floral=self.floral
         )
         # build the prior (eval mode implicit)
-        self.prior_config = flow_config["prior"]
+        self.prior_config = self.flow_config.get("prior")
         # in case of residual, prior is scaled by 2.0 as r_0 = x_0 - \hat{x}_0, where
         # both rhs variables are GP(0, k(x, x^\prime)).
         prior_scale = 2.0 if self.floral else 1.0
@@ -143,28 +221,47 @@ class Flow(L.LightningModule):
         )
         return slice_op
 
+    def _log_losses(self, loss: torch.Tensor, stage: str):
+        """log all losses with stage prefix"""
+        log_kwargs = {"on_step": False, "on_epoch": True, "sync_dist": True}
+        self.log(f"{stage}_loss", loss, prog_bar=True, **log_kwargs)
+
     def training_step(self, batch, batch_idx):
         """training step"""
-        assert len(batch) == 3, "expected: (target_field, condition, LF_field)"
-        target_field, condition, LF_field = batch
+        # extract the batch
+        required_keys = ["target_field", "condition", "LF_field"]
+        check_keys(batch, required_keys)
+        target_field = batch.get("target_field")
+        condition = batch.get("condition")
+        LF_field = batch.get("LF_field")
+
         # compute the loss
         loss = self._comp_loss(
             target_field=target_field, condition=condition, LF_field=LF_field
         )
-        # log the training loss
-        self.log("train_loss", loss)
+
+        # log the loss
+        self._log_losses(loss, stage="train")
+
         return loss
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
-        assert len(batch) == 3, "expected: (target_field, condition, LF_field)"
-        target_field, condition, LF_field = batch
+        # extract the batch
+        required_keys = ["target_field", "condition", "LF_field"]
+        check_keys(batch, required_keys)
+        target_field = batch.get("target_field")
+        condition = batch.get("condition")
+        LF_field = batch.get("LF_field")
+
         # compute the loss
         loss = self._comp_loss(
             target_field=target_field, condition=condition, LF_field=LF_field
         )
-        # log the validation loss
-        self.log("val_loss", loss, prog_bar=True, sync_dist=True)
+
+        # log the loss
+        self._log_losses(loss, stage="val")
+
         return loss
 
     def configure_optimizers(self, verbose=False):
@@ -251,9 +348,9 @@ class Flow(L.LightningModule):
 
         return stepper
 
-    def _get_operator_config(self, flow_config):
+    def _get_operator_config(self):
         """get the operator config"""
-        operator_config = flow_config.get("operator")
+        operator_config = self.flow_config.get("operator")
         # check required keys in flow config
         required_keys = ["field", "method"]
         required_sub_keys = [
