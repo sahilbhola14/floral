@@ -7,11 +7,56 @@ conditional inputs, and domain embedding.
 """
 import torch
 import torch.nn as nn
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from omegaconf import DictConfig, OmegaConf
 
 from neuralop.models import FNO as _FNO
 from floral.utils import check_keys, check_tensor_blowup, printer
 from .embedding import build_domain_encoder
 from .fno import FiLMFNO
+
+
+@dataclass
+class VectorFieldConfig:
+    """Default config for VectorField with override support."""
+
+    config: dict = field(
+        default_factory=lambda: {
+            "method": "FiLMFNO",
+            "field": {
+                "channels": 1,
+                "ndim": 1,
+                "hidden_channels": 64,
+                "lifting_channel_ratio": 4,
+                "projection_channel_ratio": 4,
+                "n_layers": 4,
+                "modes": 64,
+            },
+            "condition": {
+                "channels": 1,
+                "ndim": 1,
+            },
+        }
+    )
+
+    @staticmethod
+    def _to_dict_config(value):
+        if value is None:
+            return OmegaConf.create({})
+        if isinstance(value, DictConfig):
+            return value
+        if isinstance(value, Mapping):
+            return OmegaConf.create(dict(value))
+        if hasattr(value, "items"):
+            return OmegaConf.create({k: v for k, v in value.items()})
+        raise TypeError(f"Unsupported config type: {type(value).__name__}")
+
+    def resolve(self, config=None):
+        return OmegaConf.merge(
+            OmegaConf.create(self.config),
+            self._to_dict_config(config),
+        )
 
 
 def get_vector_field_operator(operator_config: dict, floral: bool = False):
@@ -20,52 +65,44 @@ def get_vector_field_operator(operator_config: dict, floral: bool = False):
         operator_config (dict):
             configuration for building the operator
     """
-    # check the required keys
-    required_keys = ["method", "field", "condition"]
-    check_keys(operator_config, required_keys)
-    # create model
-    return VectorField(
-        field_config=operator_config["field"],
-        condition_config=operator_config["condition"],
-        method=operator_config["method"],
-        floral=floral,
-    )
+    return VectorField(config=operator_config, floral=floral)
 
 
 class VectorField(nn.Module):
     def __init__(
         self,
-        field_config: dict,
-        condition_config: dict,
-        method: str = "FiLMFNO",
+        config: dict,
         floral: bool = False,
-        **kwargs,
     ):
         super(VectorField, self).__init__()
-        # intial check
-        required_keys = ["channels", "ndim"]
-        check_keys(field_config, required_keys)
-        check_keys(condition_config, required_keys)
-        # set field attributes
-        self.method = method
+        # resolve config against defaults
+        self.config = VectorFieldConfig().resolve(config=config)
+        field_config = self.config.field
+        condition_config = self.config.condition
+
+        # check required keys
+        check_keys(field_config, ["channels", "ndim"])
+        check_keys(condition_config, ["channels", "ndim"])
+
+        # set attributes
+        self.method = self.config.method
         self.floral = floral
-        self.field_channels = field_config.get("channels")
-        self.field_ndim = field_config.get("ndim")
-        self.field_hidden_channels = field_config.get("hidden_channels", 128)
-        self.field_lifting_channel_ratio = field_config.get("lifting_channel_ratio", 2)
-        self.field_projection_channel_ratio = field_config.get(
-            "projection_channel_ratio", 2
-        )
-        self.field_n_layers = field_config.get("n_layers", 4)
-        self.field_modes = field_config.get("modes", 32)
-        # set condition attributes
-        self.condition_channels = condition_config.get("channels")
-        self.condition_ndim = condition_config.get("ndim")
+        self.field_channels = field_config.channels
+        self.field_ndim = field_config.ndim
+        self.field_hidden_channels = field_config.hidden_channels
+        self.field_lifting_channel_ratio = field_config.lifting_channel_ratio
+        self.field_projection_channel_ratio = field_config.projection_channel_ratio
+        self.field_n_layers = field_config.n_layers
+        self.field_modes = field_config.modes
+        self.condition_channels = condition_config.channels
+        self.condition_ndim = condition_config.ndim
+
         # time encoder
         self.time_encoder, self.time_embed_dim = build_domain_encoder(
             ndim=1,
             learnable_modes=False,
         )
+
         # operator
         self.field = self._build_field_module()
 
@@ -87,6 +124,7 @@ class VectorField(nn.Module):
         field_channels = self.field_channels
         # in_channels to the field
         if self.method == "FiLMFNO":
+            """FiLM is used to condition"""
             in_channels = field_channels + self.time_embed_dim
             # FiLMFNO
             field_model = FiLMFNO(
@@ -99,6 +137,7 @@ class VectorField(nn.Module):
                 cond_channels=self.condition_channels,
             )
         elif self.method == "FNO":
+            """Regular FNO is used where conditions are concatenated"""
             in_channels = field_channels + self.time_embed_dim + self.condition_channels
             field_model = _FNO(
                 in_channels=in_channels,
@@ -171,6 +210,8 @@ class VectorField(nn.Module):
             input_vt = torch.cat((psi_mod, t_embed), dim=1)
         elif self.method == "FNO":
             input_vt = torch.cat((psi_mod, t_embed, condition), dim=1)
+        else:
+            raise ValueError(f"Method: {self.method} input does not exist")
         return input_vt
 
     def forward(
@@ -218,5 +259,8 @@ class VectorField(nn.Module):
             vt = self.field(x=input_vt, cond=condition)
         elif self.method == "FNO":
             vt = self.field(input_vt)
+        else:
+            raise ValueError(f"Method: {self.method} vector field does not exist")
+
         check_tensor_blowup(vt, name="vector field")
         return vt
