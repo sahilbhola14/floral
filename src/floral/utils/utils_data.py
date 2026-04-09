@@ -2,10 +2,14 @@ import math
 import lightning as L
 import wandb
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset
+from dataclasses import dataclass, field
+from collections.abc import Mapping
+from omegaconf import DictConfig, OmegaConf
 from .utils_IO import (
     check_path,
     printer,
+    print_section,
     check_tensor_blowup,
     check_keys,
     deep_get,
@@ -31,6 +35,116 @@ def build_data_module(
     return data_module
 
 
+class MultiFidelityDataLoader(Dataset):
+    """Custom Dataset"""
+
+    def __init__(self, data_dict):
+        """
+        Args:
+            data_dict: dict like
+            {
+                "target_field":  torch.tensor,
+                "condition":  torch.tensor,
+                "LF_field":  torch.tensor,
+            }
+        """
+        self.data_dict = data_dict
+
+        # sanity check
+        self.length = next(iter(data_dict.values())).shape[0]
+        self._check_consistency()
+
+    def _check_consistency(self):
+        """check the length size"""
+        for key in self.data_dict:
+            assert self.data_dict[key].shape[0] == self.length, f"Mismatch in {key}"
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx):
+        """sample: dict like
+        {
+            "target_field":  tensor
+            "condition": tensor
+            "LF_Field": tensor,
+        }
+        """
+        sample = {k: self.data_dict[k][idx] for k in self.data_dict}
+
+        return sample
+
+
+@dataclass
+class OpDataModuleConfig:
+    """Default config for DataModule with override support."""
+
+    # config default
+    config: dict = field(
+        default_factory=lambda: {
+            "floral": False,
+            "data": {
+                "n_samples": 10,
+                "LF": {"path": "low_fidelity.pt"},
+                "HF": {"path": "high_fidelity.pt"},
+            },
+            "dataloader": {
+                "reload": False,
+                "train_ratio": 0.7,
+                "val_ratio": 0.15,
+                "test_ratio": 0.15,
+                "num_workers": 1,
+                "normalize": {
+                    "target_field": {
+                        "enabled": True,
+                        "auto": True,
+                        "mean": [0.0],
+                        "std": [1.0],
+                    },
+                    "condition": {
+                        "enabled": True,
+                        "auto": True,
+                        "mean": [0.0],
+                        "std": [1.0],
+                    },
+                    "LF_field": {
+                        "enabled": False,
+                        "auto": True,
+                        "mean": [0.1],
+                        "std": [0.5],
+                    },
+                },
+            },
+        }
+    )
+
+    # hp config default
+    hp_config: dict = field(default_factory=lambda: {"batch_size": 32})
+
+    @staticmethod
+    def _to_dict_config(value):
+        if value is None:
+            return OmegaConf.create({})
+        if isinstance(value, DictConfig):
+            return value
+        if isinstance(value, Mapping):
+            return OmegaConf.create(dict(value))
+        if hasattr(value, "items"):
+            return OmegaConf.create({k: v for k, v in value.items()})
+        raise TypeError(f"Unsupported config type: {type(value).__name__}")
+
+    def resolve(self, config=None, hp_config=None):
+        merged_config = OmegaConf.merge(
+            OmegaConf.create(self.config),
+            self._to_dict_config(config),
+        )
+        merged_hp_config = OmegaConf.merge(
+            OmegaConf.create(self.hp_config),
+            self._to_dict_config(hp_config),
+        )
+        return merged_config, merged_hp_config
+
+
 class OpDataModule(L.LightningDataModule):
     def __init__(
         self,
@@ -39,35 +153,32 @@ class OpDataModule(L.LightningDataModule):
         verbose: bool = False,
     ):
         super(OpDataModule, self).__init__()
-        self.config = config
-        self.hp_config = hp_config
+        # merge defaults with user-provided runtime config/hp_config
+        config_defaults = OpDataModuleConfig()
+        self.config, self.hp_config = config_defaults.resolve(
+            config=config,
+            hp_config=hp_config,
+        )
 
         # extract config
-        self.floral = self.config.get("floral", False)
-        self.LF_path = self.config.data.LF.path
-        self.HF_path = self.config.data.HF.path
-        self.n_samples = self.config.data.get("n_samples", 10)
-        self.n_val = self.config.data.get("n_val", 10)
-        self.n_train_all = self.n_samples - self.n_val
-        assert (
-            self.n_train_all > 0
-        ), f"number of validation samples cannot exceed : {self.n_samples}"
-        self.n_train = self.config.data.get("n_train", 10)
-        assert (
-            self.n_train <= self.n_train_all
-        ), f"number of train samples must be less than (or equal) to {self.n_train_all}"
+        self.floral = self.config.get("floral")
+        self.LF_path = deep_get(self.config, ["data", "LF", "path"])
+        self.HF_path = deep_get(self.config, ["data", "HF", "path"])
+        self.n_samples = self.config.data.get("n_samples")
+
         self.dataloader_config = self.config.dataloader
-        self.reload = self.dataloader_config.reload
-        self.num_workers = self.dataloader_config.num_workers
+        self.reload = self.dataloader_config.get("reload")
+        self.num_workers = self.dataloader_config.get("num_workers")
+        self.train_ratio = self.dataloader_config.get("train_ratio")
+        self.val_ratio = self.dataloader_config.get("val_ratio")
+        self.test_ratio = self.dataloader_config.get("test_ratio")
+
         # extract hp_config
         self.batch_size = self.hp_config.get("batch_size", 64)
 
         # load the data
-        printer(f"Loading low-fidelity data from {self.LF_path}")
-        self.LF_data = self._load_data(path=self.LF_path)
-        printer(f"Loading high-fidelity data from {self.HF_path}")
-        self.HF_data = self._load_data(path=self.HF_path)
-        printer("Done loading data")
+        self.LF_data = self._load_data(path=self.LF_path, verbose=verbose)
+        self.HF_data = self._load_data(path=self.HF_path, verbose=verbose)
 
         # file paths
         self.file_paths = self._get_file_paths()
@@ -76,16 +187,14 @@ class OpDataModule(L.LightningDataModule):
         if verbose:
             self._print_header()
 
-        assert (
-            self.n_train + self.n_val <= self.n_samples
-        ), "number of (train + val) samples cannot exceed available samples"
-
-    def _load_data(self, path):
+    def _load_data(self, path, verbose=False):
         """Load data from the specified path"""
+        if verbose:
+            print(f"Loading data from path: {path}")
         # initial check
         check_path(path)
         # load
-        data = dict(torch.load(path, weights_only=False))
+        data = torch.load(path, weights_only=False)
         # load  check
         required_keys = [
             "field",
@@ -112,23 +221,29 @@ class OpDataModule(L.LightningDataModule):
 
     def _print_header(self):
         """print the header for the dataloader"""
-        printer("==" * 50)
-        printer("**" * 10 + "Dataloader config" + "**" * 10)
+        print_section("Dataloader config")
         printer(f"Reload datasets: {self.reload}")
-        printer(f"Train samples: {self.n_train}")
-        printer(f"Validation samples: {self.n_val}")
-        printer(f"Train/Val ratio: {self.n_train/self.n_val}")
+        printer(f"Train ratio: {self.train_ratio}")
+        printer(f"Val ratio: {self.val_ratio}")
+        printer(f"Test ratio: {self.test_ratio}")
         printer(f"Batch size: {self.batch_size}")
         printer(f"Num workers: {self.num_workers}")
         printer(
-            f"Normalize field: {self.dataloader_config.normalize.target_field.enabled}"
-            f" with Auto: {self.dataloader_config.normalize.target_field.auto}"
+            f"Normalize field: {self.dataloader_config.normalize.target_field.enabled} "
+            f"with Auto: {self.dataloader_config.normalize.target_field.auto}"
         )
         printer(
-            f"Normalize condition: {self.dataloader_config.normalize.condition.enabled}"
-            f" with Auto: {self.dataloader_config.normalize.condition.auto}"
+            "Normalize condition: "
+            f"{self.dataloader_config.normalize.condition.enabled} "
+            f"with Auto: {self.dataloader_config.normalize.condition.auto}"
         )
-        printer("==" * 50)
+        printer(
+            "Normalize LF_field: "
+            f"{self.dataloader_config.normalize.LF_field.enabled} "
+            f"with Auto: {self.dataloader_config.normalize.LF_field.auto}"
+        )
+
+        print_section("Dataloader config", end=True)
 
     def _extract_keys(self, data_dict):
         """extract the keys: field, condition, domain from the data_dict"""
@@ -274,15 +389,35 @@ class OpDataModule(L.LightningDataModule):
 
     def _get_split_data_dict(self, op_data_dict):
         """split the operator data dict to train and validation"""
+        total_ratio = self.train_ratio + self.val_ratio + self.test_ratio
+        assert (
+            total_ratio <= 1.0 + 1e-8
+        ), f"Split ratios must sum to <= 1.0, got {total_ratio:.4f}"
+
+        n_train = int(self.n_samples * self.train_ratio)
+        n_val = int(self.n_samples * self.val_ratio)
+        n_test = self.n_samples - n_train - n_val
+
+        def _slice_value(value, start_idx, end_idx):
+            if isinstance(value, Mapping):
+                return {
+                    k: _slice_value(v, start_idx, end_idx) for k, v in value.items()
+                }
+            return value[start_idx:end_idx]
+
         train_data_dict = {}
         val_data_dict = {}
-        for k in op_data_dict:
-            # this splitting ensure that the same validation set (from end) is used
-            train_data_dict[k] = op_data_dict[k][: self.n_train_all][: self.n_train]
-            val_data_dict[k] = op_data_dict[k][-self.n_val :]
-            assert len(train_data_dict[k]) == self.n_train
-            assert len(val_data_dict[k]) == self.n_val
-        return train_data_dict, val_data_dict
+        test_data_dict = {}
+
+        train_start, train_end = 0, n_train
+        val_start, val_end = train_end, train_end + n_val
+        test_start, test_end = val_end, val_end + n_test
+
+        for key, value in op_data_dict.items():
+            train_data_dict[key] = _slice_value(value, train_start, train_end)
+            val_data_dict[key] = _slice_value(value, val_start, val_end)
+            test_data_dict[key] = _slice_value(value, test_start, test_end)
+        return train_data_dict, val_data_dict, test_data_dict
 
     def _get_statistics(self, data, normalize_config):
         """get the statistics"""
@@ -319,40 +454,34 @@ class OpDataModule(L.LightningDataModule):
         assert std.shape == (1, n_channels, *([1] * n_dims)), "incorrect std shape"
         return mean, std
 
-    def _get_normalize_data_dict(self, train_data_dict, val_data_dict):
-        """normalize the data using the training data statistics"""
-        # initial checks
+    def _get_normalize_data_dict(self, train_data_dict, val_data_dict, test_data_dict):
+        """Normalize train/val/test using statistics computed from the training data."""
         normalize_keys = ["target_field", "condition", "LF_field"]
-        check_keys(train_data_dict, normalize_keys)
-        check_keys(val_data_dict, normalize_keys)
+        splits = {
+            "train": train_data_dict,
+            "val": val_data_dict,
+            "test": test_data_dict,
+        }
+
+        for split_name, split_dict in splits.items():
+            check_keys(split_dict, normalize_keys)
 
         statistics = {}
-        train_norm_data_dict = {}
-        val_norm_data_dict = {}
-        for k in normalize_keys:
-            assert k in train_data_dict, f"{k} missing in train data dict"
-            assert k in val_data_dict, f"{k} missing in val data dict"
-            # load the data
-            train_data = train_data_dict[k]
-            val_data = val_data_dict[k]
-            # get the statistics
-            normalize_config = self.dataloader_config.normalize[k]
-            mean, std = self._get_statistics(
-                train_data, normalize_config=normalize_config
-            )
-            # normalize training data
-            train_norm_data_dict[k] = (train_data - mean) / std
-            # normalize validation data
-            val_norm_data_dict[k] = (val_data - mean) / std
-            # check for nan and infs
-            check_tensor_blowup(train_norm_data_dict[k], k + " (train)")
-            check_tensor_blowup(val_norm_data_dict[k], k + " (val)")
-            # save statistics
-            statistics[k] = {}
-            statistics[k]["mean"] = mean
-            statistics[k]["std"] = std
+        normalized = {k: {} for k in splits}
 
-        return train_norm_data_dict, val_norm_data_dict, statistics
+        for key in normalize_keys:
+            normalize_config = deep_get(self.dataloader_config, ["normalize", key])
+            mean, std = self._get_statistics(
+                train_data_dict[key], normalize_config=normalize_config
+            )
+            statistics[key] = {"mean": mean, "std": std}
+            for split_name, split_dict in splits.items():
+                normalized[split_name][key] = (split_dict[key] - mean) / std
+                check_tensor_blowup(
+                    normalized[split_name][key], f"{key} ({split_name})"
+                )
+
+        return normalized["train"], normalized["val"], normalized["test"], statistics
 
     def _set_attribute(self, name, val):
         """set the attribute"""
@@ -413,30 +542,31 @@ class OpDataModule(L.LightningDataModule):
             self._set_attribute("shape_dict", shape_dict)
             # set domain dict attribute
             self._set_attribute("domain_dict", domain_dict)
+
             # split
-            train_data_dict, val_data_dict = self._get_split_data_dict(op_data_dict)
+            train_data_dict, val_data_dict, test_data_dict = self._get_split_data_dict(
+                op_data_dict
+            )
+
             # normalize
             (
                 train_norm_data_dict,
                 val_norm_data_dict,
+                test_norm_data_dict,
                 statistics,
             ) = self._get_normalize_data_dict(
                 train_data_dict=train_data_dict,
                 val_data_dict=val_data_dict,
+                test_data_dict=test_data_dict,
             )
+
             # set statistics attribute
             self._set_attribute("statistics", statistics)
-            # create tensor dastasets for training and validation
-            self.train_set = TensorDataset(
-                train_norm_data_dict.get("target_field"),
-                train_norm_data_dict.get("condition"),
-                train_norm_data_dict.get("LF_field"),
-            )
-            self.val_set = TensorDataset(
-                val_norm_data_dict.get("target_field"),
-                val_norm_data_dict.get("condition"),
-                val_norm_data_dict.get("LF_field"),
-            )
+
+            # dataset
+            self.train_set = MultiFidelityDataLoader(train_norm_data_dict)
+            self.val_set = MultiFidelityDataLoader(val_norm_data_dict)
+            self.test_set = MultiFidelityDataLoader(test_norm_data_dict)
 
     def train_dataloader(self):
         """Returns the training dataloader"""
@@ -452,6 +582,16 @@ class OpDataModule(L.LightningDataModule):
         """Return the validation dataloader"""
         return DataLoader(
             self.val_set,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.dataloader_config.num_workers,
+            pin_memory=True,
+        )
+
+    def test_dataloader(self):
+        """Return the test dataloader"""
+        return DataLoader(
+            self.test_set,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.dataloader_config.num_workers,

@@ -11,8 +11,6 @@ logger_name: "onedcorr" # Logger folder
 # configuration for data
 data:
   n_samples: 6000 # total samples for training + validation (for tractability)
-  n_train: 50
-  n_val: 1000
   LF: # low fidelity
     path: "./low_fidelity.pt"
   HF: # high fidelity
@@ -22,6 +20,8 @@ data:
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   train_ratio: 0.7 # percentage of {n_samples} to train
+  val_ratio: 0.15 # percentage of {n_samples} to validate
+  test_ratio: 0.15 # percentage of {n_samples} to test
   num_workers: 5 # Number of workers
   normalize:
     # normalization: (x - mu) / sigma

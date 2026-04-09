@@ -1,9 +1,6 @@
 # examples/onedcorr/run.py
 """
 Flow-matching operator for residual-augmented learning for onedcorr
-Notes:
-    1. To improve reproducibility across architectures, tf32 is not used.
-    Emperically, operators were producing higher losses.
 """
 import torch
 import wandb
@@ -77,6 +74,7 @@ def train_model(hp_config: dict = None):
         ), "Hyperparameter config must be provided for training."
     # data module
     data_module = build_data_module(config=config, hp_config=hp_config, verbose=True)
+    raise NotImplementedError("wip")
     # checkpointer
     checkpointer = build_checkpointer(config=config)
     # get trainer
