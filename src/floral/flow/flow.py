@@ -590,12 +590,10 @@ class Flow(L.LightningModule):
         else:
             pass
 
-    def on_after_backward(self, check: bool = False):
-        """for debugging of unused parameters"""
-        if check:
-            self._check_unused_parameters()
-        else:
-            pass
+    def on_after_backward(self):
+        """log gradient norm for training stability"""
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), float("inf"))
+        self.log("grad_norm", grad_norm, on_step=True, on_epoch=False)
 
     def load_state_dict(self, state_dict, strict=True):
         # drop PyTorch-internal metadata if present
