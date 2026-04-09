@@ -4,6 +4,9 @@ import torch
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning import seed_everything
 from .utils_IO import get_logger, printer, print_section, check_keys
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from omegaconf import DictConfig, OmegaConf
 
 
 def seed_model(seed: int = 42):
@@ -53,6 +56,48 @@ def build_checkpointer(config: dict, verbose: bool = False):
     return checkpointer
 
 
+@dataclass
+class TrainerConfig:
+    """Default config for Trainer with override support."""
+
+    # config defaults
+    config: dict = field(
+        default_factory=lambda: {
+            "logger_name": "default_logger",
+            "train": {
+                "devices": 1,
+                "accelerator": "cpu",
+                "precision": "32-true",
+            },
+        }
+    )
+    # hp_config defaults
+    hp_config: dict = field(default_factory=lambda: {"max_epochs": 100})
+
+    @staticmethod
+    def _to_dict_config(value):
+        if value is None:
+            return OmegaConf.create({})
+        if isinstance(value, DictConfig):
+            return value
+        if isinstance(value, Mapping):
+            return OmegaConf.create(dict(value))
+        if hasattr(value, "items"):
+            return OmegaConf.create({k: v for k, v in value.items()})
+        raise TypeError(f"Unsupported config type: {type(value).__name__}")
+
+    def resolve(self, config=None, hp_config=None):
+        merged_config = OmegaConf.merge(
+            OmegaConf.create(self.config),
+            self._to_dict_config(config),
+        )
+        merged_hp_config = OmegaConf.merge(
+            OmegaConf.create(self.hp_config),
+            self._to_dict_config(hp_config),
+        )
+        return merged_config, merged_hp_config
+
+
 def build_trainer(
     config: dict,
     hp_config: wandb.sdk.wandb_config.Config | dict = None,
@@ -72,20 +117,23 @@ def build_trainer(
     Returns:
         trainer (L.Trainer): Trainer object for training the model.
     """
+    # merge defaults with user-provided runtime config/hp_config
+    config_defaults = TrainerConfig()
+    config, hp_config = config_defaults.resolve(config=config, hp_config=hp_config)
 
     # seed
     seed_model()
 
     # extract config and hp_config
-    devices = config.train.get("devices", 1)
-    accelerator = config.train.get("accelerator", "cpu")
-    logger_name = config.get("logger_name", "default_logger").lower().strip()
-    precision = config.train.get("precision", "32-true")
-    logger_identifier = "floral" if config.floral else "flora"
-    logger_name = logger_name + "_" + logger_identifier
-    max_epochs = hp_config.get("max_epochs", 100)
+    devices = config.train.get("devices")
+    accelerator = config.train.get("accelerator")
+    logger_name = config.get("logger_name").lower().strip()
+    precision = config.train.get("precision")
+    max_epochs = hp_config.get("max_epochs")
 
     # get logger
+    logger_identifier = "floral" if config.floral else "flora"
+    logger_name = logger_name + "_" + logger_identifier
     logger = get_logger(logger_name)
 
     # early stopping
