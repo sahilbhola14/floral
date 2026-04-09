@@ -4,7 +4,6 @@ Flow mathching operator
 """
 import sys
 import lightning as L
-import matplotlib.pyplot as plt
 import wandb
 import torch
 from floral.utils import (
@@ -152,18 +151,16 @@ class Flow(L.LightningModule):
         # both rhs variables are GP(0, k(x, x^\prime)).
         prior_scale = 2.0 if self.floral else 1.0
         self.prior = get_gp_prior(
-            lengthscale=self.prior_config.get("lengthscale", 1e-3),
-            outputscale=self.prior_config.get("outputscale", 1.0) * prior_scale,
+            lengthscale=self.prior_config.get("lengthscale"),
+            outputscale=self.prior_config.get("outputscale") * prior_scale,
             confidence=0.0,  # no bias
         )
         # noise
         self.noise = get_gp_prior(
-            lengthscale=self.prior_config.get("lengthscale", 1e-3),
-            outputscale=self.prior_config.get("outputscale", 1.0),
+            lengthscale=self.prior_config.get("lengthscale"),
+            outputscale=self.prior_config.get("outputscale"),
             confidence=0.0,  # no bias
         )
-
-        self.debug_plot = False
 
     def _check_train_resolution(self):
         """check the training resolution"""
@@ -476,36 +473,6 @@ class Flow(L.LightningModule):
         else:
             prior_samples = noise_samples
 
-        if self.debug_plot:
-            if self.shape_dict["field"]["ndim"] == 2:
-                fig, axs = plt.subplots(1, 3, figsize=(6, 2), layout="compressed")
-                imgs = [None] * 3
-                imgs[0] = axs[0].imshow(LF_field[0][0].detach().cpu().numpy())
-                axs[0].set_title("Low-fidelity")
-                imgs[1] = axs[1].imshow(noise_samples[0][0].detach().cpu().numpy())
-                axs[1].set_title("Prior Noise")
-                imgs[2] = axs[2].imshow(prior_samples[0][0].detach().cpu().numpy())
-                axs[2].set_title("x0")
-                for ii, ax in enumerate(axs):
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-                    fig.colorbar(imgs[ii], ax=axs[ii], fraction=0.45, pad=0.1)
-                plt.savefig("prior_floral.png" if self.floral else "prior_flora.png")
-            else:
-                fig, axs = plt.subplots(
-                    1, 3, figsize=(6, 2), layout="compressed", sharex=True, sharey=True
-                )
-                axs[0].plot(LF_field[0][0].detach().cpu().numpy())
-                axs[0].set_title("Low-fidelity")
-                axs[1].plot(noise_samples[0][0].detach().cpu().numpy())
-                axs[1].set_title("Prior Noise")
-                axs[2].plot(prior_samples[0][0].detach().cpu().numpy())
-                axs[2].set_title("x0")
-                for ii, ax in enumerate(axs):
-                    ax.set_xticks([])
-                    # ax.set_yticks([])
-                plt.savefig("prior_floral.png" if self.floral else "prior_flora.png")
-
         return prior_samples
 
     def _sample_conditional_flow(
@@ -538,49 +505,6 @@ class Flow(L.LightningModule):
         # sample from conditional probability path
         psi = (t_expand * target_field + (1.0 - t_expand) * prior) + noise
 
-        if self.debug_plot:
-            t_test = (
-                torch.linspace(0, 1, 10)
-                .view(10, 1, *([1] * field_ndim))
-                .to(self.device)
-            )
-            x0_test = prior[0].unsqueeze(0)
-            x1_test = target_field[0].unsqueeze(0)
-
-            psi_test = t_test * x1_test + (1.0 - t_test) * x0_test
-            noise_test = self._sample_noise_measure(10)
-            noise_test = (
-                self.sig_min
-                * noise_test
-                * torch.mean(
-                    (x1_test - x0_test) ** 2,
-                    dim=list(range(1, x1_test.ndim)),
-                    keepdim=True,
-                )
-            )
-            samp_test = psi_test + noise_test
-
-            fig, axs = plt.subplots(
-                5, 2, figsize=(4, 10), sharex=True, sharey=True, layout="compressed"
-            )
-            if self.shape_dict["field"]["ndim"] == 2:
-                for ii, ax in enumerate(axs.flatten()):
-                    im = ax.imshow(samp_test[ii][0].detach().cpu().numpy())
-                    # im = ax.imshow(psi_test[ii][0].detach().cpu().numpy())
-                    fig.colorbar(im, ax=ax, fraction=0.45, pad=0.1)
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-                plt.savefig("psi_floral.png" if self.floral else "psi_flora.png")
-            else:
-                for ii, ax in enumerate(axs.flatten()):
-                    ax.plot(samp_test[ii][0].detach().cpu().numpy())
-                    ax.set_xticks([])
-                plt.savefig("psi_floral.png" if self.floral else "psi_flora.png")
-
-        assert (
-            psi.shape == target_field.shape
-        ), "incorrect conditional flow sample shape"
-
         return psi
 
     def _comp_conditional_flow_derivative(
@@ -592,41 +516,9 @@ class Flow(L.LightningModule):
         assert (
             prior.shape == target_field.shape
         ), "prior sample shape not same as field shape"
-        psi_prime = target_field - prior
 
-        if self.debug_plot:
-            if self.shape_dict["field"]["ndim"] == 2:
-                fig, axs = plt.subplots(1, 3, layout="compressed", figsize=(6, 2))
-                imgs = [None] * 3
-                imgs[0] = axs[0].imshow(target_field[0][0].detach().cpu().numpy())
-                axs[0].set_title("High-fidelity")
-                imgs[1] = axs[1].imshow(prior[0][0].detach().cpu().numpy())
-                axs[1].set_title("x0")
-                imgs[2] = axs[2].imshow(psi_prime[0][0].detach().cpu().numpy())
-                axs[2].set_title("psi_prime")
-                for ii, im in enumerate(imgs):
-                    fig.colorbar(im, ax=axs[ii], fraction=0.4, pad=0.1)
-                    axs[ii].set_xticks([])
-                    axs[ii].set_yticks([])
-                plt.savefig(
-                    "psiprime_floral.png" if self.floral else "psiprime_flora.png"
-                )
-            else:
-                fig, axs = plt.subplots(
-                    1, 3, layout="compressed", figsize=(6, 2), sharey=True, sharex=True
-                )
-                axs[0].plot(target_field[0][0].detach().cpu().numpy())
-                axs[0].set_title("High-fidelity")
-                axs[1].plot(prior[0][0].detach().cpu().numpy())
-                axs[1].set_title("x0")
-                axs[2].plot(psi_prime[0][0].detach().cpu().numpy())
-                axs[2].set_title("psi_prime")
-                for ii in range(len(axs.flatten())):
-                    axs[ii].set_xticks([])
-                    # axs[ii].set_yticks([])
-                plt.savefig(
-                    "psiprime_floral.png" if self.floral else "psiprime_flora.png"
-                )
+        # compute the conditional flow
+        psi_prime = target_field - prior
 
         assert (
             psi_prime.shape == target_field.shape
@@ -678,8 +570,6 @@ class Flow(L.LightningModule):
         w_t = 1.0 + 2.0 * t**2
         loss_raw = ((vt - psi_prime) ** 2).mean(dim=list(range(1, vt.ndim)))
         loss = (w_t.squeeze() * loss_raw).mean()
-        if self.debug_plot:
-            sys.exit()
         return loss
 
     def _check_unused_parameters(self):
