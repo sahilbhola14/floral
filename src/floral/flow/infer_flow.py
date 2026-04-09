@@ -1,6 +1,7 @@
 # src/floral/flow/infer_flow.py
 """
-Infer the flow
+Inference module
+Perform the inference on the testset
 """
 import torch
 from tqdm import tqdm
@@ -9,7 +10,9 @@ from .flow import Flow
 from contextlib import nullcontext
 from torch.amp import autocast
 from floral.utils import print_section, check_path, printer
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 
 def perform_inference(
@@ -23,12 +26,14 @@ def perform_inference(
     best_flow = Flow.load_from_checkpoint(
         best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
     )
+    printer(f"Loaded from checkpoint: {best_model_path}")
     # set to eval mode and compile
     best_flow.eval()
     if hasattr(best_flow, "compile") and torch.cuda.is_available():
         # Use torch.compile for PyTorch 2.0+ (significant speedup)
         printer("Compiling the model...")
         best_flow = torch.compile(best_flow, mode="max-autotune")
+
     # create inference object
     infer = Inference(
         best_flow=best_flow,
@@ -38,8 +43,43 @@ def perform_inference(
         generate_config=config.generate,
         train_res=config.train.train_res,
     )
-
+    # perform inference
     infer()
+
+
+# inference class config
+@dataclass
+class InferenceConfig:
+    """Default config for Inference with override support."""
+
+    generate: dict = field(
+        default_factory=lambda: {
+            "n_gen": 10,
+            "n_steps": 2,
+            "method": "dopri5",
+            "rtol": 1e-5,
+            "atol": 1e-5,
+        }
+    )
+
+    @staticmethod
+    def _to_dict_config(value):
+        if value is None:
+            return OmegaConf.create({})
+        if isinstance(value, DictConfig):
+            return value
+        if isinstance(value, Mapping):
+            return OmegaConf.create(dict(value))
+        if hasattr(value, "items"):
+            return OmegaConf.create({k: v for k, v in value.items()})
+        raise TypeError(f"Unsupported config type: {type(value).__name__}")
+
+    def resolve(self, generate_config=None):
+        merged = OmegaConf.merge(
+            OmegaConf.create(self.generate),
+            self._to_dict_config(generate_config),
+        )
+        return merged
 
 
 class Inference:
@@ -52,123 +92,82 @@ class Inference:
         generate_config: dict,
         train_res: str | int,
     ):
+        # resolve generate config against defaults
+        infer_config_defaults = InferenceConfig()
+        self.generate_config = infer_config_defaults.resolve(generate_config)
+
         # set attributes
         self.best_flow = best_flow
         assert self.best_flow.training is False, "model should be in training mode"
         self.device = self.best_flow.device
         self.job_name = job_name.lower().strip()
         self.floral = floral
-        self.generate_config = generate_config
+
+        # enable inference optimizations
+        torch.backends.cudnn.benchmark = True
+        self.use_amp = False
+
         self.data_module = data_module
         self.train_res = (
             (train_res).strip().lower() if isinstance(train_res, str) else train_res
         )
-        # enable inference optimizations
-        torch.backends.cudnn.benchmark = True
-        self.use_amp = False
-        # extract generate config
-        self.n_gen = self.generate_config.get("n_gen", 10)
-        self.minibatch_size = self.generate_config.get("minibatch_size", 100)
-        # prepare inference input dict
-        self.inference_input_dict = self._get_inference_input_dict(
-            val_set=data_module.val_set
-        )
-        # domain dict
-        self.domain_dict = self.data_module.domain_dict
 
-    def _get_inference_input_dict(self, val_set):
-        """extract the inference input"""
-        assert len(val_set.tensors) == 3, "expected (target_field, condition, LF_field)"
-        # extract
-        target_field, condition, LF_field = val_set.tensors
-
-        # compute the LF_field (for plot)
-        LF_field_plot = self.data_module.denormalize_LF_field(normal_field=LF_field)
-        # compute HF_field (for plot)
-        HF_field_plot = self.data_module.denormalize_field(normal_field=target_field)
-        if self.floral:
-            HF_field_plot = HF_field_plot + LF_field_plot
-        # compute condition_plot (for plot)
-        condition_plot = self.data_module.denormalize_condition(
-            normal_condition=condition
-        )
-
-        # create dict
-        inference_input_dict = {
-            "condition": condition,
-            "LF_field": LF_field,
-            "condition_plot": condition_plot,
-            "HF_field_plot": HF_field_plot,
-            "LF_field_plot": LF_field_plot,
-            "n_batches": int(
-                (len(val_set) + self.minibatch_size - 1) / self.minibatch_size
-            ),
-        }
-        return inference_input_dict
+        # extract test set
+        self.data_module = data_module
+        self.test_loader = data_module.test_dataloader()
 
     @torch.no_grad()
     def __call__(self):
         """perform inference"""
         # local attributes
-        n_batches = self.inference_input_dict.get("n_batches")
         autocast_context = autocast("cuda") if self.use_amp else nullcontext()
-        pbar = tqdm(
-            range(n_batches),
-            desc="Inference",
-            ncols=150,
-            leave=True,
-        )
-        # get the LF (normalized)
-        all_LF_field = self.inference_input_dict.get("LF_field")
-        # get the condition (normalized)
-        all_condition = self.inference_input_dict.get("condition")
-        # get the LF (unnormalized)
-        all_LF_field_plot = self.inference_input_dict.get("LF_field_plot")
 
         # iterate
-        all_prediction_plot = []
-        for batch_idx in pbar:
-            lower_idx = batch_idx * self.minibatch_size
-            upper_idx = (batch_idx + 1) * self.minibatch_size
+        all_HF_field = []
+        all_LF_field = []
+        all_condition = []
+        all_prediction = []
+
+        for batch in tqdm(self.test_loader, desc="Inference", ncols=150, leave=True):
             with autocast_context:
-                # get batches
-                batch_LF_field = all_LF_field[lower_idx:upper_idx]
-                batch_condition = all_condition[lower_idx:upper_idx]
-                batch_LF_field_plot = all_LF_field_plot[lower_idx:upper_idx]
+                # extract
+                target_field = batch.get("target_field")
+                condition = batch.get("condition")
+                LF_field = batch.get("LF_field")
+                # denormalize inputs
+                target_field = self.data_module.denormalize_field(target_field).cpu()
+                condition = self.data_module.denormalize_condition(condition).cpu()
+                LF_field = self.data_module.denormalize_LF_field(LF_field).cpu()
 
-                # get prediction
-                batch_prediction_plot = self._get_prediction(
-                    condition=batch_condition, LF_field=batch_LF_field
+                # get denormalized prediction (pass original normalized batch tensors)
+                prediction = self._get_prediction(
+                    condition=batch.get("condition"), LF_field=batch.get("LF_field")
                 )
-                # add LF solution back for floral
                 if self.floral:
-                    batch_prediction_plot = (
-                        batch_prediction_plot + batch_LF_field_plot.unsqueeze(1)
-                    )
+                    prediction = prediction + LF_field.unsqueeze(1)
 
-                all_prediction_plot.append(batch_prediction_plot)
+                all_HF_field.append(target_field)
+                all_LF_field.append(LF_field)
+                all_condition.append(condition)
+                all_prediction.append(prediction)
 
         # ensure all async transfers are complete
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
-        # close the bar
-        pbar.close()
+        # stack across batches
+        all_HF_field = torch.cat(all_HF_field, dim=0)
+        all_LF_field = torch.cat(all_LF_field, dim=0)
+        all_condition = torch.cat(all_condition, dim=0)
+        all_prediction = torch.cat(all_prediction, dim=0)
 
-        # stack
-        all_prediction_plot = torch.vstack(all_prediction_plot)
-
-        # create result dict
         result_dict = {
-            "HF_field_plot": self.inference_input_dict.get("HF_field_plot"),
-            "LF_field_plot": self.inference_input_dict.get("LF_field_plot"),
-            "condition_plot": self.inference_input_dict.get("condition_plot"),
-            "HF_field_prediction_plot": all_prediction_plot,
-            "domain_dict": self.data_module.domain_dict,
-            "n_train": self.data_module.n_train,
-            "n_val": self.data_module.n_val,
-            "n_samples": self.data_module.n_samples,
+            "HF_field": all_HF_field,
+            "LF_field": all_LF_field,
+            "condition": all_condition,
+            "prediction": all_prediction,
         }
+
         # save the results to a file
         save_path_identifier = "floral" if self.floral else "flora"
         job_identifier = (
@@ -182,16 +181,19 @@ class Inference:
         torch.save(result_dict, save_path)
 
     def _get_prediction(self, condition: torch.Tensor, LF_field: torch.Tensor):
-        """integrate the ODE"""
-        # normalized prediciton
+        """integrate the ODE and return the de-normalized prediciton"""
+        # integrate the ode (normalized)
         prediction = self.best_flow.integrate_flow(
             condition=condition,
             LF_field=LF_field,
-            **self.generate_config,
+            generate_config=self.generate_config,
         ).cpu()
+
         # denormalize
         batch_size, n_gen, *dims = prediction.shape
-        prediction_plot = self.data_module.denormalize_field(
+
+        prediction = self.data_module.denormalize_field(
             normal_field=prediction.view(batch_size * n_gen, *dims)
         ).view(batch_size, n_gen, *dims)
-        return prediction_plot
+
+        return prediction

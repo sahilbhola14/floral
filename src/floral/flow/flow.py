@@ -642,59 +642,53 @@ class Flow(L.LightningModule):
         self,
         condition: torch.Tensor,
         LF_field: torch.Tensor,
-        n_gen: int = 10,
-        nT: int = 10,
-        method: str = "dopri5",
-        atol: float = 1.0e-4,
-        rtol: float = 1.0e-4,
-        **kwargs,
+        generate_config: dict,
     ):
-        """integrate the flow"""
-        # extract sizes
-        batch_size = condition.shape[0]
-        field_channels = deep_get(self.shape_dict, ["field", "channels"])
-        field_dims = deep_get(self.shape_dict, ["field", "dims"])
-        condition_channels = deep_get(self.shape_dict, ["condition", "channels"])
-        condition_dims = deep_get(self.shape_dict, ["condition", "dims"])
+        """integrate the flow on the full domain"""
+        # genernate config
+        n_steps = generate_config.get("n_steps")
+        n_gen = generate_config.get("n_gen")
+        atol = generate_config.get("atol")
+        rtol = generate_config.get("rtol")
+        method = generate_config.get("method")
 
-        # create condition batch
-        condition_batch = (
-            condition.unsqueeze(1)
-            .expand(-1, n_gen, condition_channels, *condition_dims)
-            .to(self.device)
+        # move to device
+        condition = condition.to(self.device)
+        LF_field = LF_field.to(self.device)
+
+        # reshape to (B, n_gen, *dims)
+        batch_size = len(condition)
+        condition = condition.unsqueeze(1).repeat(
+            1, n_gen, *([1] * (condition.ndim - 1))
         )
-        # create LF_field_batch
-        LF_field_batch = (
-            LF_field.unsqueeze(1)
-            .expand(-1, n_gen, field_channels, *field_dims)
-            .to(self.device)
-        )
-        LF_field_reshaped = LF_field_batch.reshape(-1, field_channels, *field_dims)
-        # full domain inference
+        LF_field = LF_field.unsqueeze(1).repeat(1, n_gen, *([1] * (LF_field.ndim - 1)))
+
+        # interation times
+        t = torch.linspace(0.0, 1.0, n_steps).to(self.device)
+
         # sample prior
         prior = self._sample_prior_measure(
             batch_size=batch_size * n_gen,
-            LF_field=LF_field_reshaped,
+            LF_field=LF_field.view(-1, *LF_field.shape[2:]),
             field_domain=self.field_domain,
-        ).view(batch_size, n_gen, field_channels, *field_dims)
+        )
+        prior = prior.view(batch_size, n_gen, *prior.shape[1:]).to(self.device)
 
-        prior = prior.to(self.device)
-
-        # interation times
-        t = torch.linspace(0, 1, nT).to(self.device)
-
-        # RHS
-        def _rhs(t, field):
+        # rhs
+        def _rhs(t, xt):
             vt = self._wrapper(
-                field=field,
-                condition=condition_batch,
-                LF_field=LF_field_batch,
+                field=xt,
+                condition=condition,
+                LF_field=LF_field,
                 t=t,
             )
+
             assert (
-                vt.shape == field.shape
+                vt.shape == xt.shape
             ), f"incorrect vecotor field shape. Expected {field.shape}, got {vt.shape}"
+
             check_tensor_blowup(vt, "vt vector field")
+
             return vt
 
         # integrate
@@ -708,5 +702,9 @@ class Flow(L.LightningModule):
                 rtol=rtol,
             )[-1]
 
-        assert x1.shape == (batch_size, n_gen, field_channels, *field_dims)
+        # check shape
+        channels = deep_get(self.shape_dict, ["field", "channels"])
+        dims = deep_get(self.shape_dict, ["field", "dims"])
+        assert x1.shape == (batch_size, n_gen, channels, *dims)
+
         return x1
