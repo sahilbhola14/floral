@@ -42,6 +42,7 @@ def perform_inference(
         floral=config.floral,
         generate_config=config.generate,
         train_res=config.train.train_res,
+        operator_method=config.flow.operator.method,
     )
     # perform inference
     infer()
@@ -91,6 +92,7 @@ class Inference:
         floral: bool,
         generate_config: dict,
         train_res: str | int,
+        operator_method: str,
     ):
         # resolve generate config against defaults
         infer_config_defaults = InferenceConfig()
@@ -102,6 +104,7 @@ class Inference:
         self.device = self.best_flow.device
         self.job_name = job_name.lower().strip()
         self.floral = floral
+        self.operator_method = operator_method
 
         # enable inference optimizations
         torch.backends.cudnn.benchmark = True
@@ -172,8 +175,10 @@ class Inference:
         save_path_identifier = "floral" if self.floral else "flora"
         job_identifier = (
             self.job_name
+            + f"_operator_method_{self.operator_method.strip().lower()}"
             + f"_n_train_{self.data_module.n_train}"
             + f"_n_val_{self.data_module.n_val}"
+            + f"_n_test_{self.data_module.n_test}"
             + f"_train_res_{self.train_res}"
         )
         save_path = f"{job_identifier}_results_{save_path_identifier}.pt"

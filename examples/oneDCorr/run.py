@@ -74,12 +74,11 @@ def train_model(hp_config: dict = None):
         ), "Hyperparameter config must be provided for training."
     # data module
     data_module = build_data_module(config=config, hp_config=hp_config, verbose=True)
-    raise NotImplementedError("wip")
     # checkpointer
     checkpointer = build_checkpointer(config=config)
     # get trainer
     trainer = build_trainer(
-        config=config, hp_config=hp_config, checkpointer=checkpointer, verbose=False
+        config=config, hp_config=hp_config, checkpointer=checkpointer, verbose=True
     )
     # model
     flow = Flow(
@@ -88,9 +87,11 @@ def train_model(hp_config: dict = None):
         domain_dict=data_module.domain_dict,
         shape_dict=data_module.shape_dict,
     )
+
     # if hasattr(flow, "compile") and torch.cuda.is_available():
     #     printer("Compiling the model...")
     #     flow = torch.compile(flow, mode="default")
+
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:
         check_path(config.checkpoint_load_path)
@@ -100,6 +101,7 @@ def train_model(hp_config: dict = None):
         flow = Flow.load_from_checkpoint(
             best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
         )
+
     # train
     print_section("Training")
     trainer.fit(flow, data_module)

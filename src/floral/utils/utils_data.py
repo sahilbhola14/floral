@@ -387,6 +387,21 @@ class OpDataModule(L.LightningDataModule):
         }
         return op_data_dict, shape_dict, domain_dict
 
+    @property
+    def n_train(self):
+        n_train = int(self.n_samples * self.train_ratio)
+        return n_train
+
+    @property
+    def n_val(self):
+        n_val = int(self.n_samples * self.val_ratio)
+        return n_val
+
+    @property
+    def n_test(self):
+        n_test = self.n_samples - self.n_train - self.n_val
+        return n_test
+
     def _get_split_data_dict(self, op_data_dict):
         """split the operator data dict to train and validation"""
         total_ratio = self.train_ratio + self.val_ratio + self.test_ratio
@@ -394,9 +409,9 @@ class OpDataModule(L.LightningDataModule):
             total_ratio <= 1.0 + 1e-8
         ), f"Split ratios must sum to <= 1.0, got {total_ratio:.4f}"
 
-        n_train = int(self.n_samples * self.train_ratio)
-        n_val = int(self.n_samples * self.val_ratio)
-        n_test = self.n_samples - n_train - n_val
+        n_train = self.n_train
+        n_val = self.n_val
+        n_test = self.n_test
 
         def _slice_value(value, start_idx, end_idx):
             if isinstance(value, Mapping):
