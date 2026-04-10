@@ -119,8 +119,8 @@ class BaseResidual(ABC):
 
         self.std_dict = {
             "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
-            "FLORA": self.HF_field_prediction_flora.std(1),
-            "FLORAL": self.HF_field_prediction_floral.std(1),
+            "FLORA": self.HF_field_prediction_flora.std(1, correction=0),
+            "FLORAL": self.HF_field_prediction_floral.std(1, correction=0),
         }
 
     def __call__(self, verbose: bool = False, model: str = None):
@@ -473,8 +473,8 @@ class twoDPlot(BasePlot):
 
         self.std_dict = {
             "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
-            "FLORA": self.HF_field_prediction_flora.std(1),
-            "FLORAL": self.HF_field_prediction_floral.std(1),
+            "FLORA": self.HF_field_prediction_flora.std(1, correction=0),
+            "FLORAL": self.HF_field_prediction_floral.std(1, correction=0),
         }
         self.error_dict = self._get_error_dict()
 
@@ -721,10 +721,10 @@ class oneDPlot(BasePlot):
 
         self.std_dict = {
             "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
-            "FLORA": self.HF_field_prediction_flora.std(1),
-            "FLORAL": self.HF_field_prediction_floral.std(1),
-            "FNO": self.HF_field_prediction_fno_flora.std(1),
-            "Residual FNO": self.HF_field_prediction_fno_floral.std(1),
+            "FLORA": self.HF_field_prediction_flora.std(1, correction=0),
+            "FLORAL": self.HF_field_prediction_floral.std(1, correction=0),
+            "FNO": self.HF_field_prediction_fno_flora.std(1, correction=0),
+            "Residual FNO": self.HF_field_prediction_fno_floral.std(1, correction=0),
         }
         self.error_dict = self._get_error_dict()
 
@@ -778,6 +778,7 @@ class oneDPlot(BasePlot):
         print(f"Plotting {std_factor} standard deviation")
         assert n_samples <= self.n_avail_samples
         print(f"Plotting {n_samples} samples for channel: {plot_channel}")
+        linewidth = kwargs.get("linewidth", 2.5)
         fig, axs = plt.subplots(
             n_samples,
             2,
@@ -789,17 +790,17 @@ class oneDPlot(BasePlot):
         )
         for k in self.mean_dict.keys():
             if k == "High-fidelity":
-                line_kwargs = dict(color="black", linestyle="-", linewidth=2)
+                line_kwargs = dict(color="black", linestyle="-", linewidth=linewidth)
             elif k == "Low-fidelity":
-                line_kwargs = dict(color="grey", linestyle="--", linewidth=2)
+                line_kwargs = dict(color="grey", linestyle="--", linewidth=linewidth)
             elif k == "FLORA":
-                line_kwargs = dict(color="red", linestyle="-", linewidth=2)
+                line_kwargs = dict(color="red", linestyle="-", linewidth=linewidth)
             elif k == "FLORAL":
-                line_kwargs = dict(color="blue", linestyle="-.", linewidth=2)
+                line_kwargs = dict(color="blue", linestyle="-.", linewidth=linewidth)
             elif k == "FNO":
-                line_kwargs = dict(color="green", linestyle="-", linewidth=2)
+                line_kwargs = dict(color="green", linestyle="-", linewidth=linewidth)
             elif k == "Residual FNO":
-                line_kwargs = dict(color="orange", linestyle="-.", linewidth=2)
+                line_kwargs = dict(color="orange", linestyle="-.", linewidth=linewidth)
             else:
                 raise ValueError(f"{k} not a valid entry")
 
@@ -920,7 +921,7 @@ class ParetoPlot:
     """Pareto plot class"""
 
     @classmethod
-    def get_pareto_data(self, data_flora, data_floral):
+    def get_pareto_data(self, data_flora, data_floral, model: str = None):
         """extract the pareto data"""
         # High-fidelity data (B, channels, *dims)
         HF_field = data_floral["HF_field"]
@@ -951,8 +952,8 @@ class ParetoPlot:
 
         std_dict = {
             "Low-fidelity": torch.ones_like(LF_field) * 1e-6,
-            "FLORA": HF_field_prediction_flora.std(1),
-            "FLORAL": HF_field_prediction_floral.std(1),
+            "FLORA": HF_field_prediction_flora.std(1, correction=0).clamp(min=1e-6),
+            "FLORAL": HF_field_prediction_floral.std(1, correction=0).clamp(min=1e-6),
         }
 
         # L2 norm
@@ -982,8 +983,10 @@ class ParetoPlot:
             for e, u in zip(
                 l2_error_dict[method].tolist(), uncertainty_dict[method].tolist()
             ):
-                error_rows.append({"Method": method, "L2 Error": e})
-                uncertainty_rows.append({"Method": method, "Mean Std": u})
+                error_rows.append({"Model": model, "Method": method, "L2 Error": e})
+                uncertainty_rows.append(
+                    {"Model": model, "Method": method, "Mean Std": u}
+                )
 
         # Convert to DataFrames and set method as ordered category
         error_df = pd.DataFrame(error_rows)
@@ -996,11 +999,11 @@ class ParetoPlot:
 
         # Compute method-wise means
         summary_df = (
-            error_df.groupby("Method", observed=False)["L2 Error"]
+            error_df.groupby(["Model", "Method"], observed=False)["L2 Error"]
             .mean()
             .to_frame()
             .join(
-                uncertainty_df.groupby("Method", observed=False)["Mean Std"]
+                uncertainty_df.groupby(["Model", "Method"], observed=False)["Mean Std"]
                 .mean()
                 .to_frame()
             )
@@ -1072,7 +1075,15 @@ class ParetoPlot:
         df_lf = combined_df[combined_df["Method"] == "Low-fidelity"].iloc[
             [0]
         ]  # take one row
-        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"]
+        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"].copy()
+
+        def _make_label(r):
+            if r["Model"] == "FNO":
+                return "FNO" if r["Method"] == "FLORA" else "Residual FNO"
+            return r["Method"]
+
+        df_rest["Label"] = df_rest.apply(_make_label, axis=1)
+        label_order = df_rest["Label"].unique().tolist()
 
         # Plot methods that depend on Samples (Train)
         figsize = kwargs.get("figsize", (10, 5))
@@ -1093,8 +1104,8 @@ class ParetoPlot:
             data=df_rest,
             x="Mean Std",
             y="L2 Error",
-            hue="Method",
-            hue_order=["FLORA", "FLORAL"],
+            hue="Label",
+            hue_order=label_order,
             style="Samples (train)",
             palette="Set2",
             s=100,
@@ -1113,7 +1124,7 @@ class ParetoPlot:
         handles, labels = ax.get_legend_handles_labels()
         # ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1),
         # loc="upper left")
-        ax.legend(handles, labels, title="", loc="lower left")
+        ax.legend(handles, labels, title="", loc="best")
         ax.set_xlabel("Mean Predictive Uncertainty")
         ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
         plt.savefig("pareto_comparison.png", dpi=300, pad_inches=0.1)

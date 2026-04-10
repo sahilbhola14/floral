@@ -121,17 +121,26 @@ def plot_field(n_train_samples):
         data_fno_floral=data_fno_floral,
     )
     # create sample plot
-    plotter.make_field_sample_plot(std_factor=10)
+    plotter.make_field_sample_plot(std_factor=10, figsize=(15, 12))
 
 
 def plot_pareto(n_train_samples_list):
     all_data = []
     for n_train_samples in n_train_samples_list:
         # load the data
-        data_flora, data_floral = load_data(n_train_samples)
-        # get pareto data
-        df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
+        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(
+            n_train_samples
+        )
+        # get pareto data for fm
+        df = ParetoPlot.get_pareto_data(
+            data_flora=data_flora, data_floral=data_floral, model="FM"
+        )
         all_data.append(df)
+        # get pareto data for fno
+        df_fno = ParetoPlot.get_pareto_data(
+            data_flora=data_fno_flora, data_floral=data_fno_floral, model="FNO"
+        )
+        all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
     ParetoPlot.plot_pareto(combined_df, ylim_range=(1e-2, 1e1), figsize=(7, 5))
 
@@ -180,14 +189,14 @@ def plot_error_summary(n_train_samples_list):
 
 if __name__ == "__main__":
     # residual summary
-    plot_residual_summary(n_train_samples_list)
+    # plot_residual_summary(n_train_samples_list)
 
     # error summary
-    plot_error_summary(n_train_samples_list)
+    # plot_error_summary(n_train_samples_list)
 
     # plot field
-    plot_field(n_train_samples=n_train_samples_list[-1])
-    plot_field(n_train_samples=n_train_samples_list[0])
+    # plot_field(n_train_samples=n_train_samples_list[-1])
+    # plot_field(n_train_samples=n_train_samples_list[0])
 
     # pareto
     plot_pareto(n_train_samples_list)
