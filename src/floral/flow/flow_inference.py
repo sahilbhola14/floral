@@ -1,4 +1,4 @@
-# src/floral/flow/infer_flow.py
+# src/floral/flow/flow_inference.py
 """
 Inference module
 Perform the inference on the testset
@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 
-def perform_inference(
+def flow_inference(
     best_model_path: str, data_module: L.LightningDataModule, config: DictConfig | dict
 ):
     """perform inference"""

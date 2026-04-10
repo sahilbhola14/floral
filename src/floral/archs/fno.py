@@ -19,8 +19,71 @@ from neuralop.layers.channel_mlp import ChannelMLP
 from neuralop.layers.complex import ComplexValued
 from typing import Tuple, List, Union, Literal, Optional
 from .embedding import ChannelFiLM, conv_nd
+from neuralop.models import FNO as _FNO
 
 warnings.filterwarnings("once", category=UserWarning)
+
+
+def build_fno(operator_config: dict):
+    """Build a FiLMFNO or FNO from a resolved operator config.
+
+    Args:
+        operator_config: dict with keys:
+            method (str): "FiLMFNO" or "FNO"
+            in_channels (int): total input channels (e.g. field + time embedding)
+            out_channels (int): output channels
+            field (dict): hidden_channels, lifting_channel_ratio,
+                          projection_channel_ratio, n_layers, modes, ndim,
+                          linear_skip (FiLMFNO only)
+            condition (dict): channels  (FiLMFNO only)
+
+    Returns:
+        nn.Module: the constructed operator
+    """
+    # extract
+    method = operator_config.get("method", "FiLMFNO")
+    in_channels = operator_config["in_channels"]
+    out_channels = operator_config["out_channels"]
+
+    field_cfg = operator_config["field"]
+    condition_cfg = operator_config["condition"]
+    assert field_cfg.get("ndim") == condition_cfg.get("ndim")
+
+    n_modes = (field_cfg["modes"],) * field_cfg["ndim"]
+
+    hidden_channels = field_cfg["hidden_channels"]
+    lifting_channel_ratio = field_cfg.get("lifting_channel_ratio", 2)
+    projection_channel_ratio = field_cfg.get("projection_channel_ratio", 2)
+    n_layers = field_cfg.get("n_layers", 4)
+
+    if method == "FiLMFNO":
+        cond_channels = operator_config["condition"]["channels"]
+        linear_skip = field_cfg.get("linear_skip", True)
+        return FiLMFNO(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            hidden_channels=hidden_channels,
+            lifting_channel_ratio=lifting_channel_ratio,
+            projection_channel_ratio=projection_channel_ratio,
+            n_modes=n_modes,
+            n_layers=n_layers,
+            cond_channels=cond_channels,
+            linear_skip=linear_skip,
+        )
+    elif method == "FNO":
+        return _FNO(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            hidden_channels=hidden_channels,
+            lifting_channel_ratio=lifting_channel_ratio,
+            projection_channel_ratio=projection_channel_ratio,
+            n_modes=n_modes,
+            n_layers=n_layers,
+        )
+    else:
+        raise ValueError(
+            f"Unknown FNO method: {method!r}. Expected 'FiLMFNO' or 'FNO'."
+        )
 
 
 class LinearOperator(nn.Module):

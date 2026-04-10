@@ -3,7 +3,7 @@ import lightning as L
 import torch
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning import seed_everything
-from .utils_IO import get_logger, printer, print_section, check_keys
+from .utils_IO import get_logger, printer, print_section, check_keys, deep_get
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from omegaconf import DictConfig, OmegaConf
@@ -39,7 +39,8 @@ def build_checkpointer(config: dict, verbose: bool = False):
     # checkpointer path
     check_keys(config, ["floral"])
     path_identifier = "floral" if config.floral else "flora"
-    path = ckp_save_path + path_identifier
+    objective = deep_get(config, ["train", "objective"], default="fm")
+    path = ckp_save_path + objective + path_identifier
     checkpointer = ModelCheckpoint(
         monitor="val_loss",
         mode="min",

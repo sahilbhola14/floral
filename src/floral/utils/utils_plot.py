@@ -81,15 +81,15 @@ class BaseResidual(ABC):
         self.data_floral = data_floral
 
         # High-fidelity data (B, channels, *dims)
-        self.HF_field = self.data_floral["HF_field_plot"]
+        self.HF_field = self.data_floral["HF_field"]
         # Low-fidelity data (B, channels, *dims)
-        self.LF_field = self.data_floral["LF_field_plot"]
+        self.LF_field = self.data_floral["LF_field"]
         # Prediction Flora
-        self.HF_field_prediction_flora = self.data_flora["HF_field_prediction_plot"]
+        self.HF_field_prediction_flora = self.data_flora["prediction"]
         # Prediction Floral
-        self.HF_field_prediction_floral = self.data_floral["HF_field_prediction_plot"]
+        self.HF_field_prediction_floral = self.data_floral["prediction"]
         # condition
-        self.full_condition = self.data_floral["condition_plot"]
+        self.full_condition = self.data_floral["condition"]
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
@@ -223,13 +223,13 @@ class ErrorSummary:
         self.data_floral = data_floral
 
         # High-fidelity data (B, channels, *dims)
-        self.HF_field = self.data_floral["HF_field_plot"]
+        self.HF_field = self.data_floral["HF_field"]
         # Low-fidelity data (B, channels, *dims)
-        self.LF_field = self.data_floral["LF_field_plot"]
+        self.LF_field = self.data_floral["LF_field"]
         # Prediction Flora
-        self.HF_field_prediction_flora = self.data_flora["HF_field_prediction_plot"]
+        self.HF_field_prediction_flora = self.data_flora["prediction"]
         # Prediction Floral
-        self.HF_field_prediction_floral = self.data_floral["HF_field_prediction_plot"]
+        self.HF_field_prediction_floral = self.data_floral["prediction"]
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
@@ -426,13 +426,13 @@ class twoDPlot(BasePlot):
         self.data_floral = data_floral
 
         # High-fidelity data (B, channels, *dims)
-        self.HF_field = self.data_floral["HF_field_plot"]
+        self.HF_field = self.data_floral["HF_field"]
         # Low-fidelity data (B, channels, *dims)
-        self.LF_field = self.data_floral["LF_field_plot"]
+        self.LF_field = self.data_floral["LF_field"]
         # Prediction Flora
-        self.HF_field_prediction_flora = self.data_flora["HF_field_prediction_plot"]
+        self.HF_field_prediction_flora = self.data_flora["prediction"]
         # Prediction Floral
-        self.HF_field_prediction_floral = self.data_floral["HF_field_prediction_plot"]
+        self.HF_field_prediction_floral = self.data_floral["prediction"]
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
@@ -657,13 +657,13 @@ class oneDPlot(BasePlot):
         self.data_floral = data_floral
 
         # High-fidelity data (B, channels, *dims)
-        self.HF_field = self.data_floral["HF_field_plot"]
+        self.HF_field = self.data_floral["HF_field"]
         # Low-fidelity data (B, channels, *dims)
-        self.LF_field = self.data_floral["LF_field_plot"]
+        self.LF_field = self.data_floral["LF_field"]
         # Prediction Flora
-        self.HF_field_prediction_flora = self.data_flora["HF_field_prediction_plot"]
+        self.HF_field_prediction_flora = self.data_flora["prediction"]
         # Prediction Floral
-        self.HF_field_prediction_floral = self.data_floral["HF_field_prediction_plot"]
+        self.HF_field_prediction_floral = self.data_floral["prediction"]
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
@@ -885,13 +885,13 @@ class ParetoPlot:
     def get_pareto_data(self, data_flora, data_floral):
         """extract the pareto data"""
         # High-fidelity data (B, channels, *dims)
-        HF_field = data_floral["HF_field_plot"]
+        HF_field = data_floral["HF_field"]
         # Low-fidelity data (B, channels, *dims)
-        LF_field = data_floral["LF_field_plot"]
+        LF_field = data_floral["LF_field"]
         # Prediction Flora
-        HF_field_prediction_flora = data_flora["HF_field_prediction_plot"]
+        HF_field_prediction_flora = data_flora["prediction"]
         # Prediction Floral
-        HF_field_prediction_floral = data_floral["HF_field_prediction_plot"]
+        HF_field_prediction_floral = data_floral["prediction"]
         # extract num train and val
         # n_train = data_floral["n_train"]
         # n_val = data_floral["n_val"]

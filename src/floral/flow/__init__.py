@@ -1,4 +1,4 @@
 from .flow import Flow
-from .infer_flow import perform_inference
+from .flow_inference import flow_inference
 
-__all__ = ["Flow", "perform_inference"]
+__all__ = ["Flow", "flow_inference"]

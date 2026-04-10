@@ -215,6 +215,7 @@ class OpDataModule(L.LightningDataModule):
             "datasets": {
                 "train": "trainset_floral.pt" if self.floral else "trainset_flora.pt",
                 "val": "valset_floral.pt" if self.floral else "valset_flora.pt",
+                "test": "testset_floral.pt" if self.floral else "testset_flora.pt",
             },
             "statistics": (
                 "statistics_floral.pt" if self.floral else "statistics_flora.pt"
