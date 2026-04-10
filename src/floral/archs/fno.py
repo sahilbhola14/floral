@@ -18,18 +18,21 @@ from neuralop.layers.fno_block import FNOBlocks
 from neuralop.layers.channel_mlp import ChannelMLP
 from neuralop.layers.complex import ComplexValued
 from typing import Tuple, List, Union, Literal, Optional
-from .embedding import ChannelFiLM
+from .embedding import ChannelFiLM, conv_nd
 
 warnings.filterwarnings("once", category=UserWarning)
 
 
 class LinearOperator(nn.Module):
-    """Global linear operator via spectral convolution.
+    """Global linear operator: spectral conv (K) + pointwise conv (W).
 
-    Captures spatial correlations linearly through Fourier modes,
-    equivalent to a linear map between function spaces.
-    kernel_size=1 pointwise convolutions are purely local and lose all
-    spatial structure, so SpectralConv is the correct primitive here.
+    Mirrors the K + W decomposition from the FNO paper applied as a single
+    input-to-output bypass:
+      - SpectralConv captures global spatial correlations via Fourier modes
+      - pointwise Conv1x1 handles local channel mixing
+    Both branches are linear; no activations are applied, so the sum remains
+    a linear operator. Lightweight: only one extra 1x1 conv over the bare
+    spectral version.
     """
 
     def __init__(
@@ -39,10 +42,12 @@ class LinearOperator(nn.Module):
         out_channels: int,
     ):
         super(LinearOperator, self).__init__()
-        self.conv = SpectralConv(in_channels, out_channels, n_modes)
+        n_dim = len(n_modes)
+        self.K = SpectralConv(in_channels, out_channels, n_modes)
+        self.W = conv_nd(n_dim, in_channels, out_channels, kernel_size=1, padding=0)
 
     def forward(self, x):
-        return self.conv(x)
+        return self.K(x) + self.W(x)
 
 
 class FiLMFNO(BaseModel, name="FiLMFNO"):

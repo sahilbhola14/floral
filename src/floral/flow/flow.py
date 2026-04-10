@@ -218,10 +218,14 @@ class Flow(L.LightningModule):
         )
         return slice_op
 
-    def _log_losses(self, loss: torch.Tensor, stage: str):
+    def _log_losses(self, loss_dict: dict, stage: str):
         """log all losses with stage prefix"""
         log_kwargs = {"on_step": False, "on_epoch": True, "sync_dist": True}
-        self.log(f"{stage}_loss", loss, prog_bar=True, **log_kwargs)
+        self.log(f"{stage}_loss", loss_dict["loss"], prog_bar=True, **log_kwargs)
+        self.log(f"{stage}_loss_unweighted", loss_dict["loss_unweighted"], **log_kwargs)
+        self.log(f"{stage}_rel_l2", loss_dict["rel_l2"], **log_kwargs)
+        self.log(f"{stage}_loss_early_t", loss_dict["loss_early_t"], **log_kwargs)
+        self.log(f"{stage}_loss_late_t", loss_dict["loss_late_t"], **log_kwargs)
 
     def training_step(self, batch, batch_idx):
         """training step"""
@@ -233,14 +237,14 @@ class Flow(L.LightningModule):
         LF_field = batch.get("LF_field")
 
         # compute the loss
-        loss = self._comp_loss(
+        loss_dict = self._comp_loss(
             target_field=target_field, condition=condition, LF_field=LF_field
         )
 
         # log the loss
-        self._log_losses(loss, stage="train")
+        self._log_losses(loss_dict, stage="train")
 
-        return loss
+        return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx):
         """validation step"""
@@ -252,14 +256,14 @@ class Flow(L.LightningModule):
         LF_field = batch.get("LF_field")
 
         # compute the loss
-        loss = self._comp_loss(
+        loss_dict = self._comp_loss(
             target_field=target_field, condition=condition, LF_field=LF_field
         )
 
         # log the loss
-        self._log_losses(loss, stage="val")
+        self._log_losses(loss_dict, stage="val")
 
-        return loss
+        return loss_dict["loss"]
 
     def configure_optimizers(self, verbose=False):
         """configure the optimizers
@@ -564,13 +568,39 @@ class Flow(L.LightningModule):
             t=t,
         )
         assert vt.shape == psi_prime.shape, "incorrect target and model vector field"
-        # Compute without time weighting
-        # loss = torch.mean((vt - psi_prime)**2)
-        # Compute time weighted loss
-        w_t = 1.0 + 2.0 * t**2
-        loss_raw = ((vt - psi_prime) ** 2).mean(dim=list(range(1, vt.ndim)))
-        loss = (w_t.squeeze() * loss_raw).mean()
-        return loss
+        spatial_dims = list(range(1, vt.ndim))
+
+        # per-sample squared errors
+        err_sq = ((vt - psi_prime) ** 2).mean(dim=spatial_dims)  # (B,)
+
+        # time-weighted loss (training objective)
+        w_t = (1.0 + 2.0 * t**2).squeeze()  # (B,)
+        loss = (w_t * err_sq).mean()
+
+        # unweighted MSE — shows raw fit quality without time emphasis
+        loss_unweighted = err_sq.mean()
+
+        # relative L2 — scale-invariant, comparable across runs
+        target_norm_sq = (psi_prime**2).mean(dim=spatial_dims).mean()
+        rel_l2 = loss_unweighted / (target_norm_sq + 1e-8)
+
+        # time-stratified losses — early (t<0.5) vs late (t>0.5)
+        # linear skip should reduce late-time error most
+        t_flat = t.squeeze()  # (B,)
+        early_mask = t_flat < 0.5
+        late_mask = ~early_mask
+        loss_early_t = (
+            err_sq[early_mask].mean() if early_mask.any() else loss_unweighted
+        )
+        loss_late_t = err_sq[late_mask].mean() if late_mask.any() else loss_unweighted
+
+        return {
+            "loss": loss,
+            "loss_unweighted": loss_unweighted,
+            "rel_l2": rel_l2,
+            "loss_early_t": loss_early_t,
+            "loss_late_t": loss_late_t,
+        }
 
     def _check_unused_parameters(self):
         """Check which parameters or buffers have no gradients after backward."""
