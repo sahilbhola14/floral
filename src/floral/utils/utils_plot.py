@@ -261,7 +261,7 @@ class ErrorSummary:
             "FLORAL": self.HF_field_prediction_floral.mean(1),
         }
 
-    def __call__(self, verbose: bool = False):
+    def __call__(self, model: str, verbose: bool = False):
         error_dict = {
             # "abs_error": {},
             # "rel_error": {},
@@ -306,6 +306,7 @@ class ErrorSummary:
                         "Samples (train)": self.n_train,
                         "Samples (val)": self.n_val,
                         "Samples (total)": self.n_samples,
+                        "Model": model,
                         "Method": fidelity,
                         "Metric": metric,
                         "Value": val.item() if hasattr(val, "item") else val,
@@ -376,6 +377,11 @@ class ErrorSummary:
         # extract low-fidelity residual (same for all train samples)
         subset_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
 
+        def _make_label(r):
+            if r["Model"] == "FNO":
+                return "FNO" if r["Method"] == "FLORA" else "Residual FNO"
+            return r["Method"]
+
         # Create 1×3 subplots
         fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
         for ii, (ax, metric) in enumerate(zip(axes, metrics)):
@@ -383,7 +389,9 @@ class ErrorSummary:
             subset_plot = combined_df[
                 (combined_df["Metric"] == metric)
                 & (combined_df["Method"] != "Low-fidelity")
-            ]
+            ].copy()
+            subset_plot["Label"] = subset_plot.apply(_make_label, axis=1)
+            label_order = subset_plot["Label"].unique().tolist()
             subset_LF_plot = subset_LF[subset_LF["Metric"] == metric]
             metric_LF = subset_LF_plot["Value"].mean()
 
@@ -392,10 +400,10 @@ class ErrorSummary:
                 data=subset_plot,
                 x="Samples (train)",
                 y="Value",
-                style="Method",
-                style_order=["FLORA", "FLORAL"],
-                hue="Method",
-                hue_order=["FLORA", "FLORAL"],
+                style="Label",
+                style_order=label_order,
+                hue="Label",
+                hue_order=label_order,
                 palette="Set2",
                 s=150,
                 edgecolor="black",
@@ -412,7 +420,7 @@ class ErrorSummary:
             ax.set_xlabel("Samples (train)", fontsize=15)
             ax.set_ylabel(metric, fontsize=15)
             if ii == 0:
-                ax.legend().set_title("Method")
+                ax.legend().set_title("Model")
             else:
                 ax.legend_.remove()
             ax.set_yscale("log")
@@ -660,10 +668,19 @@ class twoDPlot(BasePlot):
 class oneDPlot(BasePlot):
     """Plot multiple samples"""
 
-    def __init__(self, data_flora: dict, data_floral: dict):
+    def __init__(
+        self,
+        data_flora: dict,
+        data_floral: dict,
+        data_fno_flora: dict,
+        data_fno_floral: dict,
+    ):
         super(oneDPlot, self).__init__()
         self.data_flora = data_flora
         self.data_floral = data_floral
+
+        self.data_fno_flora = data_fno_flora
+        self.data_fno_floral = data_fno_floral
 
         # High-fidelity data (B, channels, *dims)
         self.HF_field = self.data_floral["HF_field"]
@@ -671,8 +688,10 @@ class oneDPlot(BasePlot):
         self.LF_field = self.data_floral["LF_field"]
         # Prediction Flora
         self.HF_field_prediction_flora = self.data_flora["prediction"]
+        self.HF_field_prediction_fno_flora = self.data_fno_flora["prediction"]
         # Prediction Floral
         self.HF_field_prediction_floral = self.data_floral["prediction"]
+        self.HF_field_prediction_fno_floral = self.data_fno_floral["prediction"]
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
@@ -683,6 +702,8 @@ class oneDPlot(BasePlot):
         assert len(self.LF_field) == self.n_avail_samples
         assert len(self.HF_field_prediction_flora) == self.n_avail_samples
         assert len(self.HF_field_prediction_floral) == self.n_avail_samples
+        assert len(self.HF_field_prediction_fno_flora) == self.n_avail_samples
+        assert len(self.HF_field_prediction_fno_floral) == self.n_avail_samples
 
         # number of UQ samples
         self.n_gen = self.HF_field_prediction_floral.shape[1]
@@ -694,12 +715,16 @@ class oneDPlot(BasePlot):
             "High-fidelity": self.HF_field,
             "FLORA": self.HF_field_prediction_flora.mean(1),
             "FLORAL": self.HF_field_prediction_floral.mean(1),
+            "FNO": self.HF_field_prediction_fno_flora.mean(1),
+            "Residual FNO": self.HF_field_prediction_fno_floral.mean(1),
         }
 
         self.std_dict = {
             "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
             "FLORA": self.HF_field_prediction_flora.std(1),
             "FLORAL": self.HF_field_prediction_floral.std(1),
+            "FNO": self.HF_field_prediction_fno_flora.std(1),
+            "Residual FNO": self.HF_field_prediction_fno_floral.std(1),
         }
         self.error_dict = self._get_error_dict()
 
@@ -771,6 +796,10 @@ class oneDPlot(BasePlot):
                 line_kwargs = dict(color="red", linestyle="-", linewidth=2)
             elif k == "FLORAL":
                 line_kwargs = dict(color="blue", linestyle="-.", linewidth=2)
+            elif k == "FNO":
+                line_kwargs = dict(color="green", linestyle="-", linewidth=2)
+            elif k == "Residual FNO":
+                line_kwargs = dict(color="orange", linestyle="-.", linewidth=2)
             else:
                 raise ValueError(f"{k} not a valid entry")
 
@@ -783,7 +812,7 @@ class oneDPlot(BasePlot):
                     **line_kwargs,
                 )
 
-                if k in ["FLORA", "FLORAL"]:
+                if k in ["FLORA", "FLORAL", "FNO", "Residual FNO"]:
                     std_pred = self.std_dict[k][ii][plot_channel].ravel()
                     axs[ii, 0].fill_between(
                         self.field_domain,

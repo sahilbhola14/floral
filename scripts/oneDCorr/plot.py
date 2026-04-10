@@ -110,9 +110,16 @@ class ResidualOneDCorr(BaseResidual):
 
 def plot_field(n_train_samples):
     # load the data
-    data_flora, data_floral = load_data(n_train_samples)
+    data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(
+        n_train_samples
+    )
     # create plot object
-    plotter = oneDPlot(data_flora=data_flora, data_floral=data_floral)
+    plotter = oneDPlot(
+        data_flora=data_flora,
+        data_floral=data_floral,
+        data_fno_flora=data_fno_flora,
+        data_fno_floral=data_fno_floral,
+    )
     # create sample plot
     plotter.make_field_sample_plot(std_factor=10)
 
@@ -154,11 +161,19 @@ def plot_error_summary(n_train_samples_list):
     all_data = []
     for n_train_samples in n_train_samples_list:
         # load the data
-        data_flora, data_floral = load_data(n_train_samples)
-        # get pareto data
+        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(
+            n_train_samples
+        )
+        # compute error summary for fm
         summary = ErrorSummary(data_flora=data_flora, data_floral=data_floral)
-        df = summary(verbose=True)
+        df = summary(verbose=True, model="FM")
         all_data.append(df)
+        # compute error summary for fno
+        summary_fno = ErrorSummary(
+            data_flora=data_fno_flora, data_floral=data_fno_floral
+        )
+        df_fno = summary_fno(verbose=True, model="FNO")
+        all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
     ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e1), xlim_range=(0, 1e4))
 
@@ -167,10 +182,12 @@ if __name__ == "__main__":
     # residual summary
     plot_residual_summary(n_train_samples_list)
 
-    # # error summary
-    # plot_error_summary(n_train_samples_list)
-    # # # plot field
-    # plot_field(n_train_samples=n_train_samples_list[-1])
-    # plot_field(n_train_samples=n_train_samples_list[0])
+    # error summary
+    plot_error_summary(n_train_samples_list)
+
+    # plot field
+    plot_field(n_train_samples=n_train_samples_list[-1])
+    plot_field(n_train_samples=n_train_samples_list[0])
+
     # pareto
-    # plot_pareto(n_train_samples_list)
+    plot_pareto(n_train_samples_list)
