@@ -189,14 +189,14 @@ def plot_error_summary(n_train_samples_list):
 
 if __name__ == "__main__":
     # residual summary
-    # plot_residual_summary(n_train_samples_list)
+    plot_residual_summary(n_train_samples_list)
 
     # error summary
-    # plot_error_summary(n_train_samples_list)
+    plot_error_summary(n_train_samples_list)
 
     # plot field
-    # plot_field(n_train_samples=n_train_samples_list[-1])
-    # plot_field(n_train_samples=n_train_samples_list[0])
+    plot_field(n_train_samples=n_train_samples_list[-1])
+    plot_field(n_train_samples=n_train_samples_list[0])
 
     # pareto
     plot_pareto(n_train_samples_list)
