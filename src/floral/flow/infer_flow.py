@@ -147,9 +147,15 @@ class Inference:
                     condition=batch.get("condition"), LF_field=batch.get("LF_field")
                 )
                 if self.floral:
+                    # prediction field = residual_prediction + LF_field
                     prediction = prediction + LF_field.unsqueeze(1)
+                    # target field = residual + LF_field
+                    HF_field = target_field + LF_field
+                else:
+                    # target field = HF_field
+                    HF_field = target_field
 
-                all_HF_field.append(target_field)
+                all_HF_field.append(HF_field)
                 all_LF_field.append(LF_field)
                 all_condition.append(condition)
                 all_prediction.append(prediction)
@@ -169,6 +175,11 @@ class Inference:
             "LF_field": all_LF_field,
             "condition": all_condition,
             "prediction": all_prediction,
+            "domain_dict": self.data_module.domain_dict,
+            "n_train": self.data_module.n_train,
+            "n_val": self.data_module.n_val,
+            "n_test": self.data_module.n_test,
+            "n_samples": self.data_module.n_samples,
         }
 
         # save the results to a file
