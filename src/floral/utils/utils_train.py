@@ -103,6 +103,7 @@ def build_trainer(
     hp_config: wandb.sdk.wandb_config.Config | dict = None,
     checkpointer=None,
     verbose: bool = False,
+    group: str = None,
 ):
     """Get the trainer for training the model.
     Args:
@@ -134,7 +135,7 @@ def build_trainer(
     # get logger
     logger_identifier = "floral" if config.floral else "flora"
     logger_name = logger_name + "_" + logger_identifier
-    logger = get_logger(logger_name)
+    logger = get_logger(logger_name, group=group)
 
     # early stopping
     early_stop_callback = EarlyStopping(

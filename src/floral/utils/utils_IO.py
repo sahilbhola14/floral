@@ -161,13 +161,14 @@ def check_tensor_blowup(t: torch.Tensor | np.ndarray, name: str = "tensor"):
         raise ValueError(f"Invalid input type: {type(t).__name__}")
 
 
-def get_logger(name: str):
+def get_logger(name: str, group: str = None):
     """Get a logger with a unique version based on the current time."""
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     # Use WandbLogger for better integration with Weights & Biases
     logger = WandbLogger(
         name=f"experiment-{current_time}",  # this appears in wandb dashboard
         project=name,
-        log_model=False,  # optional: logs model checkpoints as artifacts
+        group=group,  # groups runs together in the W&B UI (e.g. ablation studies)
+        log_model=False,
     )
     return logger
