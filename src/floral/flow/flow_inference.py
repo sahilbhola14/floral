@@ -186,7 +186,7 @@ class Inference:
         save_path_identifier = "floral" if self.floral else "flora"
         job_identifier = (
             self.job_name
-            + f"_operator_method_{self.operator_method.strip().lower()}"
+            + f"_fm_operator_method_{self.operator_method.strip().lower()}"
             + f"_n_train_{self.data_module.n_train}"
             + f"_n_val_{self.data_module.n_val}"
             + f"_n_test_{self.data_module.n_test}"
