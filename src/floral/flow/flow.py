@@ -3,6 +3,7 @@
 Flow mathching operator
 """
 import sys
+import time
 import lightning as L
 import wandb
 import torch
@@ -601,6 +602,49 @@ class Flow(L.LightningModule):
             "loss_early_t": loss_early_t,
             "loss_late_t": loss_late_t,
         }
+
+    def on_fit_start(self):
+        """log static run info once at the start of training"""
+        n_total = sum(p.numel() for p in self.parameters())
+        n_trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        summary = {
+            "n_params_total": n_total,
+            "n_params_trainable": n_trainable,
+            "n_train_samples": (
+                self.trainer.datamodule.n_train if self.trainer.datamodule else None
+            ),
+        }
+        if self.logger and hasattr(self.logger, "experiment"):
+            self.logger.experiment.summary.update(summary)
+        self._fit_start_time = time.time()
+        self._best_val_loss = float("inf")
+        self._best_epoch = 0
+
+    def on_validation_epoch_end(self):
+        """track running best val loss"""
+        val_loss = self.trainer.callback_metrics.get("val_loss")
+        if val_loss is not None and val_loss.item() < self._best_val_loss:
+            self._best_val_loss = val_loss.item()
+            self._best_epoch = self.current_epoch
+
+    def on_fit_end(self):
+        """log summary metrics at end of training"""
+        train_time_s = time.time() - self._fit_start_time
+        final_val_loss = self.trainer.callback_metrics.get("val_loss")
+        summary = {
+            "train_time_s": train_time_s,
+            "time_per_epoch_s": train_time_s / max(self.current_epoch, 1),
+            "best_val_loss": self._best_val_loss,
+            "best_epoch": self._best_epoch,
+            "final_val_loss": (
+                final_val_loss.item() if final_val_loss is not None else None
+            ),
+            "n_epochs_trained": self.current_epoch,
+        }
+        if torch.cuda.is_available():
+            summary["peak_gpu_memory_mb"] = torch.cuda.max_memory_allocated() / 1024**2
+        if self.logger and hasattr(self.logger, "experiment"):
+            self.logger.experiment.summary.update(summary)
 
     def _check_unused_parameters(self):
         """Check which parameters or buffers have no gradients after backward."""
