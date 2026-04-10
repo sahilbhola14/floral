@@ -10,7 +10,7 @@ logger_name: "onedcorr" # Logger folder
 
 # configuration for data
 data:
-  n_samples: 6000 # total samples for training + validation (for tractability)
+  n_samples: 5000 # total samples for training + validation (for tractability)
   LF: # low fidelity
     path: "./low_fidelity.pt"
   HF: # high fidelity
@@ -70,9 +70,4 @@ flow:
 
 # configuration for PDE solution generation
 generate:
-  minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
   n_gen: 100 # number of samples generated (for UQ purposes)
-  nT: 2 # number of time steps for integration
-  method: "dopri5" # method for ODE solver
-  atol: 1.0e-5 # absolute tolerance for ODE solver
-  rtol: 1.0e-5 # relative tolerance for ODE solver

@@ -1,6 +1,6 @@
 # examples/onedcorr/config_hyperparameters.yml
 learning_rate: 1.0e-3
-batch_size: 4
+batch_size: 128
 max_epochs: 300
 optimizer: "Adam"
 weight_decay: 1.0e-4

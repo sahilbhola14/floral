@@ -78,7 +78,11 @@ def train_model(hp_config: dict = None):
     checkpointer = build_checkpointer(config=config)
     # get trainer
     trainer = build_trainer(
-        config=config, hp_config=hp_config, checkpointer=checkpointer, verbose=True
+        config=config,
+        hp_config=hp_config,
+        checkpointer=checkpointer,
+        verbose=True,
+        group=None,
     )
     # model
     flow = Flow(
