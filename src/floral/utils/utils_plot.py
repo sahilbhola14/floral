@@ -123,7 +123,7 @@ class BaseResidual(ABC):
             "FLORAL": self.HF_field_prediction_floral.std(1),
         }
 
-    def __call__(self, verbose: bool = False):
+    def __call__(self, verbose: bool = False, model: str = None):
         """compute the residual norm"""
         df = []
         for k in self.mean_dict.keys():
@@ -140,6 +140,7 @@ class BaseResidual(ABC):
             # update dictionary
             df.append(
                 {
+                    "Model": model,
                     "Method": k,
                     "Samples (train)": self.n_train,
                     "Samples (val)": self.n_val,
@@ -167,16 +168,24 @@ class BaseResidual(ABC):
         subset_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
         residual_LF = subset_LF["Residual Norm"].mean()
 
-        # extract subset
-        subset = combined_df[combined_df["Method"].isin(["FLORA", "FLORAL"])]
+        # extract subset and build legend label
+        subset = combined_df[combined_df["Method"].isin(["FLORA", "FLORAL"])].copy()
+
+        def _make_label(r):
+            if r["Model"] == "FNO":
+                return "FNO" if r["Method"] == "FLORA" else "Residual FNO"
+            return r["Method"]
+
+        subset["Label"] = subset.apply(_make_label, axis=1)
+        label_order = subset["Label"].unique().tolist()
         sns.scatterplot(
             data=subset,
             x="Samples (train)",
             y="Residual Norm",
-            style="Method",
-            style_order=["FLORA", "FLORAL"],
-            hue="Method",
-            hue_order=["FLORA", "FLORAL"],
+            style="Label",
+            style_order=label_order,
+            hue="Label",
+            hue_order=label_order,
             palette="Set2",
             s=150,
             edgecolor="black",
@@ -190,7 +199,7 @@ class BaseResidual(ABC):
         # ax.set_title(metric)
         ax.set_xlabel("Samples (train)")
         ax.set_ylabel(r"Mean physical residual $L_2$ norm")
-        ax.legend().set_title("Method")
+        ax.legend().set_title("Model")
         ax.set_yscale("log")
         ax.set_xscale("log")
         xlim_range = kwargs.get("xlim_range", (1e1, 1e4))
