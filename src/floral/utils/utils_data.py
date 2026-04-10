@@ -93,6 +93,7 @@ class OpDataModuleConfig:
                 "train_ratio": 0.7,
                 "val_ratio": 0.15,
                 "test_ratio": 0.15,
+                "n_train_samples": None,  # if set, overrides train_ratio for train size
                 "num_workers": 1,
                 "normalize": {
                     "target_field": {
@@ -172,6 +173,8 @@ class OpDataModule(L.LightningDataModule):
         self.train_ratio = self.dataloader_config.get("train_ratio")
         self.val_ratio = self.dataloader_config.get("val_ratio")
         self.test_ratio = self.dataloader_config.get("test_ratio")
+        # optional override: fix train size independently of train_ratio
+        self.n_train_samples = self.dataloader_config.get("n_train_samples")
 
         # extract hp_config
         self.batch_size = self.hp_config.get("batch_size", 64)
@@ -389,29 +392,39 @@ class OpDataModule(L.LightningDataModule):
 
     @property
     def n_train(self):
-        n_train = int(self.n_samples * self.train_ratio)
-        return n_train
+        if self.n_train_samples is not None:
+            return int(self.n_train_samples)
+        return int(self.n_samples * self.train_ratio)
 
     @property
     def n_val(self):
-        n_val = int(self.n_samples * self.val_ratio)
-        return n_val
+        return int(self.n_samples * self.val_ratio)
 
     @property
     def n_test(self):
-        n_test = self.n_samples - self.n_train - self.n_val
-        return n_test
+        return int(self.n_samples * self.test_ratio)
 
     def _get_split_data_dict(self, op_data_dict):
-        """split the operator data dict to train and validation"""
-        total_ratio = self.train_ratio + self.val_ratio + self.test_ratio
-        assert (
-            total_ratio <= 1.0 + 1e-8
-        ), f"Split ratios must sum to <= 1.0, got {total_ratio:.4f}"
+        """split the operator data dict into train / val / test.
 
-        n_train = self.n_train
+        Val and test are always anchored to the END of the pool so they
+        remain identical across runs regardless of n_train. Train samples
+        are taken from the front; n_train_samples can be varied without
+        disturbing val/test.
+        """
         n_val = self.n_val
         n_test = self.n_test
+        n_train = self.n_train
+        n_total = self.n_samples
+
+        # val/test always occupy the last (n_val + n_test) samples
+        test_start = n_total - n_test
+        val_start = test_start - n_val
+
+        assert n_train <= val_start, (
+            f"n_train ({n_train}) would overlap with val/test "
+            f"(val starts at {val_start}). Reduce n_train_samples or n_samples."
+        )
 
         def _slice_value(value, start_idx, end_idx):
             if isinstance(value, Mapping):
@@ -420,18 +433,18 @@ class OpDataModule(L.LightningDataModule):
                 }
             return value[start_idx:end_idx]
 
-        train_data_dict = {}
-        val_data_dict = {}
-        test_data_dict = {}
+        train_data_dict = {
+            k: _slice_value(v, 0, n_train) for k, v in op_data_dict.items()
+        }
+        val_data_dict = {
+            k: _slice_value(v, val_start, val_start + n_val)
+            for k, v in op_data_dict.items()
+        }
+        test_data_dict = {
+            k: _slice_value(v, test_start, test_start + n_test)
+            for k, v in op_data_dict.items()
+        }
 
-        train_start, train_end = 0, n_train
-        val_start, val_end = train_end, train_end + n_val
-        test_start, test_end = val_end, val_end + n_test
-
-        for key, value in op_data_dict.items():
-            train_data_dict[key] = _slice_value(value, train_start, train_end)
-            val_data_dict[key] = _slice_value(value, val_start, val_end)
-            test_data_dict[key] = _slice_value(value, test_start, test_end)
         return train_data_dict, val_data_dict, test_data_dict
 
     def _get_statistics(self, data, normalize_config):
