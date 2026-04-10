@@ -18,39 +18,31 @@ from neuralop.layers.fno_block import FNOBlocks
 from neuralop.layers.channel_mlp import ChannelMLP
 from neuralop.layers.complex import ComplexValued
 from typing import Tuple, List, Union, Literal, Optional
-from .embedding import ChannelFiLM, conv_nd
+from .embedding import ChannelFiLM
 
 warnings.filterwarnings("once", category=UserWarning)
 
 
 class LinearOperator(nn.Module):
+    """Global linear operator via spectral convolution.
+
+    Captures spatial correlations linearly through Fourier modes,
+    equivalent to a linear map between function spaces.
+    kernel_size=1 pointwise convolutions are purely local and lose all
+    spatial structure, so SpectralConv is the correct primitive here.
+    """
+
     def __init__(
         self,
-        n_dim: int,
+        n_modes: Tuple[int, ...],
         in_channels: int,
         out_channels: int,
-        hidden_channels: int,
-        hidden_layers: int = 2,
     ):
         super(LinearOperator, self).__init__()
-        self.L = nn.ModuleList([])
-        self.L.append(
-            conv_nd(n_dim, in_channels, hidden_channels, kernel_size=1, padding=0)
-        )
-        for layer in range(hidden_layers):
-            self.L.append(
-                conv_nd(
-                    n_dim, hidden_channels, hidden_channels, kernel_size=1, padding=0
-                )
-            )
-        self.L.append(
-            conv_nd(n_dim, hidden_channels, out_channels, kernel_size=1, padding=0)
-        )
+        self.conv = SpectralConv(in_channels, out_channels, n_modes)
 
     def forward(self, x):
-        for layer in self.L:
-            x = layer(x)
-        return x
+        return self.conv(x)
 
 
 class FiLMFNO(BaseModel, name="FiLMFNO"):
@@ -91,6 +83,7 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
         preactivation: bool = False,
         conv_module: nn.Module = SpectralConv,
         cond_channels: Optional[int] = None,
+        linear_skip: bool = True,
     ):
 
         if decomposition_kwargs is None:
@@ -135,6 +128,7 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
         self.fno_block_precision = fno_block_precision
         self.cond_channels = cond_channels  # number of channels in the condition
         self.apply_cond = self.cond_channels is not None
+        self.linear_skip = linear_skip
 
         # positional embedding
         self.positional_embedding = self._get_positional_embedding(
@@ -149,13 +143,13 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
             resolution_scaling_factor
         )
 
-        # linear operator
-        self.linear_operator = LinearOperator(
-            n_dim=self.n_dim,
-            in_channels=self.in_channels,
-            out_channels=self.out_channels,
-            hidden_channels=self.hidden_channels,
-        )
+        # linear operator (optional skip connection)
+        if self.linear_skip:
+            self.linear_operator = LinearOperator(
+                n_modes=self._n_modes,
+                in_channels=self.in_channels,
+                out_channels=self.out_channels,
+            )
 
         # lifting module
         self.lifting_module = self._get_lifting_module()
@@ -419,11 +413,13 @@ class FiLMFNO(BaseModel, name="FiLMFNO"):
             output_shape = [None] * self.n_layers
         elif isinstance(output_shape, tuple):
             output_shape = [None] * (self.n_layers - 1) + [output_shape]
-        # Linear Operator forward
-        x_lin = self._forward_linear(x=x, cond=cond)
-        # Non-Linera Operator forward
+        # Non-Linear Operator forward
         x_nlin = self._forward_nonlinear(x=x, cond=cond, output_shape=output_shape)
-        return x_lin + x_nlin
+        if self.linear_skip:
+            # Linear Operator forward (global spectral skip)
+            x_lin = self._forward_linear(x=x, cond=cond)
+            return x_lin + x_nlin
+        return x_nlin
 
 
 def test_train():

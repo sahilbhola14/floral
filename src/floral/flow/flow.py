@@ -592,6 +592,7 @@ class Flow(L.LightningModule):
 
     def on_after_backward(self):
         """log gradient norm for training stability"""
+        # log the gradient norm
         grad_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), float("inf"))
         self.log("grad_norm", grad_norm, on_step=True, on_epoch=False)
 

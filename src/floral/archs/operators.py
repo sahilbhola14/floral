@@ -32,6 +32,7 @@ class VectorFieldConfig:
                 "projection_channel_ratio": 4,
                 "n_layers": 4,
                 "modes": 64,
+                "linear_skip": True,
             },
             "condition": {
                 "channels": 1,
@@ -94,6 +95,7 @@ class VectorField(nn.Module):
         self.field_projection_channel_ratio = field_config.projection_channel_ratio
         self.field_n_layers = field_config.n_layers
         self.field_modes = field_config.modes
+        self.field_linear_skip = field_config.linear_skip
         self.condition_channels = condition_config.channels
         self.condition_ndim = condition_config.ndim
 
@@ -135,6 +137,7 @@ class VectorField(nn.Module):
                 projection_channel_ratio=self.field_projection_channel_ratio,
                 n_modes=n_modes,
                 cond_channels=self.condition_channels,
+                linear_skip=self.field_linear_skip,
             )
         elif self.method == "FNO":
             """Regular FNO is used where conditions are concatenated"""
@@ -261,6 +264,5 @@ class VectorField(nn.Module):
             vt = self.field(input_vt)
         else:
             raise ValueError(f"Method: {self.method} vector field does not exist")
-
         check_tensor_blowup(vt, name="vector field")
         return vt
