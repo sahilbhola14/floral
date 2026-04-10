@@ -105,7 +105,7 @@ class Inference:
                 )
                 if self.floral:
                     # prediction field = residual_prediction + LF_field
-                    prediction = prediction + LF_field
+                    prediction = prediction + LF_field.unsqueeze(1)
                     # target field = residual + LF_field
                     HF_field = target_field + LF_field
                 else:
@@ -164,4 +164,4 @@ class Inference:
         batch_size, *dims = prediction.shape
         prediction = self.data_module.denormalize_field(normal_field=prediction)
 
-        return prediction
+        return prediction.unsqueeze(1)
