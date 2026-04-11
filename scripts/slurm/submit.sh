@@ -14,7 +14,7 @@
 
 export LOGLEVEL=INFO                    # Log information
 source ~/.zshrc                         # Source the shell
-conda init                              # Conda initialization
+source $(conda info --base)/etc/profile.d/conda.sh  # Enable conda in script
 conda activate floral                   # Load Conda environment
 
 # -------------------------------

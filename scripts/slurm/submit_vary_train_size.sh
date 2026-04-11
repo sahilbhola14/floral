@@ -25,7 +25,7 @@ for floral in "${FLORAL_VALUES[@]}"; do
     EXP_NAME="floral_${floral}_ntrain_${n_train}_obj_${objective}"
 
     # One single override string
-    OVERRIDES="config.floral=${floral} config.dataloader.n_train_samples=${n_train} config.train.objective=${objective}"
+    OVERRIDES="floral=${floral} dataloader.n_train_samples=${n_train} train.objective=${objective}"
 
     # Timestamp for logging
     TIMESTAMP=$(date "+%Y-%m-%d %H:%M:%S")

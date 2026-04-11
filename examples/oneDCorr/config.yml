@@ -2,7 +2,7 @@
 
 # general configuration
 job_name: "onedcorr" # Unique identifier for each run
-floral: True # True means residual operator is learned
+floral: False # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/onedcorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
@@ -10,7 +10,7 @@ logger_name: "onedcorr" # Logger folder
 
 # configuration for data
 data:
-  n_samples: 50 # total samples for training + validation (for tractability)
+  n_samples: 5000 # total samples for training + validation (for tractability)
   LF: # low fidelity
     path: "./low_fidelity.pt"
   HF: # high fidelity
@@ -22,6 +22,7 @@ dataloader:
   train_ratio: 0.7 # percentage of {n_samples} to train
   val_ratio: 0.15 # percentage of {n_samples} to validate
   test_ratio: 0.15 # percentage of {n_samples} to test
+  n_train_samples: 3500 # over-rides train_ratio
   num_workers: 5 # Number of workers
   normalize:
     # normalization: (x - mu) / sigma
@@ -45,7 +46,7 @@ dataloader:
 # configuration for training
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
-  objective: "fno" # {fm}: Flow-matching loss (default); {fno}: fourier neural operator MSE loss
+  objective: "fm" # {fm}: Flow-matching loss (default); {fno}: fourier neural operator MSE loss
   accelerator: 'gpu'
   devices: 1
   precision: '32-true'

@@ -130,6 +130,7 @@ def train_model(hp_config: dict = None):
         hp_config=hp_config,
         checkpointer=checkpointer,
         verbose=True,
+        group="main",
     )
     # model
     model = get_model(config=config, hp_config=hp_config, data_module=data_module)
