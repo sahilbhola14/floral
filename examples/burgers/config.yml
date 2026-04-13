@@ -2,17 +2,16 @@
 
 # general configuration
 job_name: "burgers" # Unique identifier for each run
-floral: True # True means residual operator is learned
+floral: False # True means residual operator is learned
 tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/burgers/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "burgers" # Logger folder
+wandb_group: Null # wandb grouping
 
 # configuration for data
 data:
-  n_samples: 6000 # total samples for training + validation (for tractability)
-  n_train: 500
-  n_val: 1000
+  n_samples: 5000 # total samples for training + validation (for tractability)
   LF: # low fidelity
     path: "./low_fidelity.pt"
   HF: # high fidelity
@@ -22,6 +21,9 @@ data:
 dataloader:
   reload: False # True: (Normalized) TensorDataset is reloaded; Must be true for train.state="eval"
   train_ratio: 0.7 # percentage of {n_samples} to train
+  val_ratio: 0.15 # percentage of {n_samples} to validate
+  test_ratio: 0.15 # percentage of {n_samples} to test
+  n_train_samples: 3500 # over-rides train_ratio
   num_workers: 5 # Number of workers
   normalize:
     # normalization: (x - mu) / sigma
@@ -41,9 +43,11 @@ dataloader:
       mean: [0.1] # For example, [0.5] if want specified (per channel)
       std: [0.5] # For example, [0.5] if want specified (per channel)
 
+
 # configuration for training
 train:
   stage: "train" # {train} : train the model; {eval} : Evaluate the model using provided checkpoint
+  objective: "fm" # {fm}: Flow-matching loss (default); {fno}: fourier neural operator MSE loss
   accelerator: 'gpu'
   devices: 1
   precision: '32-true'
@@ -69,9 +73,4 @@ flow:
 
 # configuration for PDE solution generation
 generate:
-  minibatch_size: 10 # number of domain points to process at a time (increase if memory is available)
   n_gen: 100 # number of samples generated (for UQ purposes)
-  nT: 2 # number of time steps for integration
-  method: "dopri5" # method for ODE solver
-  atol: 1.0e-5 # absolute tolerance for ODE solver
-  rtol: 1.0e-5 # relative tolerance for ODE solver

@@ -1,13 +1,11 @@
 # examples/burgers/run.py
 """
-Flow-matching operator for residual-augmented learning for burgers equation.
-Notes:
-    1. To improve reproducibility across architectures, tf32 is not used.
-    Emperically, operators were producing higher losses.
+Flow-matching operator for residual-augmented learning for burgers
 """
 import torch
 import wandb
 import argparse
+import lightning as L
 import yaml
 from omegaconf import OmegaConf
 from floral.utils import (
@@ -17,8 +15,10 @@ from floral.utils import (
     build_data_module,
     build_checkpointer,
     build_trainer,
+    deep_get,
 )
-from floral.flow import perform_inference, Flow
+from floral.flow import flow_inference, Flow
+from floral.operator import operator_inference, Operator
 
 parser = argparse.ArgumentParser(description="Run burgers with specified parameters.")
 parser.add_argument(
@@ -53,11 +53,57 @@ def print_header(config: dict):
     print_section("burgers config")
     printer(f"Job name: {config.job_name}")
     printer(f"Configuration file: {args.config}")
+    printer(f"Hyperparameter Configuration file: {args.hp_config}")
     printer(f"Tune hyperparameters: {config.tune_hyperparameters}")
+    printer(f"Objective: {config.train.objective}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Training resolution: {config.train.train_res}")
     printer(f"Number of samples: {config.data.n_samples}")
     print_section("burgers config", end=True)
+
+
+def get_model(
+    config: dict,
+    hp_config: wandb.sdk.wandb_config.Config | dict,
+    data_module: L.LightningDataModule,
+):
+    # objective
+    objective = deep_get(config, ["train", "objective"])
+    # get the model
+    if objective == "fm":
+        model = Flow(
+            config=config,
+            hp_config=hp_config,
+            domain_dict=data_module.domain_dict,
+            shape_dict=data_module.shape_dict,
+        )
+    elif objective == "fno":
+        model = Operator(
+            config=config,
+            hp_config=hp_config,
+            domain_dict=data_module.domain_dict,
+            shape_dict=data_module.shape_dict,
+        )
+    else:
+        raise NotImplementedError(f"Objective: {objective} not supported")
+
+    return model
+
+
+def perform_inference(best_model_path, data_module, config):
+    # objective
+    objective = deep_get(config, ["train", "objective"])
+    # get the model
+    if objective == "fm":
+        flow_inference(
+            best_model_path=best_model_path, data_module=data_module, config=config
+        )
+    elif objective == "fno":
+        operator_inference(
+            best_model_path=best_model_path, data_module=data_module, config=config
+        )
+    else:
+        raise NotImplementedError(f"Objective: {objective} not supported")
 
 
 def train_model(hp_config: dict = None):
@@ -80,30 +126,32 @@ def train_model(hp_config: dict = None):
     checkpointer = build_checkpointer(config=config)
     # get trainer
     trainer = build_trainer(
-        config=config, hp_config=hp_config, checkpointer=checkpointer, verbose=False
-    )
-    # model
-    flow = Flow(
         config=config,
         hp_config=hp_config,
-        domain_dict=data_module.domain_dict,
-        shape_dict=data_module.shape_dict,
+        checkpointer=checkpointer,
+        verbose=True,
+        group=config.wandb_group,
     )
+    # model
+    model = get_model(config=config, hp_config=hp_config, data_module=data_module)
+
     # if hasattr(flow, "compile") and torch.cuda.is_available():
     #     printer("Compiling the model...")
     #     flow = torch.compile(flow, mode="default")
+
     # load checkpoint if specified
     if config.checkpoint_load_path is not None:
         check_path(config.checkpoint_load_path)
         best_model_path = config.checkpoint_load_path
         printer(f"Loading checkpoint from {best_model_path}")
         # load the checkpoint
-        flow = Flow.load_from_checkpoint(
+        model = model.load_from_checkpoint(
             best_model_path, map_location="cuda" if torch.cuda.is_available() else "cpu"
         )
+
     # train
     print_section("Training")
-    trainer.fit(flow, data_module)
+    trainer.fit(model, data_module)
 
     # return
     if config.tune_hyperparameters:
