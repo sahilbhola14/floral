@@ -7,6 +7,7 @@ tune_hyperparameters: False # If true, then hyperparameter sweep is conducted
 checkpoint_save_path: "./experiments/onedcorr/" # Save path for the checkpoints
 checkpoint_load_path: Null # If provided, this checkpoint will be loaded
 logger_name: "onedcorr" # Logger folder
+wandb_group: Null # wandb grouping
 
 # configuration for data
 data:
