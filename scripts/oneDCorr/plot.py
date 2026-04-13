@@ -9,12 +9,12 @@ import matplotlib.pyplot as plt
 from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [35]
-n_val_samples = 7
-n_test_samples = 7
+n_train_samples_list = [3500, 1000, 500, 10]
+n_val_samples = 750
+n_test_samples = 750
 operator_method = "filmfno"
 train_res = "Full"
-results_folder = "./dummy_results_data"
+results_folder = "./ablation_vary_train_size"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -121,7 +121,7 @@ def plot_field(n_train_samples):
         data_fno_floral=data_fno_floral,
     )
     # create sample plot
-    plotter.make_field_sample_plot(std_factor=10, figsize=(15, 12))
+    plotter.make_field_sample_plot(std_factor=20, figsize=(15, 12))
 
 
 def plot_pareto(n_train_samples_list):
