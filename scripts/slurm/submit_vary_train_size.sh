@@ -8,18 +8,21 @@
 # OBJECTIVES=("fno" "fm")
 
 FLORAL_VALUES=(True False)
-N_TRAIN_SAMPLES_VALUES=(3500)
+N_TRAIN_SAMPLES_VALUES=(3500 1000 500 10) # same size as BATCH_SIZE
+BATCH_SIZE=(128 64 64 2) # same size as N_TRAIN_SAMPLES_VALUES
 OBJECTIVES=("fno" "fm")
 
-CONFIG="config.yml"
-HP_CONFIG="hp_config.yml"
+BASE_CONFIG="config"
+BASE_HP_CONFIG="hp_config"
 LOG_FILE="ablation_submissions.log"
 
 # -------------------------------
 # Loop over all combinations
 # -------------------------------
 for floral in "${FLORAL_VALUES[@]}"; do
-  for n_train in "${N_TRAIN_SAMPLES_VALUES[@]}"; do
+    for i in "${!N_TRAIN_SAMPLES_VALUES[@]}"; do
+    n_train=${N_TRAIN_SAMPLES_VALUES[$i]} # extract the train samples
+    batch_size=${BATCH_SIZE[$i]} # extact hte batch size
     for objective in "${OBJECTIVES[@]}"; do
 
     EXP_NAME="floral_${floral}_ntrain_${n_train}_obj_${objective}"
@@ -40,8 +43,8 @@ for floral in "${FLORAL_VALUES[@]}"; do
     sbatch \
     --job-name="${EXP_NAME}" \
     submit.sh \
-    --config "${CONFIG}" \
-    --hp_config "${HP_CONFIG}" \
+    --config "${BASE_CONFIG}.yml" \
+    --hp_config "${BASE_HP_CONFIG}_batch_size_${batch_size}.yml" \
     ${OVERRIDES}
 
     done
