@@ -20,10 +20,10 @@ LOG_FILE="ablation_submissions.log"
 # -------------------------------
 # Loop over all combinations
 # -------------------------------
-for floral in "${FLORAL_VALUES[@]}"; do
-    for i in "${!N_TRAIN_SAMPLES_VALUES[@]}"; do
+for i in "${!N_TRAIN_SAMPLES_VALUES[@]}"; do
     n_train=${N_TRAIN_SAMPLES_VALUES[$i]} # extract the train samples
     batch_size=${BATCH_SIZE[$i]} # extact hte batch size
+    for floral in "${FLORAL_VALUES[@]}"; do
     for objective in "${OBJECTIVES[@]}"; do
 
     EXP_NAME="floral_${floral}_ntrain_${n_train}_obj_${objective}"
