@@ -172,6 +172,7 @@ class Inference:
 
         result_dict = {
             "HF_field": all_HF_field,
+            "HF_observation": all_HF_field[self.best_flow.slice_op],
             "LF_field": all_LF_field,
             "condition": all_condition,
             "prediction": all_prediction,
