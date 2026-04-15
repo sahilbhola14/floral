@@ -16,6 +16,8 @@ from floral.utils import sample_grf_rbf
 
 plt.style.use("../../scripts/journal.mplstyle")
 
+SEED = 42
+
 
 def parse_args():
     """parse args"""
@@ -53,7 +55,7 @@ def parse_args():
     parser.add_argument(
         "--rbf_sigma",
         type=float,
-        default=1,
+        default=0.25,
         help="Amplitude for the RBF kernel",
     )
 
@@ -68,13 +70,13 @@ def parse_args():
     return args
 
 
-def seed_everything(seed: int = 42):
+def seed_everything():
     """seed everything"""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
 
 
 class MultiFidelity:
@@ -122,6 +124,7 @@ class MultiFidelity:
             length_scale=self.rbf_length_scale,
             sigma=self.rbf_sigma,
             nugget=1e-6,
+            rng=np.random.default_rng(SEED),
         )
         return torch.tensor(random_field, dtype=torch.float32)
 
@@ -357,6 +360,19 @@ class MultiFidelity:
         u_LF = self.solver_LF(a_LF + random_field)
         # compare
         self._compare(u_HF=u_HF, u_LF=u_LF)
+        # correlation between input a and solution
+        self._comp_average_pearson(
+            samples_X=a_HF,
+            samples_Y=u_HF,
+            xlabel=r"Input a",
+            ylabel=r"High-fidelity solution",
+        )
+        self._comp_average_pearson(
+            samples_X=a_LF,
+            samples_Y=u_LF,
+            xlabel=r"Input a",
+            ylabel=r"Low-fidelity solution",
+        )
         # prep and save
         self._prep_and_save(
             u_HF=u_HF,
