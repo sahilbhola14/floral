@@ -1,4 +1,10 @@
 # /examples/oneDCorr/gen_data.py
+"""
+a: known input
+random_field (unobserved at inference): latent
+w: observation
+goal: a -> w
+"""
 import random
 import numpy as np
 import torch
@@ -6,6 +12,7 @@ import argparse
 import matplotlib.pyplot as plt
 from floral.solver import OneDCorr
 from scipy.stats import pearsonr, gaussian_kde
+from floral.utils import sample_grf_rbf
 
 plt.style.use("../../scripts/journal.mplstyle")
 
@@ -20,7 +27,7 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=10000,
+        default=5000,
         help="Number of samples to generate",
     )
 
@@ -37,6 +44,19 @@ def parse_args():
         default=[10, 14],
         help="Range of k values to sample from",
     )
+    parser.add_argument(
+        "--rbf_length_scale",
+        type=float,
+        default=0.1,
+        help="Lenght scale for the RBF kernel",
+    )
+    parser.add_argument(
+        "--rbf_sigma",
+        type=float,
+        default=1,
+        help="Amplitude for the RBF kernel",
+    )
+
     parser.add_argument("--plot", action="store_true")
 
     args = parser.parse_args()
@@ -58,9 +78,13 @@ def seed_everything(seed: int = 42):
 
 
 class MultiFidelity:
-    def __init__(self, resolution, n_samples, plot: bool = False):
+    def __init__(
+        self, resolution, n_samples, rbf_length_scale, rbf_sigma, plot: bool = False
+    ):
         self.resolution = resolution
         self.n_samples = n_samples
+        self.rbf_length_scale = rbf_length_scale
+        self.rbf_sigma = rbf_sigma
         self.plot = plot
 
         self.solver_HF = OneDCorr(
@@ -75,6 +99,31 @@ class MultiFidelity:
         """same HF and LF conditions"""
         a_HF = self.solver_HF._sample_input_function()
         return a_HF, a_HF
+
+    def _plot_random_field(self, random_field: np.ndarray, n_plot: int = 5):
+        """plot a handful of GRF realizations"""
+        assert random_field.ndim == 2, "random_field must be (n_samples, N)"
+        n_plot = min(n_plot, len(random_field))
+        fig, ax = plt.subplots(figsize=(6, 3), layout="compressed")
+        for ii in range(n_plot):
+            ax.plot(self.domain.ravel(), random_field[ii], alpha=0.7, lw=1)
+        ax.set_xlabel(r"$x$")
+        ax.set_ylabel(r"$z(x)$")
+        ax.set_title("GRF samples (RBF kernel)")
+        plt.savefig("random_field.png", dpi=150)
+        plt.close()
+
+    def _get_random_field(self):
+        # extract the domain for the HF model
+        coords = np.array(self.domain).T  # (N,1)
+        random_field = sample_grf_rbf(
+            coords=coords,
+            n_samples=self.n_samples,
+            length_scale=self.rbf_length_scale,
+            sigma=self.rbf_sigma,
+            nugget=1e-6,
+        )
+        return torch.tensor(random_field, dtype=torch.float32)
 
     def _make_sample_comparison_plot(self, u_LF, u_HF, n_samples: int = 5):
         """make sample comparison plot"""
@@ -299,9 +348,13 @@ class MultiFidelity:
     def simulate(self):
         # get the input conditions
         a_HF, a_LF = self._get_input_conditions()
+        # sample the random field (latent)
+        random_field = self._get_random_field()
+        if self.plot:
+            self._plot_random_field(random_field)
         # solve
-        u_HF = self.solver_HF(a_HF)
-        u_LF = self.solver_LF(a_LF)
+        u_HF = self.solver_HF(a_HF + random_field)
+        u_LF = self.solver_LF(a_LF + random_field)
         # compare
         self._compare(u_HF=u_HF, u_LF=u_LF)
         # prep and save
@@ -320,6 +373,10 @@ if __name__ == "__main__":
     args = parse_args()
     # Multi-fidelity setup
     mf = MultiFidelity(
-        resolution=args.resolution, n_samples=args.n_samples, plot=args.plot
+        resolution=args.resolution,
+        n_samples=args.n_samples,
+        plot=args.plot,
+        rbf_length_scale=args.rbf_length_scale,
+        rbf_sigma=args.rbf_sigma,
     )
     mf.simulate()
