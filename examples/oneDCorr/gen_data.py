@@ -3,7 +3,7 @@
 a: known input
 random_field (unobserved at inference): latent
 w: observation
-goal: a -> w
+goal: learn p(w | a)
 """
 import random
 import numpy as np
@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument(
         "--rbf_length_scale",
         type=float,
-        default=0.1,
+        default=0.2,
         help="Lenght scale for the RBF kernel",
     )
     parser.add_argument(
@@ -57,6 +57,12 @@ def parse_args():
         type=float,
         default=0.25,
         help="Amplitude for the RBF kernel",
+    )
+    parser.add_argument(
+        "--rbf_kl_modes",
+        type=int,
+        default=10,
+        help="Number of KL modes to retain",
     )
 
     parser.add_argument("--plot", action="store_true")
@@ -81,12 +87,19 @@ def seed_everything():
 
 class MultiFidelity:
     def __init__(
-        self, resolution, n_samples, rbf_length_scale, rbf_sigma, plot: bool = False
+        self,
+        resolution,
+        n_samples,
+        rbf_length_scale,
+        rbf_sigma,
+        rbf_kl_modes,
+        plot: bool = False,
     ):
         self.resolution = resolution
         self.n_samples = n_samples
         self.rbf_length_scale = rbf_length_scale
         self.rbf_sigma = rbf_sigma
+        self.rbf_kl_modes = rbf_kl_modes
         self.plot = plot
 
         self.solver_HF = OneDCorr(
@@ -118,15 +131,25 @@ class MultiFidelity:
     def _get_random_field(self):
         # extract the domain for the HF model
         coords = np.array(self.domain).T  # (N,1)
-        random_field = sample_grf_rbf(
+        random_field, _ = sample_grf_rbf(
             coords=coords,
             n_samples=self.n_samples,
             length_scale=self.rbf_length_scale,
             sigma=self.rbf_sigma,
             nugget=1e-6,
             rng=np.random.default_rng(SEED),
+            num_modes=self.rbf_kl_modes,
         )
         return torch.tensor(random_field, dtype=torch.float32)
+
+    def _apply_multiplicative_random_field(
+        self, deterministic_field: torch.Tensor, random_field: torch.Tensor
+    ):
+        """Apply latent output-space stochasticity."""
+        assert (
+            deterministic_field.shape == random_field.shape
+        ), "deterministic field and random field must have the same shape"
+        return deterministic_field * (1.0 + random_field)
 
     def _make_sample_comparison_plot(self, u_LF, u_HF, n_samples: int = 5):
         """make sample comparison plot"""
@@ -355,7 +378,7 @@ class MultiFidelity:
         random_field = self._get_random_field()
         if self.plot:
             self._plot_random_field(random_field)
-        # solve
+        # solve deterministic systems, then apply unobserved multiplicative latent field
         u_HF = self.solver_HF(a_HF + random_field)
         u_LF = self.solver_LF(a_LF + random_field)
         # compare
@@ -394,5 +417,6 @@ if __name__ == "__main__":
         plot=args.plot,
         rbf_length_scale=args.rbf_length_scale,
         rbf_sigma=args.rbf_sigma,
+        rbf_kl_modes=args.rbf_kl_modes,
     )
     mf.simulate()
