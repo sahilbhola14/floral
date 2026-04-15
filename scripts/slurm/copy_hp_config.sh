@@ -4,6 +4,7 @@ HP_CONFIG="hp_config.yml"
 OUTPUT_PREFIX="hp_config"
 
 batch_sizes=(2 64 128)
+max_epochs=300
 
 for bs in "${batch_sizes[@]}"; do
     new_file="${OUTPUT_PREFIX}_batch_size_${bs}.yml"
@@ -13,6 +14,8 @@ for bs in "${batch_sizes[@]}"; do
 
     # Replace the batch_size line
     sed -i "s/^batch_size:.*/batch_size: ${bs}/" "$new_file"
+    # Replace the max_epochs line
+    sed -i "s/^max_epochs:.*/max_epochs: ${max_epochs}/" "$new_file"
 
-    echo "Created $new_file with batch_size=${bs}"
+    echo "Created $new_file with batch_size=${bs} for max_epochs=${max_epochs}"
 done
