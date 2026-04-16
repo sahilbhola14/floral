@@ -319,9 +319,16 @@ class ErrorSummary:
         """plot the errors"""
         metrics = ["RMSE", "NRMSE", "CRMSE"]
 
+        def _make_label(r):
+            if r["Model"] == "FNO":
+                return "FNO" if r["Method"] == "FLORA" else "Residual FNO"
+            return r["Method"]
+
         # extract subsets
         df_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
-        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"]
+        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"].copy()
+        df_rest["Label"] = df_rest.apply(_make_label, axis=1)
+        label_order = df_rest["Label"].unique().tolist()
 
         # Create 1×3 subplots
         fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
@@ -336,10 +343,10 @@ class ErrorSummary:
                 data=subset_plot,
                 x="Resolution (train)",
                 y="Value",
-                style="Method",
-                style_order=["FLORA", "FLORAL"],
-                hue="Method",
-                hue_order=["FLORA", "FLORAL"],
+                style="Label",
+                style_order=label_order,
+                hue="Label",
+                hue_order=label_order,
                 palette="Set2",
                 s=150,
                 edgecolor="black",
@@ -352,11 +359,10 @@ class ErrorSummary:
             )
 
             # Titles and labels
-            # ax.set_title(metric)
             ax.set_xlabel("Resolution (train)", fontsize=15)
             ax.set_ylabel(metric, fontsize=15)
             if ii == 0:
-                ax.legend().set_title("Method")
+                ax.legend().set_title("Model")
             else:
                 ax.legend_.remove()
             ax.set_yscale("log")
@@ -366,7 +372,7 @@ class ErrorSummary:
             ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
             ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
-        plt.savefig("error_vs_train_resoluion_comparison.png", dpi=300, pad_inches=0.1)
+        plt.savefig("error_vs_train_resolution_comparison.png", dpi=300, pad_inches=0.1)
         plt.close()
 
     @staticmethod
@@ -1018,13 +1024,17 @@ class ParetoPlot:
 
     @classmethod
     def plot_pareto_res(self, combined_df, **kwargs):
-        # Split data
-        df_lf = combined_df[combined_df["Method"] == "Low-fidelity"].iloc[
-            [0]
-        ]  # take one row
-        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"]
+        def _make_label(r):
+            if r["Model"] == "FNO":
+                return "FNO" if r["Method"] == "FLORA" else "Residual FNO"
+            return r["Method"]
 
-        # Plot methods that depend on Samples (Train)
+        # Split data
+        df_lf = combined_df[combined_df["Method"] == "Low-fidelity"].iloc[[0]]
+        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"].copy()
+        df_rest["Label"] = df_rest.apply(_make_label, axis=1)
+        label_order = df_rest["Label"].unique().tolist()
+
         figsize = kwargs.get("figsize", (10, 5))
         plt.figure(figsize=figsize, layout="compressed")
         # Overlay the Low-fidelity baseline separately
@@ -1043,8 +1053,8 @@ class ParetoPlot:
             data=df_rest,
             x="Mean Std",
             y="L2 Error",
-            hue="Method",
-            hue_order=["FLORA", "FLORAL"],
+            hue="Label",
+            hue_order=label_order,
             style="Resolution (train)",
             palette="Set2",
             s=100,
@@ -1059,11 +1069,28 @@ class ParetoPlot:
         ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
         ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
-        # Optional: make legend cleaner
+        # shade region where deterministic models (FNO, Residual FNO) live
+        det_threshold = kwargs.get("det_threshold", 1e-5)
+        ax.axvspan(xlim_range[0], det_threshold, color="gray", alpha=0.1, zorder=0)
+        ax.axvline(det_threshold, color="gray", linestyle=":", linewidth=1.5, zorder=1)
+        ax.text(
+            det_threshold * 0.5,
+            ylim_range[1] * 0.6,
+            "Deterministic",
+            fontsize=12,
+            color="gray",
+            ha="center",
+            va="top",
+            rotation=90,
+        )
+
         handles, labels = ax.get_legend_handles_labels()
-        # ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1),
-        # loc="upper left")
-        ax.legend(handles, labels, title="", loc="lower left")
+        ax.legend(
+            handles,
+            labels,
+            title="",
+            **kwargs.get("legend_kwargs", {"loc": "lower left"}),
+        )
         ax.set_xlabel("Mean Predictive Uncertainty")
         ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
         plt.savefig("pareto_resolution_comparison.png", dpi=300, pad_inches=0.1)
@@ -1120,11 +1147,23 @@ class ParetoPlot:
         ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
         ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
-        # Optional: make legend cleaner
+        # shade region where deterministic models (FNO, Residual FNO) live
+        det_threshold = kwargs.get("det_threshold", 1e-5)
+        ax.axvspan(xlim_range[0], det_threshold, color="gray", alpha=0.1, zorder=0)
+        ax.axvline(det_threshold, color="gray", linestyle=":", linewidth=1.5, zorder=1)
+        ax.text(
+            det_threshold * 0.5,
+            ylim_range[1] * 0.6,
+            "Deterministic",
+            fontsize=9,
+            color="gray",
+            ha="center",
+            va="top",
+            rotation=90,
+        )
+
         handles, labels = ax.get_legend_handles_labels()
-        # ax.legend(handles, labels, title="", bbox_to_anchor=(1.05, 1),
-        # loc="upper left")
-        ax.legend(handles, labels, title="", loc="best")
+        ax.legend(handles, labels, title="", **kwargs.get("legend_kwargs", {}))
         ax.set_xlabel("Mean Predictive Uncertainty")
         ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
         plt.savefig("pareto_comparison.png", dpi=300, pad_inches=0.1)

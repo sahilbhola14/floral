@@ -1,6 +1,6 @@
-# scripts/onedcorr/plot.py
+# scripts/onedcorr/plot_superres.py
 """
-OneDCorr flow plots
+OneDCorr super-resolution flow plots (vary training resolution, fixed n_train)
 """
 import os.path as osp
 import pandas as pd
@@ -10,9 +10,12 @@ from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
 n_train_samples = 10
-n_val_samples = 1000
+n_val_samples = 750
+n_test_samples = 750
+operator_method = "filmfno"
 train_res_list = [8, 16, 32, 64]
-results_folder = "./results_data"
+# results_folder = "./results_data"
+results_folder = "./results_vary_training_size_sigma_p25_l_p2"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -25,31 +28,61 @@ def combine_path(paths: list):
 def load_data(train_res):
     nt = n_train_samples
     nv = n_val_samples
+    ntest = n_test_samples
+    method = operator_method.lower().strip()
     assert isinstance(train_res, (str, int))
     res = train_res.strip().lower() if isinstance(train_res, str) else train_res
-    file_flora = f"onedcorr_n_train_{nt}_n_val_{nv}_train_res_{res}_results_flora.pt"
-    file_floral = f"onedcorr_n_train_{nt}_n_val_{nv}_train_res_{res}_results_floral.pt"
+
+    file_flora = (
+        f"onedcorr_fm_operator_method_{method}_n_train_{nt}_n_val_{nv}"
+        f"_n_test_{ntest}_train_res_{res}_results_flora.pt"
+    )
+    file_floral = (
+        f"onedcorr_fm_operator_method_{method}_n_train_{nt}_n_val_{nv}"
+        f"_n_test_{ntest}_train_res_{res}_results_floral.pt"
+    )
+    file_fno_flora = (
+        f"onedcorr_fno_operator_method_{method}_n_train_{nt}_n_val_{nv}"
+        f"_n_test_{ntest}_train_res_{res}_results_flora.pt"
+    )
+    file_fno_floral = (
+        f"onedcorr_fno_operator_method_{method}_n_train_{nt}_n_val_{nv}"
+        f"_n_test_{ntest}_train_res_{res}_results_floral.pt"
+    )
+
     print("flora file: ", file_flora)
     print("floral file: ", file_floral)
+    print("(FNO) flora file: ", file_fno_flora)
+    print("(FNO) floral file: ", file_fno_floral)
     print("n_train_samples: ", n_train_samples)
     print("n_val_samples: ", n_val_samples)
+
     data_flora = torch.load(
         combine_path([results_folder, file_flora]), weights_only=False
     )
     data_floral = torch.load(
         combine_path([results_folder, file_floral]), weights_only=False
     )
+    data_fno_flora = torch.load(
+        combine_path([results_folder, file_fno_flora]), weights_only=False
+    )
+    data_fno_floral = torch.load(
+        combine_path([results_folder, file_fno_floral]), weights_only=False
+    )
+
+    print("Number of samples for UQ (Flora): " f"{data_flora['prediction'].shape[1]}")
+    print("Number of samples for UQ (Floral): " f"{data_floral['prediction'].shape[1]}")
     print(
-        "Number of samples for UQ (Flora): "
-        f"{data_flora['HF_field_prediction_plot'].shape[1]}"
+        "Number of samples for UQ (FNO Flora): "
+        f"{data_fno_flora['prediction'].shape[1]}"
     )
     print(
-        "Number of samples for UQ (Floral): "
-        f"{data_floral['HF_field_prediction_plot'].shape[1]}"
+        "Number of samples for UQ (FNO Floral): "
+        f"{data_fno_floral['prediction'].shape[1]}"
     )
     print("--" * 10)
 
-    return data_flora, data_floral
+    return data_flora, data_floral, data_fno_flora, data_fno_floral
 
 
 class ResidualOneDCorr(BaseResidual):
@@ -69,41 +102,59 @@ class ResidualOneDCorr(BaseResidual):
 
 
 def plot_field(train_res):
-    save_name = f"field_samples_n_train_{n_train_samples}"
-    f"_n_val_{n_val_samples}_train_res_{train_res}"
-    # load the data
-    data_flora, data_floral = load_data(train_res)
-    # create plot object
-    plotter = oneDPlot(data_flora=data_flora, data_floral=data_floral)
-    # create sample plot
-    plotter.make_field_sample_plot(std_factor=10, save_name=save_name)
+    save_name = (
+        f"field_samples_n_train_{n_train_samples}"
+        f"_n_val_{n_val_samples}_train_res_{train_res}"
+    )
+    data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
+    plotter = oneDPlot(
+        data_flora=data_flora,
+        data_floral=data_floral,
+        data_fno_flora=data_fno_flora,
+        data_fno_floral=data_fno_floral,
+    )
+    plotter.make_field_sample_plot(std_factor=3, save_name=save_name)
 
 
 def plot_pareto(train_res_list):
     all_data = []
     for train_res in train_res_list:
-        # load the data
-        data_flora, data_floral = load_data(train_res)
-        # get pareto data
-        df = ParetoPlot.get_pareto_data(data_flora=data_flora, data_floral=data_floral)
-        # add the train res
+        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
+        df = ParetoPlot.get_pareto_data(
+            data_flora=data_flora, data_floral=data_floral, model="FM"
+        )
         df["Resolution (train)"] = train_res
         all_data.append(df)
+        df_fno = ParetoPlot.get_pareto_data(
+            data_flora=data_fno_flora, data_floral=data_fno_floral, model="FNO"
+        )
+        df_fno["Resolution (train)"] = train_res
+        all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ParetoPlot.plot_pareto_res(combined_df, ylim_range=(1e-2, 1e1), figsize=(7, 5))
+    legend_kwargs = {"loc": "best"}
+    ParetoPlot.plot_pareto_res(
+        combined_df,
+        ylim_range=(1e-2, 1e1),
+        xlim_range=(1e-7, 1e0),
+        figsize=(7, 5),
+        legend_kwargs=legend_kwargs,
+    )
 
 
 def plot_error_summary(train_res_list):
     all_data = []
     for train_res in train_res_list:
-        # load the data
-        data_flora, data_floral = load_data(train_res)
-        # get pareto data
+        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
         summary = ErrorSummary(data_flora=data_flora, data_floral=data_floral)
-        df = summary(verbose=True)
-        # add the train res
+        df = summary(verbose=True, model="FM")
         df["Resolution (train)"] = train_res
         all_data.append(df)
+        summary_fno = ErrorSummary(
+            data_flora=data_fno_flora, data_floral=data_fno_floral
+        )
+        df_fno = summary_fno(verbose=True, model="FNO")
+        df_fno["Resolution (train)"] = train_res
+        all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
     ErrorSummary.plot_error_vs_train_res(
         combined_df, ylim_range=(1e-2, 1e0), xlim_range=(1e0, 1e2)
@@ -111,10 +162,11 @@ def plot_error_summary(train_res_list):
 
 
 if __name__ == "__main__":
+    # residual summary (not applicable for super-res)
     # error summary
     # plot_error_summary(train_res_list)
-    # plot field
-    # plot_field(train_res=train_res_list[-1])
+    # # plot field
     # plot_field(train_res=train_res_list[0])
-    # # pareto
+    # plot_field(train_res=train_res_list[-1])
+    # pareto
     plot_pareto(train_res_list)

@@ -14,7 +14,7 @@ n_val_samples = 750
 n_test_samples = 750
 operator_method = "filmfno"
 train_res = "Full"
-results_folder = "./ablation_vary_train_size"
+results_folder = "./results_vary_training_size_sigma_p25_l_p2"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -121,7 +121,7 @@ def plot_field(n_train_samples):
         data_fno_floral=data_fno_floral,
     )
     # create sample plot
-    plotter.make_field_sample_plot(std_factor=20, figsize=(15, 12))
+    plotter.make_field_sample_plot(std_factor=3, figsize=(15, 12))
 
 
 def plot_pareto(n_train_samples_list):
@@ -142,7 +142,14 @@ def plot_pareto(n_train_samples_list):
         )
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ParetoPlot.plot_pareto(combined_df, ylim_range=(1e-2, 1e1), figsize=(7, 5))
+    legend_kwargs = {"loc": "lower right"}
+    ParetoPlot.plot_pareto(
+        combined_df,
+        ylim_range=(1e-2, 1e1),
+        figsize=(7, 5),
+        xlim_range=(1e-7, 1e0),
+        legend_kwargs=legend_kwargs,
+    )
 
 
 def plot_residual_summary(n_train_samples_list):
