@@ -1077,7 +1077,7 @@ class ParetoPlot:
             det_threshold * 0.5,
             ylim_range[1] * 0.6,
             "Deterministic",
-            fontsize=12,
+            fontsize=15,
             color="gray",
             ha="center",
             va="top",
@@ -1085,15 +1085,25 @@ class ParetoPlot:
         )
 
         handles, labels = ax.get_legend_handles_labels()
+        default_legend_kwargs = {
+            "bbox_to_anchor": (1.01, 1),
+            "loc": "upper left",
+            "borderaxespad": 0.0,
+        }
         ax.legend(
             handles,
             labels,
             title="",
-            **kwargs.get("legend_kwargs", {"loc": "lower left"}),
+            **kwargs.get("legend_kwargs", default_legend_kwargs),
         )
         ax.set_xlabel("Mean Predictive Uncertainty")
         ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
-        plt.savefig("pareto_resolution_comparison.png", dpi=300, pad_inches=0.1)
+        plt.savefig(
+            "pareto_resolution_comparison.png",
+            dpi=300,
+            bbox_inches="tight",
+            pad_inches=0.1,
+        )
         plt.close()
 
     @classmethod
@@ -1155,7 +1165,7 @@ class ParetoPlot:
             det_threshold * 0.5,
             ylim_range[1] * 0.6,
             "Deterministic",
-            fontsize=9,
+            fontsize=12,
             color="gray",
             ha="center",
             va="top",
@@ -1163,8 +1173,20 @@ class ParetoPlot:
         )
 
         handles, labels = ax.get_legend_handles_labels()
-        ax.legend(handles, labels, title="", **kwargs.get("legend_kwargs", {}))
+        default_legend_kwargs = {
+            "bbox_to_anchor": (1.01, 1),
+            "loc": "upper left",
+            "borderaxespad": 0.0,
+        }
+        ax.legend(
+            handles,
+            labels,
+            title="",
+            **kwargs.get("legend_kwargs", default_legend_kwargs),
+        )
         ax.set_xlabel("Mean Predictive Uncertainty")
         ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
-        plt.savefig("pareto_comparison.png", dpi=300, pad_inches=0.1)
+        plt.savefig(
+            "pareto_comparison.png", dpi=300, bbox_inches="tight", pad_inches=0.1
+        )
         plt.close()
