@@ -59,5 +59,5 @@ class OneDCorr(nn.Module):
     def forward(self, a: torch.Tensor):
         self._check_input(a)
         result = self.solver(a=a, x=self.domain)
-        assert result.shape == (self.n_samples, self.resolution)
+        assert result.shape == (len(a), self.resolution)
         return result

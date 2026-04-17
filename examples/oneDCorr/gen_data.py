@@ -29,8 +29,15 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=5000,
-        help="Number of samples to generate",
+        default=500,
+        help="Number of samples of input condition",
+    )
+
+    parser.add_argument(
+        "--n_fields_per_sample",
+        type=int,
+        default=10,
+        help="Number of random field realizations per input condition",
     )
 
     parser.add_argument(
@@ -93,6 +100,7 @@ class MultiFidelity:
         rbf_length_scale,
         rbf_sigma,
         rbf_kl_modes,
+        n_fields_per_sample: int = 1,
         plot: bool = False,
     ):
         self.resolution = resolution
@@ -100,6 +108,7 @@ class MultiFidelity:
         self.rbf_length_scale = rbf_length_scale
         self.rbf_sigma = rbf_sigma
         self.rbf_kl_modes = rbf_kl_modes
+        self.n_fields_per_sample = n_fields_per_sample
         self.plot = plot
 
         self.solver_HF = OneDCorr(
@@ -131,9 +140,10 @@ class MultiFidelity:
     def _get_random_field(self):
         # extract the domain for the HF model
         coords = np.array(self.domain).T  # (N,1)
+        total = self.n_samples * self.n_fields_per_sample
         random_field, _ = sample_grf_rbf(
             coords=coords,
-            n_samples=self.n_samples,
+            n_samples=total,
             length_scale=self.rbf_length_scale,
             sigma=self.rbf_sigma,
             nugget=1e-6,
@@ -151,27 +161,50 @@ class MultiFidelity:
         ), "deterministic field and random field must have the same shape"
         return deterministic_field * (1.0 + random_field)
 
-    def _make_sample_comparison_plot(self, u_LF, u_HF, n_samples: int = 5):
-        """make sample comparison plot"""
-        assert u_LF.shape == u_HF.shape, "LF and HF samples must have the same shape"
-        assert len(u_LF) >= n_samples, "Not enough samples to plot"
+    def _make_sample_comparison_plot(self, u_LF, u_HF, n_conditions: int = 4):
+        """Plot solution variability for the same input condition.
+
+        Assumes data is in repeat_interleave order (pre-shuffle):
+        rows [i*n_fields : (i+1)*n_fields] all share input condition i.
+        For each selected condition, overlays all HF realizations and the
+        deterministic LF solution.
+        """
+        nf = self.n_fields_per_sample
+        n_conditions = min(n_conditions, self.n_samples)
+        x = self.domain.ravel()
 
         fig, axs = plt.subplots(
-            n_samples, 2, figsize=(6, n_samples * 2), sharex=True, layout="compressed"
+            n_conditions,
+            1,
+            figsize=(5, n_conditions * 2.5),
+            sharex=True,
+            layout="compressed",
         )
-        for ii, ax in enumerate(axs):
-            ax[0].plot(self.domain.ravel(), u_LF[ii], color="grey", alpha=0.6)
-            ax[0].plot(self.domain.ravel(), u_HF[ii], color="k")
-            ax[1].plot(self.domain.ravel(), torch.abs(u_HF[ii] - u_LF[ii]), color="k")
-            ax[0].set_xlabel(r"$x$")
-            ax[0].set_ylabel(r"$w(x)$")
-            ax[1].set_xlabel(r"$x$")
-            ax[1].set_ylabel(r"$|w_{HF}(x) - w_{LF}(x)|$")
-            # for a in ax:
-            #     a.label_outer()
-        plt.savefig("data_snapshot.png")
+        if n_conditions == 1:
+            axs = [axs]
 
-    def _make_marginal_plot(self, u_LF, u_HF, percentage_plot: int = 0.5):
+        for ii, ax in enumerate(axs):
+            start = ii * nf
+            # all HF realizations for condition ii: (nf, N)
+            hf_block = u_HF[start : start + nf]
+            lf_ref = u_LF[start]  # LF is deterministic — same for all realizations
+
+            hf_mean = hf_block.mean(dim=0)
+            hf_std = hf_block.std(dim=0)
+
+            # LF (gray) + HF mean ± std band (black)
+            ax.plot(x, lf_ref, color="gray", alpha=0.6, lw=1.5, label="Low-fidelity")
+            ax.fill_between(x, hf_mean - hf_std, hf_mean + hf_std, color="k", alpha=0.2)
+            ax.plot(x, hf_mean, color="k", lw=1.5, label=r"High-fidelity mean")
+            ax.set_ylabel(r"$w(x)$")
+            if ii == 0:
+                ax.legend(loc="upper right")
+
+        axs[-1].set_xlabel(r"$x$")
+        plt.savefig("data_snapshot.png", dpi=150)
+        plt.close()
+
+    def _make_marginal_plot(self, u_LF, u_HF, percentage_plot: float = 0.5):
         n_plot = max(1, int(len(u_LF) * percentage_plot))
         print(f"Making marginal distribution using {n_plot}/{len(u_LF)} samples")
         # extract field
@@ -195,7 +228,7 @@ class MultiFidelity:
         samples_Y,
         xlabel=r"Low-fidelity",
         ylabel=r"High-fidelity",
-        percentage_plot: int = 0.5,
+        percentage_plot: float = 0.5,
         file_identifier: str = "LF_HF",
     ):
         n_plot = max(1, int(len(samples_X) * percentage_plot))
@@ -266,8 +299,9 @@ class MultiFidelity:
             r, _ = pearsonr(x, y)
             return r
 
+        n_total = len(samples_X)
         r_list = []
-        for ii in range(self.n_samples):
+        for ii in range(n_total):
             flat_X = samples_X[ii].flatten().numpy()
             flat_Y = samples_Y[ii].flatten().numpy()
             r_list.append(
@@ -276,7 +310,7 @@ class MultiFidelity:
                     flat_Y,
                 )
             )
-        assert len(r_list) == self.n_samples, "Number of samples mismatch"
+        assert len(r_list) == n_total, "Number of samples mismatch"
 
         r_array = np.array(r_list)
         mean_r = np.mean(r_array)
@@ -285,7 +319,7 @@ class MultiFidelity:
         max_r = r_array.max()
 
         print(
-            f"{self.n_samples} sample average {xlabel} vs. {ylabel} "
+            f"{n_total} sample average {xlabel} vs. {ylabel} "
             f"Pearson correlation coefficient : {mean_r: .4f}  +/- {std_r: .4f} |"
             f" Min: {min_r: .4f} Max: {max_r: .4f}"
         )
@@ -297,11 +331,6 @@ class MultiFidelity:
                 self.n_samples <= 2000
             ), "For making plots, reduce the number of samples to less than 2000"
 
-            # make sample comparion
-            self._make_sample_comparison_plot(
-                u_LF=u_LF,
-                u_HF=u_HF,
-            )
             # make marginals
             self._make_marginal_plot(
                 u_LF=u_LF,
@@ -374,13 +403,23 @@ class MultiFidelity:
     def simulate(self):
         # get the input conditions
         a_HF, a_LF = self._get_input_conditions()
-        # sample the random field (latent)
+        # repeat each input n_fields_per_sample times: (n_samples*n_fields, N)
+        a_HF = a_HF.repeat_interleave(self.n_fields_per_sample, dim=0)
+        a_LF = a_LF.repeat_interleave(self.n_fields_per_sample, dim=0)
+        # sample the random field (latent): (n_samples*n_fields, N)
         random_field = self._get_random_field()
         if self.plot:
             self._plot_random_field(random_field)
-        # solve deterministic systems, then apply unobserved multiplicative latent field
+        # HF solution has latent stochasticity; LF is deterministic (no random field)
+        # so that u_LF is computable from a alone at inference time.
+        # Solve LF on the unique conditions, then repeat to match HF length.
+        a_LF_unique = a_LF[:: self.n_fields_per_sample]  # (n_samples, N)
+        u_LF_unique = self.solver_LF(a_LF_unique)  # (n_samples, N)
+        u_LF = u_LF_unique.repeat_interleave(self.n_fields_per_sample, dim=0)
         u_HF = self.solver_HF(a_HF + random_field)
-        u_LF = self.solver_LF(a_LF + random_field)
+        # plot variability *before* shuffling so conditions are still grouped
+        if self.plot:
+            self._make_sample_comparison_plot(u_LF=u_LF, u_HF=u_HF)
         # compare
         self._compare(u_HF=u_HF, u_LF=u_LF)
         # correlation between input a and solution
@@ -396,6 +435,12 @@ class MultiFidelity:
             xlabel=r"Input a",
             ylabel=r"Low-fidelity solution",
         )
+        # shuffle so that training slices see a mix of input conditions
+        # (repeat_interleave groups all realizations of the same a together;
+        #  a random permutation ensures the first n_train rows span all conditions)
+        perm = torch.randperm(len(u_HF))
+        u_HF, u_LF, a_HF, a_LF = u_HF[perm], u_LF[perm], a_HF[perm], a_LF[perm]
+
         # prep and save
         self._prep_and_save(
             u_HF=u_HF,
@@ -418,5 +463,6 @@ if __name__ == "__main__":
         rbf_length_scale=args.rbf_length_scale,
         rbf_sigma=args.rbf_sigma,
         rbf_kl_modes=args.rbf_kl_modes,
+        n_fields_per_sample=args.n_fields_per_sample,
     )
     mf.simulate()
