@@ -29,14 +29,14 @@ def parse_args():
         "-n",
         "--n_samples",
         type=int,
-        default=500,
+        default=100,
         help="Number of samples of input condition",
     )
 
     parser.add_argument(
         "--n_fields_per_sample",
         type=int,
-        default=10,
+        default=50,
         help="Number of random field realizations per input condition",
     )
 
@@ -77,6 +77,7 @@ def parse_args():
     args = parser.parse_args()
     print("==" * 3 + "onedcorr" + "==" * 3)
     print(f"Number of samples: {args.n_samples}")
+    print(f"Number of random fields/sample: {args.n_fields_per_sample}")
     print(f"Resolution: {args.resolution}")
     print("==" * 3 + "========" + "==" * 3)
 
@@ -170,7 +171,8 @@ class MultiFidelity:
         deterministic LF solution.
         """
         nf = self.n_fields_per_sample
-        n_conditions = min(n_conditions, self.n_samples)
+        ns = self.n_samples
+        n_conditions = min(n_conditions, ns)
         x = self.domain.ravel()
 
         fig, axs = plt.subplots(
@@ -184,10 +186,9 @@ class MultiFidelity:
             axs = [axs]
 
         for ii, ax in enumerate(axs):
-            start = ii * nf
-            # all HF realizations for condition ii: (nf, N)
-            hf_block = u_HF[start : start + nf]
-            lf_ref = u_LF[start]  # LF is deterministic — same for all realizations
+            # tile layout: condition ii lives at rows ii, ii+ns, ii+2*ns, ...
+            hf_block = u_HF[ii::ns][:nf]  # (nf, N)
+            lf_ref = u_LF[ii]  # LF is deterministic
 
             hf_mean = hf_block.mean(dim=0)
             hf_std = hf_block.std(dim=0)
@@ -401,23 +402,22 @@ class MultiFidelity:
         print("saved low fidelity data to low_fidelity.pt")
 
     def simulate(self):
-        # get the input conditions
+        # get the input conditions: (n_samples, N)
         a_HF, a_LF = self._get_input_conditions()
-        # repeat each input n_fields_per_sample times: (n_samples*n_fields, N)
-        a_HF = a_HF.repeat_interleave(self.n_fields_per_sample, dim=0)
-        a_LF = a_LF.repeat_interleave(self.n_fields_per_sample, dim=0)
+        # tile layout: [a0,a1,...,aN, a0,a1,...,aN, ...] repeated n_fields times.
+        # Any prefix of length k contains min(k, n_samples) unique conditions,
+        # so the training slice always spans the full input space.
+        a_HF = a_HF.repeat(self.n_fields_per_sample, 1)  # (n_samples*n_fields, N)
+        a_LF = a_LF.repeat(self.n_fields_per_sample, 1)
         # sample the random field (latent): (n_samples*n_fields, N)
         random_field = self._get_random_field()
         if self.plot:
             self._plot_random_field(random_field)
         # HF solution has latent stochasticity; LF is deterministic (no random field)
         # so that u_LF is computable from a alone at inference time.
-        # Solve LF on the unique conditions, then repeat to match HF length.
-        a_LF_unique = a_LF[:: self.n_fields_per_sample]  # (n_samples, N)
-        u_LF_unique = self.solver_LF(a_LF_unique)  # (n_samples, N)
-        u_LF = u_LF_unique.repeat_interleave(self.n_fields_per_sample, dim=0)
+        u_LF_unique = self.solver_LF(a_LF[: self.n_samples])  # (n_samples, N)
+        u_LF = u_LF_unique.repeat(self.n_fields_per_sample, 1)
         u_HF = self.solver_HF(a_HF + random_field)
-        # plot variability *before* shuffling so conditions are still grouped
         if self.plot:
             self._make_sample_comparison_plot(u_LF=u_LF, u_HF=u_HF)
         # compare
@@ -435,11 +435,6 @@ class MultiFidelity:
             xlabel=r"Input a",
             ylabel=r"Low-fidelity solution",
         )
-        # shuffle so that training slices see a mix of input conditions
-        # (repeat_interleave groups all realizations of the same a together;
-        #  a random permutation ensures the first n_train rows span all conditions)
-        perm = torch.randperm(len(u_HF))
-        u_HF, u_LF, a_HF, a_LF = u_HF[perm], u_LF[perm], a_HF[perm], a_LF[perm]
 
         # prep and save
         self._prep_and_save(
