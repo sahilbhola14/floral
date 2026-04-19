@@ -414,6 +414,10 @@ class OpDataModule(L.LightningDataModule):
     def n_val(self):
         return self.n_unique_val * self.n_fields_per_sample
 
+    @property
+    def n_test(self):
+        return self.n_unique_test * self.n_fields_per_sample
+
     def _condition_rows(self, condition_indices):
         """Return all row indices for the given unique-condition indices.
 

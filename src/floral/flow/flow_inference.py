@@ -189,9 +189,9 @@ class Inference:
         job_identifier = (
             self.job_name
             + f"_fm_operator_method_{self.operator_method.strip().lower()}"
-            + f"_n_train_{self.data_module.n_unique_train}"
-            + f"_n_val_{self.data_module.n_unique_val}"
-            + f"_n_test_{self.data_module.n_unique_test}"
+            + f"_n_train_{self.data_module.n_train}"
+            + f"_n_val_{self.data_module.n_val}"
+            + f"_n_test_{self.data_module.n_test}"
             + f"_train_res_{self.train_res}"
         )
         save_path = f"{job_identifier}_results_{save_path_identifier}.pt"
