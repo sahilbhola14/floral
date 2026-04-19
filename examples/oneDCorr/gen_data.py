@@ -27,10 +27,10 @@ def parse_args():
     )
     parser.add_argument(
         "-n",
-        "--n_samples",
+        "--n_unique_conditions",
         type=int,
         default=100,
-        help="Number of samples of input condition",
+        help="Number of unique input conditions",
     )
 
     parser.add_argument(
@@ -76,8 +76,11 @@ def parse_args():
 
     args = parser.parse_args()
     print("==" * 3 + "onedcorr" + "==" * 3)
-    print(f"Number of samples: {args.n_samples}")
+    print(f"Number of unique conditions: {args.n_unique_conditions}")
     print(f"Number of random fields/sample: {args.n_fields_per_sample}")
+    print(
+        f"Total generated samples:  {args.n_unique_conditions*args.n_fields_per_sample}"
+    )
     print(f"Resolution: {args.resolution}")
     print("==" * 3 + "========" + "==" * 3)
 
@@ -97,7 +100,7 @@ class MultiFidelity:
     def __init__(
         self,
         resolution,
-        n_samples,
+        n_unique_conditions,
         rbf_length_scale,
         rbf_sigma,
         rbf_kl_modes,
@@ -105,7 +108,7 @@ class MultiFidelity:
         plot: bool = False,
     ):
         self.resolution = resolution
-        self.n_samples = n_samples
+        self.n_unique_conditions = n_unique_conditions
         self.rbf_length_scale = rbf_length_scale
         self.rbf_sigma = rbf_sigma
         self.rbf_kl_modes = rbf_kl_modes
@@ -113,10 +116,10 @@ class MultiFidelity:
         self.plot = plot
 
         self.solver_HF = OneDCorr(
-            fidelity="High", resolution=self.resolution, n_samples=n_samples
+            fidelity="High", resolution=self.resolution, n_samples=n_unique_conditions
         )
         self.solver_LF = OneDCorr(
-            fidelity="Low", resolution=self.resolution, n_samples=n_samples
+            fidelity="Low", resolution=self.resolution, n_samples=n_unique_conditions
         )
         self.domain = self.solver_HF.domain
 
@@ -141,7 +144,7 @@ class MultiFidelity:
     def _get_random_field(self):
         # extract the domain for the HF model
         coords = np.array(self.domain).T  # (N,1)
-        total = self.n_samples * self.n_fields_per_sample
+        total = self.n_unique_conditions * self.n_fields_per_sample
         random_field, _ = sample_grf_rbf(
             coords=coords,
             n_samples=total,
@@ -170,7 +173,7 @@ class MultiFidelity:
         For each selected condition, overlays mean ± std bands for both fidelities.
         """
         nf = self.n_fields_per_sample
-        ns = self.n_samples
+        ns = self.n_unique_conditions
         n_conditions = min(n_conditions, ns)
         x = self.domain.ravel()
 
@@ -336,8 +339,8 @@ class MultiFidelity:
         """compare"""
         if self.plot:
             assert (
-                self.n_samples <= 2000
-            ), "For making plots, reduce the number of samples to less than 2000"
+                self.n_unique_conditions <= 2000
+            ), "For making plots, set unique conditons < 2000"
 
             # make marginals
             self._make_marginal_plot(
@@ -393,7 +396,7 @@ class MultiFidelity:
             "condition": a_HF,
             "field_domain": domain,
             "condition_domain": domain,
-            "n_unique_conditions": self.n_samples,
+            "n_unique_conditions": self.n_unique_conditions,
             "n_fields_per_sample": self.n_fields_per_sample,
         }
         low_data = {
@@ -401,7 +404,7 @@ class MultiFidelity:
             "condition": a_LF,
             "field_domain": domain,
             "condition_domain": domain,
-            "n_unique_conditions": self.n_samples,
+            "n_unique_conditions": self.n_unique_conditions,
             "n_fields_per_sample": self.n_fields_per_sample,
         }
 
@@ -416,12 +419,14 @@ class MultiFidelity:
         # get the input conditions: (n_samples, N)
         a_HF, a_LF = self._get_input_conditions()
         # solve deterministically for each unique condition
-        u_HF_det = self.solver_HF(a_HF)  # (n_samples, N)
-        u_LF_det = self.solver_LF(a_LF)  # (n_samples, N)
+        u_HF_det = self.solver_HF(a_HF)  # (n_unique_conditions, N)
+        u_LF_det = self.solver_LF(a_LF)  # (n_unique_conditions, N)
         # tile layout: [a0,a1,...,aN, a0,a1,...,aN, ...] repeated n_fields times.
-        # Any prefix of length k contains min(k, n_samples) unique conditions,
+        # Any prefix of length k contains min(k, n_unique_conditions) unique conditions,
         # so the training slice always spans the full input space.
-        a_HF = a_HF.repeat(self.n_fields_per_sample, 1)  # (n_samples*n_fields, N)
+        a_HF = a_HF.repeat(
+            self.n_fields_per_sample, 1
+        )  # (n_unique_conditions*n_fields, N)
         a_LF = a_LF.repeat(self.n_fields_per_sample, 1)
         u_HF_det = u_HF_det.repeat(self.n_fields_per_sample, 1)
         u_LF_det = u_LF_det.repeat(self.n_fields_per_sample, 1)
@@ -469,7 +474,7 @@ if __name__ == "__main__":
     # Multi-fidelity setup
     mf = MultiFidelity(
         resolution=args.resolution,
-        n_samples=args.n_samples,
+        n_unique_conditions=args.n_unique_conditions,
         plot=args.plot,
         rbf_length_scale=args.rbf_length_scale,
         rbf_sigma=args.rbf_sigma,
