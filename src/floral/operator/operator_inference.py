@@ -121,11 +121,60 @@ class Inference:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
-        # stack across batches
+        # stack across batches — flat shapes:
+        #   HF/LF:      (n_test, C, *dims)   where n_test = n_unique_test * n_fields
+        #   prediction: (n_test, 1, C, *dims)
         all_HF_field = torch.cat(all_HF_field, dim=0)
         all_LF_field = torch.cat(all_LF_field, dim=0)
         all_condition = torch.cat(all_condition, dim=0)
         all_prediction = torch.cat(all_prediction, dim=0)
+
+        n_fields = self.data_module.n_fields_per_sample
+        n_unique_test = self.data_module.n_unique_test
+
+        # Tiling layout from _condition_rows (sorted):
+        #   [c0_f0, c1_f0, ..., cN_f0, c0_f1, ..., cN_fK]
+        # view(n_fields, n_unique_test, ...)
+        # then permute → (n_unique_test, n_fields, C, *dims)
+        field_shape = all_HF_field.shape[1:]  # (C, *dims)
+        ndim = len(field_shape)
+        perm = (1, 0, *range(2, 2 + ndim))
+
+        all_HF_field = (
+            all_HF_field.view(n_fields, n_unique_test, *field_shape)
+            .permute(*perm)
+            .contiguous()
+        )  # (n_unique_test, n_fields, C, *dims)
+        all_LF_field = (
+            all_LF_field.view(n_fields, n_unique_test, *field_shape)
+            .permute(*perm)
+            .contiguous()
+        )  # (n_unique_test, n_fields, C, *dims)
+
+        # unique conditions — all realizations share the same condition, take block 0
+        all_condition = all_condition[
+            :n_unique_test
+        ]  # (n_unique_test, C_cond, *cond_dims)
+
+        # reshape prediction: (n_test, 1, C, *dims)
+        #   → (n_fields, n_unique_test, 1, C, *dims)  [block layout]
+        #   → (n_unique_test, n_fields, 1, C, *dims)  [permute]
+        #   → (n_unique_test, n_fields, C, *dims)     [flatten realization × gen dims]
+        n_gen = all_prediction.shape[1]
+        pred_shape = all_prediction.shape[2:]  # (C, *dims)
+        pred_ndim = len(pred_shape)
+        pred_perm = (1, 0, 2, *range(3, 3 + pred_ndim))
+        all_prediction = (
+            all_prediction.view(n_fields, n_unique_test, n_gen, *pred_shape)
+            .permute(*pred_perm)
+            .contiguous()
+            .view(n_unique_test, n_fields * n_gen, *pred_shape)
+        )  # (n_unique_test, n_fields * n_gen, C, *dims)
+
+        # repeat HF/LF along dim=1 to match prediction: n_fields → n_fields * n_gen
+        all_HF_field = all_HF_field.repeat_interleave(n_gen, dim=1)
+        all_LF_field = all_LF_field.repeat_interleave(n_gen, dim=1)
+        # both now: (n_unique_test, n_fields * n_gen, C, *dims)
 
         result_dict = {
             "HF_field": all_HF_field,
