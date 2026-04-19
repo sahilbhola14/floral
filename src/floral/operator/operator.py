@@ -359,6 +359,15 @@ class Operator(L.LightningModule):
             operator_config, ["field", "channels"]
         )
 
+        # when floral, LF_field is appended to the condition
+        if self.floral:
+            lf_channels = deep_get(self.shape_dict, ["field", "channels"])
+            method = operator_config.get("method", "FiLMFNO")
+            if method == "FiLMFNO":
+                operator_config["condition"]["channels"] += lf_channels
+            elif method == "FNO":
+                operator_config["in_channels"] += lf_channels
+
         return operator_config
 
     def _get_stepper_config(self):
@@ -512,13 +521,17 @@ class Operator(L.LightningModule):
     def _forward_operator(
         self,
         condition: torch.Tensor,
+        LF_field: torch.Tensor | None = None,
     ):
+        cond_input = (
+            torch.cat((condition, LF_field), dim=1)
+            if self.floral and LF_field is not None
+            else condition
+        )
         if self.operator_method == "FiLMFNO":
-            return self.operator(x=condition, cond=condition)
+            return self.operator(x=condition, cond=cond_input)
         elif self.operator_method == "FNO":
-            return self.operator(
-                condition,
-            )
+            return self.operator(cond_input)
         else:
             raise ValueError(f"{self.operator_method} not valid")
 
@@ -536,7 +549,7 @@ class Operator(L.LightningModule):
         # field_domain = self.field_domain[self.slice_op]
 
         # compute the prediction
-        prediction = self._forward_operator(condition=condition)
+        prediction = self._forward_operator(condition=condition, LF_field=LF_field)
         assert prediction.shape == target_field.shape, "incorrect prediction shape"
         spatial_dims = list(range(1, prediction.ndim))
 

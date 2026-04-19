@@ -157,7 +157,8 @@ class Inference:
         """forward pass through the model"""
         # prediction (normalized)
         prediction = self.best_operator._forward_operator(
-            condition=condition.to(self.device)
+            condition=condition.to(self.device),
+            LF_field=LF_field.to(self.device),
         ).cpu()
 
         # denormalize

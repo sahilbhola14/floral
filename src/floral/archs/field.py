@@ -125,6 +125,7 @@ class VectorField(nn.Module):
         # field channels
         field_channels = self.field_channels
         # in_channels to the field
+        lf_channels = self.field_channels if self.floral else 0
         if self.method == "FiLMFNO":
             """FiLM is used to condition"""
             in_channels = field_channels + self.time_embed_dim
@@ -136,12 +137,17 @@ class VectorField(nn.Module):
                 lifting_channel_ratio=self.field_lifting_channel_ratio,
                 projection_channel_ratio=self.field_projection_channel_ratio,
                 n_modes=n_modes,
-                cond_channels=self.condition_channels,
+                cond_channels=self.condition_channels + lf_channels,
                 linear_skip=self.field_linear_skip,
             )
         elif self.method == "FNO":
             """Regular FNO is used where conditions are concatenated"""
-            in_channels = field_channels + self.time_embed_dim + self.condition_channels
+            in_channels = (
+                field_channels
+                + self.time_embed_dim
+                + self.condition_channels
+                + lf_channels
+            )
             field_model = _FNO(
                 in_channels=in_channels,
                 out_channels=self.field_channels,
@@ -248,18 +254,22 @@ class VectorField(nn.Module):
             field_domain=field_domain,
             t=t,
         )
+        # augment condition with LF_field when in floral mode
+        cond_input = (
+            torch.cat((condition, LF_field), dim=1) if self.floral else condition
+        )
         # time embedding (batch_size, embed_dim, *field_dims)
         t_embed = self._get_time_embedding(t=t, field_dims=field_dims)
         # get the input
         input_vt = self._get_operator_input(
             psi=psi,
             t_embed=t_embed,
-            condition=condition,
+            condition=cond_input,
             LF_field=LF_field,
         )
         # compute the vector field
         if self.method == "FiLMFNO":
-            vt = self.field(x=input_vt, cond=condition)
+            vt = self.field(x=input_vt, cond=cond_input)
         elif self.method == "FNO":
             vt = self.field(input_vt)
         else:
