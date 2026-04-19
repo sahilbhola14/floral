@@ -181,6 +181,7 @@ class Inference:
             "n_unique_val": self.data_module.n_unique_val,
             "n_unique_test": self.data_module.n_unique_test,
             "n_unique_conditions": self.data_module.n_unique_conditions,
+            "n_fields_per_sample": self.data_module.n_fields_per_sample,
         }
 
         # save the results to a file
