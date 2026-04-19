@@ -393,12 +393,16 @@ class MultiFidelity:
             "condition": a_HF,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_samples,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
         low_data = {
             "field": u_LF,
             "condition": a_LF,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_samples,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
 
         # save

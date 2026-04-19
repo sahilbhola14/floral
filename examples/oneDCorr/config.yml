@@ -11,7 +11,6 @@ wandb_group: Null # wandb grouping
 
 # configuration for data
 data:
-  n_samples: 5000 # total samples for training + validation (for tractability)
   LF: # low fidelity
     path: "./low_fidelity.pt"
   HF: # high fidelity

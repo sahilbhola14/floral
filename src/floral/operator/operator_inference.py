@@ -133,10 +133,10 @@ class Inference:
             "condition": all_condition,
             "prediction": all_prediction,
             "domain_dict": self.data_module.domain_dict,
-            "n_train": self.data_module.n_train,
-            "n_val": self.data_module.n_val,
-            "n_test": self.data_module.n_test,
-            "n_samples": self.data_module.n_samples,
+            "n_unique_train": self.data_module.n_unique_train,
+            "n_unique_val": self.data_module.n_unique_val,
+            "n_unique_test": self.data_module.n_unique_test,
+            "n_unique_conditions": self.data_module.n_unique_conditions,
         }
 
         # save the results to a file
@@ -144,9 +144,9 @@ class Inference:
         job_identifier = (
             self.job_name
             + f"_fno_operator_method_{self.operator_method.strip().lower()}"
-            + f"_n_train_{self.data_module.n_train}"
-            + f"_n_val_{self.data_module.n_val}"
-            + f"_n_test_{self.data_module.n_test}"
+            + f"_n_train_{self.data_module.n_unique_train}"
+            + f"_n_val_{self.data_module.n_unique_val}"
+            + f"_n_test_{self.data_module.n_unique_test}"
             + f"_train_res_{self.train_res}"
         )
         save_path = f"{job_identifier}_results_{save_path_identifier}.pt"

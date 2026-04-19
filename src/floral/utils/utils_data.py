@@ -84,7 +84,6 @@ class OpDataModuleConfig:
         default_factory=lambda: {
             "floral": False,
             "data": {
-                "n_samples": 10,
                 "LF": {"path": "low_fidelity.pt"},
                 "HF": {"path": "high_fidelity.pt"},
             },
@@ -165,7 +164,6 @@ class OpDataModule(L.LightningDataModule):
         self.floral = self.config.get("floral")
         self.LF_path = deep_get(self.config, ["data", "LF", "path"])
         self.HF_path = deep_get(self.config, ["data", "HF", "path"])
-        self.n_samples = self.config.data.get("n_samples")
 
         self.dataloader_config = self.config.dataloader
         self.reload = self.dataloader_config.get("reload")
@@ -182,6 +180,11 @@ class OpDataModule(L.LightningDataModule):
         # load the data
         self.LF_data = self._load_data(path=self.LF_path, verbose=verbose)
         self.HF_data = self._load_data(path=self.HF_path, verbose=verbose)
+
+        # unique-condition metadata
+        # (tile layout: condition i at rows i, i+n_unique, ...)
+        self.n_unique_conditions = int(self.HF_data["n_unique_conditions"])
+        self.n_fields_per_sample = int(self.HF_data["n_fields_per_sample"])
 
         # file paths
         self.file_paths = self._get_file_paths()
@@ -204,6 +207,8 @@ class OpDataModule(L.LightningDataModule):
             "condition",
             "field_domain",
             "condition_domain",
+            "n_unique_conditions",
+            "n_fields_per_sample",
         ]
         check_keys(data, required_keys)
         return data
@@ -351,16 +356,11 @@ class OpDataModule(L.LightningDataModule):
             target_field = HF_field
             target_condition = HF_condition
 
-        # check availabe samples
-        assert self.n_samples <= len(HF_field), (
-            f"Requested samples: {self.n_samples} > "
-            f"available samples: {len(HF_field)}"
-        )
-        # create operator data dict
+        # create operator data dict (keep all realizations; split handles subsetting)
         op_data_dict = {}
-        op_data_dict["target_field"] = target_field[: self.n_samples]
-        op_data_dict["condition"] = target_condition[: self.n_samples]
-        op_data_dict["LF_field"] = LF_field[: self.n_samples]
+        op_data_dict["target_field"] = target_field
+        op_data_dict["condition"] = target_condition
+        op_data_dict["LF_field"] = LF_field
 
         # create data shape dict
         shape_dict = {}
@@ -392,60 +392,67 @@ class OpDataModule(L.LightningDataModule):
         return op_data_dict, shape_dict, domain_dict
 
     @property
-    def n_train(self):
+    def n_unique_train(self):
         if self.n_train_samples is not None:
-            return int(self.n_train_samples)
-        return int(self.n_samples * self.train_ratio)
+            # n_train_samples is total rows; convert to unique conditions
+            return int(self.n_train_samples) // self.n_fields_per_sample
+        return int(self.n_unique_conditions * self.train_ratio)
 
     @property
-    def n_val(self):
-        return int(self.n_samples * self.val_ratio)
+    def n_unique_val(self):
+        return int(self.n_unique_conditions * self.val_ratio)
 
     @property
-    def n_test(self):
-        return int(self.n_samples * self.test_ratio)
+    def n_unique_test(self):
+        return self.n_unique_conditions - self.n_unique_train - self.n_unique_val
+
+    def _condition_rows(self, condition_indices):
+        """Return all row indices for the given unique-condition indices.
+
+        Tile layout: condition i lives at rows i, i+n_unique, i+2*n_unique, ...
+        """
+        n_unique = self.n_unique_conditions
+        n_fields = self.n_fields_per_sample
+        cond_idx = torch.tensor(list(condition_indices), dtype=torch.long)
+        idx = torch.cat([cond_idx + k * n_unique for k in range(n_fields)])
+        return idx.sort().values
 
     def _get_split_data_dict(self, op_data_dict):
-        """split the operator data dict into train / val / test.
+        """Split train/val/test by unique input condition to prevent leakage.
 
-        Val and test are always anchored to the END of the pool so they
-        remain identical across runs regardless of n_train. Train samples
-        are taken from the front; n_train_samples can be varied without
-        disturbing val/test.
+        Val and test conditions are anchored to the END of the unique-condition
+        pool so they remain stable when n_train_samples is varied.
         """
-        n_val = self.n_val
-        n_test = self.n_test
-        n_train = self.n_train
-        n_total = self.n_samples
+        n_unique = self.n_unique_conditions
+        n_unique_train = self.n_unique_train
+        n_unique_val = self.n_unique_val
 
-        # val/test always occupy the last (n_val + n_test) samples
-        test_start = n_total - n_test
-        val_start = test_start - n_val
+        # unique-condition index ranges (val/test anchored to end)
+        test_cond_start = n_unique - self.n_unique_test
+        val_cond_start = test_cond_start - n_unique_val
 
-        assert n_train <= val_start, (
-            f"n_train ({n_train}) would overlap with val/test "
-            f"(val starts at {val_start}). Reduce n_train_samples or n_samples."
+        assert n_unique_train <= val_cond_start, (
+            f"n_unique_train ({n_unique_train}) would overlap with val/test "
+            f"(val starts at condition {val_cond_start}). "
+            "Reduce n_train_samples or adjust split ratios."
         )
 
-        def _slice_value(value, start_idx, end_idx):
+        train_rows = self._condition_rows(range(0, n_unique_train))
+        val_rows = self._condition_rows(range(val_cond_start, test_cond_start))
+        test_rows = self._condition_rows(range(test_cond_start, n_unique))
+
+        def _index_value(value, rows):
             if isinstance(value, Mapping):
-                return {
-                    k: _slice_value(v, start_idx, end_idx) for k, v in value.items()
-                }
-            return value[start_idx:end_idx]
+                return {k: _index_value(v, rows) for k, v in value.items()}
+            return value[rows]
 
         train_data_dict = {
-            k: _slice_value(v, 0, n_train) for k, v in op_data_dict.items()
+            k: _index_value(v, train_rows) for k, v in op_data_dict.items()
         }
-        val_data_dict = {
-            k: _slice_value(v, val_start, val_start + n_val)
-            for k, v in op_data_dict.items()
-        }
+        val_data_dict = {k: _index_value(v, val_rows) for k, v in op_data_dict.items()}
         test_data_dict = {
-            k: _slice_value(v, test_start, test_start + n_test)
-            for k, v in op_data_dict.items()
+            k: _index_value(v, test_rows) for k, v in op_data_dict.items()
         }
-
         return train_data_dict, val_data_dict, test_data_dict
 
     def _get_statistics(self, data, normalize_config):
