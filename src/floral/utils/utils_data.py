@@ -404,7 +404,7 @@ class OpDataModule(L.LightningDataModule):
     @property
     def n_unique_train(self):
         if self.n_unique_train_conditions is not None:
-            assert self.n_unique_train_conditions <= self.n_unique
+            assert self.n_unique_train_conditions <= self.n_unique_conditions
             return int(self.n_unique_train_conditions)
         return int(self.n_unique_conditions * self.train_ratio)
 
