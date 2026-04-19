@@ -22,7 +22,7 @@ dataloader:
   train_ratio: 0.7 # percentage of {n_samples} to train
   val_ratio: 0.15 # percentage of {n_samples} to validate
   test_ratio: 0.15 # percentage of {n_samples} to test
-  n_train_samples: 3500 # over-rides train_ratio
+  n_unique_train_conditions: 50 # over-rides train_ratio
   num_workers: 5 # Number of workers
   normalize:
     # normalization: (x - mu) / sigma

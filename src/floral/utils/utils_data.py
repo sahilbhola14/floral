@@ -92,7 +92,7 @@ class OpDataModuleConfig:
                 "train_ratio": 0.7,
                 "val_ratio": 0.15,
                 "test_ratio": 0.15,
-                "n_train_samples": None,  # if set, overrides train_ratio for train size
+                "n_unique_train_conditions": None,  # overrides train_ratio
                 "num_workers": 1,
                 "normalize": {
                     "target_field": {
@@ -171,8 +171,10 @@ class OpDataModule(L.LightningDataModule):
         self.train_ratio = self.dataloader_config.get("train_ratio")
         self.val_ratio = self.dataloader_config.get("val_ratio")
         self.test_ratio = self.dataloader_config.get("test_ratio")
-        # optional override: fix train size independently of train_ratio
-        self.n_train_samples = self.dataloader_config.get("n_train_samples")
+        # optional override: fix train size by unique conditions instead of ratio
+        self.n_unique_train_conditions = self.dataloader_config.get(
+            "n_unique_train_conditions"
+        )
 
         # extract hp_config
         self.batch_size = self.hp_config.get("batch_size", 64)
@@ -392,19 +394,19 @@ class OpDataModule(L.LightningDataModule):
         return op_data_dict, shape_dict, domain_dict
 
     @property
-    def n_unique_train(self):
-        if self.n_train_samples is not None:
-            # n_train_samples is total rows; convert to unique conditions
-            return int(self.n_train_samples) // self.n_fields_per_sample
-        return int(self.n_unique_conditions * self.train_ratio)
-
-    @property
     def n_unique_val(self):
         return int(self.n_unique_conditions * self.val_ratio)
 
     @property
     def n_unique_test(self):
-        return self.n_unique_conditions - self.n_unique_train - self.n_unique_val
+        return int(self.n_unique_conditions * self.test_ratio)
+
+    @property
+    def n_unique_train(self):
+        if self.n_unique_train_conditions is not None:
+            assert self.n_unique_train_conditions <= self.n_unique
+            return int(self.n_unique_train_conditions)
+        return int(self.n_unique_conditions * self.train_ratio)
 
     @property
     def n_train(self):
@@ -433,7 +435,7 @@ class OpDataModule(L.LightningDataModule):
         """Split train/val/test by unique input condition to prevent leakage.
 
         Val and test conditions are anchored to the END of the unique-condition
-        pool so they remain stable when n_train_samples is varied.
+        pool so they remain stable when n_unique_train_conditions is varied.
         """
         n_unique = self.n_unique_conditions
         n_unique_train = self.n_unique_train
@@ -446,7 +448,7 @@ class OpDataModule(L.LightningDataModule):
         assert n_unique_train <= val_cond_start, (
             f"n_unique_train ({n_unique_train}) would overlap with val/test "
             f"(val starts at condition {val_cond_start}). "
-            "Reduce n_train_samples or adjust split ratios."
+            "Reduce n_unique_train_conditions or adjust split ratios."
         )
 
         train_rows = self._condition_rows(range(0, n_unique_train))
