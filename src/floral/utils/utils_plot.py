@@ -8,6 +8,16 @@ import seaborn as sns
 import pandas as pd
 from abc import abstractmethod, ABC
 
+# Global color palette shared across all plot classes
+_METHOD_COLORS = {
+    "High-fidelity": "#000000",
+    "Low-fidelity": "#999999",
+    "FLORA": "#E10000",
+    "FLORAL": "#0040FF",
+    "FNO": "#008000",
+    "Residual FNO": "#FF8C00",
+}
+
 
 def find_best_idx(true, pred):
     """Find the best sample index based on L1 error"""
@@ -332,6 +342,8 @@ class ErrorSummary:
         df_rest["Label"] = df_rest.apply(_make_label, axis=1)
         label_order = df_rest["Label"].unique().tolist()
 
+        palette = {k: _METHOD_COLORS[k] for k in label_order if k in _METHOD_COLORS}
+
         # Create 1×3 subplots
         fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
         for ii, (ax, metric) in enumerate(zip(axes, metrics)):
@@ -349,15 +361,19 @@ class ErrorSummary:
                 style_order=label_order,
                 hue="Label",
                 hue_order=label_order,
-                palette="Set2",
-                s=150,
+                palette=palette,
+                s=250,
                 edgecolor="black",
                 ax=ax,
             )
 
             # Add horizontal LF reference line
             ax.axhline(
-                metric_LF, linestyle="--", color="k", linewidth=2, label="Low-fidelity"
+                metric_LF,
+                linestyle="--",
+                color=_METHOD_COLORS["Low-fidelity"],
+                linewidth=2,
+                label="Low-fidelity",
             )
 
             # Titles and labels
@@ -390,8 +406,13 @@ class ErrorSummary:
                 return "FNO" if r["Method"] == "FLORA" else "Residual FNO"
             return r["Method"]
 
-        # Create 1×3 subplots
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5), layout="compressed")
+        xlim_range = kwargs.get("xlim_range", (1e1, 1e4))
+        ylim_range = kwargs.get("ylim_range", (1e-2, 1e1))
+
+        # sharey keeps ticks in sync; we hide y-axis on non-leftmost panels manually
+        fig, axes = plt.subplots(
+            1, 3, figsize=(15, 5), layout="compressed", sharey=True
+        )
         for ii, (ax, metric) in enumerate(zip(axes, metrics)):
             # Filter dataframe for each metric
             subset_plot = combined_df[
@@ -400,6 +421,7 @@ class ErrorSummary:
             ].copy()
             subset_plot["Label"] = subset_plot.apply(_make_label, axis=1)
             label_order = subset_plot["Label"].unique().tolist()
+            palette = {k: _METHOD_COLORS[k] for k in label_order if k in _METHOD_COLORS}
             subset_LF_plot = subset_LF[subset_LF["Metric"] == metric]
             metric_LF = subset_LF_plot["Value"].mean()
 
@@ -412,31 +434,46 @@ class ErrorSummary:
                 style_order=label_order,
                 hue="Label",
                 hue_order=label_order,
-                palette="Set2",
-                s=150,
+                palette=palette,
+                s=250,
                 edgecolor="black",
                 ax=ax,
             )
 
             # Add horizontal LF reference line
             ax.axhline(
-                metric_LF, linestyle="--", color="k", linewidth=2, label="Low-fidelity"
+                metric_LF,
+                linestyle="--",
+                color=_METHOD_COLORS["Low-fidelity"],
+                linewidth=2,
+                label="Low-fidelity",
             )
 
-            # Titles and labels
-            # ax.set_title(metric)
             ax.set_xlabel("Samples (train)", fontsize=15)
-            ax.set_ylabel(metric, fontsize=15)
-            if ii == 0:
-                ax.legend().set_title("Model")
-            else:
-                ax.legend_.remove()
+            ax.set_title(metric, fontsize=15)
             ax.set_yscale("log")
             ax.set_xscale("log")
-            xlim_range = kwargs.get("xlim_range", (1e1, 1e4))
-            ylim_range = kwargs.get("ylim_range", (1e-2, 1e1))
             ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
             ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
+
+            if ii == 0:
+                ax.set_ylabel("Error", fontsize=15)
+                handles, labels = ax.get_legend_handles_labels()
+                # move Low-fidelity to the front
+                lf_idx = (
+                    labels.index("Low-fidelity") if "Low-fidelity" in labels else None
+                )
+                if lf_idx is not None:
+                    handles = [handles[lf_idx]] + [
+                        h for i, h in enumerate(handles) if i != lf_idx
+                    ]
+                    labels = [labels[lf_idx]] + [
+                        l for i, l in enumerate(labels) if i != lf_idx
+                    ]
+                ax.legend(handles, labels).set_title("Model")
+            else:
+                ax.set_ylabel("")
+                ax.legend_.remove()
 
         plt.savefig("error_comparison.png", dpi=300, pad_inches=0.1)
         plt.close()
@@ -805,35 +842,21 @@ class oneDPlot(BasePlot):
             sharex=True,
             # sharey=True,
         )
-        _colors = {
-            "High-fidelity": "#000000",  # black
-            "Low-fidelity": "#999999",  # grey
-            "FLORA": "#E10000",  # vivid red
-            "FLORAL": "#0040FF",  # vivid blue
-            "FNO": "#008000",  # vivid green
-            "Residual FNO": "#FF8C00",  # vivid orange
+        _plot_colors = _METHOD_COLORS
+        _linestyles = {
+            "High-fidelity": "-",
+            "Low-fidelity": "--",
+            "FLORA": "-",
+            "FLORAL": "-.",
+            "FNO": "-",
+            "Residual FNO": "-.",
         }
         for k in self.mean_dict.keys():
-            if k == "High-fidelity":
-                line_kwargs = dict(color=_colors[k], linestyle="-", linewidth=linewidth)
-            elif k == "Low-fidelity":
-                line_kwargs = dict(
-                    color=_colors[k], linestyle="--", linewidth=linewidth
-                )
-            elif k == "FLORA":
-                line_kwargs = dict(color=_colors[k], linestyle="-", linewidth=linewidth)
-            elif k == "FLORAL":
-                line_kwargs = dict(
-                    color=_colors[k], linestyle="-.", linewidth=linewidth
-                )
-            elif k == "FNO":
-                line_kwargs = dict(color=_colors[k], linestyle="-", linewidth=linewidth)
-            elif k == "Residual FNO":
-                line_kwargs = dict(
-                    color=_colors[k], linestyle="-.", linewidth=linewidth
-                )
-            else:
+            if k not in _plot_colors:
                 raise ValueError(f"{k} not a valid entry")
+            line_kwargs = dict(
+                color=_plot_colors[k], linestyle=_linestyles[k], linewidth=linewidth
+            )
 
             for ii in range(n_samples):
                 mean_pred = self.mean_dict[k][ii][plot_channel].ravel()
@@ -852,6 +875,7 @@ class oneDPlot(BasePlot):
                         label=k,
                         **line_kwargs,
                     )
+        label_fontsize = kwargs.get("label_fontsize", 14)
         for ii, ax in enumerate(axs.flatten()):
             if ii == 0:
                 leg = ax.legend(framealpha=1.0)
@@ -859,11 +883,13 @@ class oneDPlot(BasePlot):
             row = ii // 2
             col = ii % 2
             if ii % 2 == 0:
-                ax.set_ylabel(kwargs.get("ylabel", r"$w(x)$"))
+                ax.set_ylabel(kwargs.get("ylabel", r"$w(x)$"), fontsize=label_fontsize)
             else:
-                ax.set_ylabel(kwargs.get("std_ylabel", r"$\sigma(x)$"))
+                ax.set_ylabel(
+                    kwargs.get("std_ylabel", r"$\sigma(x)$"), fontsize=label_fontsize
+                )
             if row == n_samples - 1:
-                ax.set_xlabel(kwargs.get("xlabel", r"$x$"))
+                ax.set_xlabel(kwargs.get("xlabel", r"$x$"), fontsize=label_fontsize)
             else:
                 ax.set_xlabel("")  # remove label entirely
                 ax.tick_params(labelbottom=False)  # hide tick labels
@@ -991,13 +1017,6 @@ class ParetoPlot:
 
         return summary_df
 
-    _COLORS = {
-        "FLORA": "#E10000",
-        "FLORAL": "#0040FF",
-        "FNO": "#008000",
-        "Residual FNO": "#FF8C00",
-    }
-
     @classmethod
     def plot_pareto_res(self, combined_df, **kwargs):
         def _make_label(r):
@@ -1010,7 +1029,7 @@ class ParetoPlot:
         df_rest = combined_df[combined_df["Method"] != "Low-fidelity"].copy()
         df_rest["Label"] = df_rest.apply(_make_label, axis=1)
         label_order = df_rest["Label"].unique().tolist()
-        palette = {k: self._COLORS[k] for k in label_order if k in self._COLORS}
+        palette = {k: _METHOD_COLORS[k] for k in label_order if k in _METHOD_COLORS}
 
         figsize = kwargs.get("figsize", (10, 5))
         plt.figure(figsize=figsize, layout="compressed")
@@ -1083,85 +1102,257 @@ class ParetoPlot:
         plt.close()
 
     @classmethod
-    def plot_pareto(self, combined_df, **kwargs):
-        # Split data
-        df_lf = combined_df[combined_df["Method"] == "Low-fidelity"].iloc[
-            [0]
-        ]  # take one row
-        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"].copy()
+    def plot_pareto(self, combined_df, det_as_lines: bool = True, **kwargs):
+        """Plot the Pareto front.
+
+        Parameters
+        ----------
+        combined_df : pd.DataFrame
+            Output of repeated calls to ``get_pareto_data``, concatenated.
+        det_as_lines : bool
+            If True (default) deterministic models (FNO, Residual FNO) are drawn
+            as horizontal lines with linestyle encoding Samples (train).
+            If False they are drawn as scatter markers just like the probabilistic
+            models, using their actual (Mean Std, L2 Error) position.
+        """
+        from matplotlib.lines import Line2D
+        from matplotlib.legend_handler import HandlerTuple
 
         def _make_label(r):
             if r["Model"] == "FNO":
                 return "FNO" if r["Method"] == "FLORA" else "Residual FNO"
             return r["Method"]
 
+        # Low-fidelity: single reference point (take one row)
+        df_lf = combined_df[combined_df["Method"] == "Low-fidelity"].iloc[[0]]
+        df_rest = combined_df[combined_df["Method"] != "Low-fidelity"].copy()
         df_rest["Label"] = df_rest.apply(_make_label, axis=1)
-        label_order = df_rest["Label"].unique().tolist()
 
-        # Plot methods that depend on Samples (Train)
+        prob_labels = ["FLORA", "FLORAL"]
+        det_labels = ["FNO", "Residual FNO"]
+        df_prob = df_rest[df_rest["Label"].isin(prob_labels)].copy()
+        df_det = df_rest[df_rest["Label"].isin(det_labels)].copy()
+
+        palette = {
+            k: _METHOD_COLORS[k]
+            for k in prob_labels + det_labels
+            if k in _METHOD_COLORS
+        }
+
+        # marker / linestyle per training-sample count (uniform linewidth)
+        n_train_vals = sorted(combined_df["Samples (train)"].unique())
+        _markers = ["o", "s", "D", "^", "v"]
+        # explicit dash patterns — clearly distinct at all scales
+        _linestyles = [
+            (0, ()),  # solid
+            (0, (7, 2)),  # long dash
+            (0, (2, 2)),  # short dash
+            (0, (7, 2, 2, 2)),  # dash-dot
+            (0, (1, 1)),  # densely dotted
+        ]
+        _lw = 1.5  # uniform linewidth for all deterministic lines
+        train_to_marker = {
+            n: _markers[i % len(_markers)] for i, n in enumerate(n_train_vals)
+        }
+        train_to_ls = {
+            n: _linestyles[i % len(_linestyles)] for i, n in enumerate(n_train_vals)
+        }
+
         figsize = kwargs.get("figsize", (10, 5))
-        plt.figure(figsize=figsize, layout="compressed")
-        # Overlay the Low-fidelity baseline separately
-        palette = {k: self._COLORS[k] for k in label_order if k in self._COLORS}
+        xlim_range = kwargs.get("xlim_range", (1e-7, 1e-1))
+        ylim_range = kwargs.get("ylim_range", (1e-1, 1e2))
 
-        ax = sns.scatterplot(
-            data=df_lf,
-            x="Mean Std",
-            y="L2 Error",
+        fig, ax = plt.subplots(1, 1, figsize=figsize, layout="compressed")
+
+        # Low-fidelity reference
+        ax.scatter(
+            df_lf["Mean Std"],
+            df_lf["L2 Error"],
             color="#999999",
             s=200,
             marker="*",
             edgecolor="black",
-            label="Low-fidelity (reference)",
+            zorder=5,
         )
 
-        sns.scatterplot(
-            data=df_rest,
-            x="Mean Std",
-            y="L2 Error",
-            hue="Label",
-            hue_order=label_order,
-            style="Samples (train)",
-            palette=palette,
-            s=100,
-            edgecolor="black",
-            ax=ax,
-        )
+        # Probabilistic: scatter markers, one per (model, n_train)
+        for label in prob_labels:
+            color = palette[label]
+            for n_train in n_train_vals:
+                sub = df_prob[
+                    (df_prob["Label"] == label)
+                    & (df_prob["Samples (train)"] == n_train)
+                ]
+                if sub.empty:
+                    continue
+                ax.scatter(
+                    sub["Mean Std"],
+                    sub["L2 Error"],
+                    color=color,
+                    s=100,
+                    marker=train_to_marker[n_train],
+                    edgecolor="black",
+                    zorder=5,
+                )
+
+        # Deterministic: horizontal lines or scatter depending on flag
+        for label in det_labels:
+            color = palette[label]
+            for n_train in n_train_vals:
+                sub = df_det[
+                    (df_det["Label"] == label) & (df_det["Samples (train)"] == n_train)
+                ]
+                if sub.empty:
+                    continue
+                if det_as_lines:
+                    ax.axhline(
+                        sub["L2 Error"].values[0],
+                        color=color,
+                        linestyle=train_to_ls[n_train],
+                        linewidth=_lw,
+                    )
+                else:
+                    ax.scatter(
+                        sub["Mean Std"],
+                        sub["L2 Error"],
+                        color=color,
+                        s=100,
+                        marker=train_to_marker[n_train],
+                        edgecolor="black",
+                        zorder=5,
+                    )
 
         ax.set_yscale("log")
         ax.set_xscale("log")
-        xlim_range = kwargs.get("xlim_range", (1e-7, 1e-1))
-        ylim_range = kwargs.get("ylim_range", (1e-1, 1e2))
         ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
         ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
-        # shade region where deterministic models (FNO, Residual FNO) live
-        det_threshold = kwargs.get("det_threshold", 1e-5)
-        ax.axvspan(xlim_range[0], det_threshold, color="gray", alpha=0.1, zorder=0)
-        ax.axvline(det_threshold, color="gray", linestyle=":", linewidth=1.5, zorder=1)
-        ax.text(
-            det_threshold * 0.5,
-            ylim_range[1] * 0.6,
-            "Deterministic",
-            fontsize=12,
-            color="gray",
-            ha="center",
-            va="top",
-            rotation=90,
-        )
+        # ---- Legend 1: model colors ----
+        # deterministic legend entries switch between line and marker icons
+        if det_as_lines:
+            det_model_handles = [
+                Line2D([0], [0], color=palette["FNO"], linewidth=2, label="FNO"),
+                Line2D(
+                    [0],
+                    [0],
+                    color=palette["Residual FNO"],
+                    linewidth=2,
+                    label="Residual FNO",
+                ),
+            ]
+        else:
+            det_model_handles = [
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor=palette["FNO"],
+                    markersize=9,
+                    markeredgecolor="black",
+                    label="FNO",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    marker="o",
+                    color="w",
+                    markerfacecolor=palette["Residual FNO"],
+                    markersize=9,
+                    markeredgecolor="black",
+                    label="Residual FNO",
+                ),
+            ]
 
-        handles, labels = ax.get_legend_handles_labels()
-        default_legend_kwargs = {
-            "bbox_to_anchor": (1.01, 1),
-            "loc": "upper left",
-            "borderaxespad": 0.0,
-        }
-        ax.legend(
-            handles,
-            labels,
-            title="",
-            **kwargs.get("legend_kwargs", default_legend_kwargs),
+        model_handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="*",
+                color="w",
+                markerfacecolor="#999999",
+                markersize=12,
+                markeredgecolor="black",
+                label="Low-fidelity",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=palette["FLORA"],
+                markersize=9,
+                markeredgecolor="black",
+                label="FLORA",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="w",
+                markerfacecolor=palette["FLORAL"],
+                markersize=9,
+                markeredgecolor="black",
+                label="FLORAL",
+            ),
+            *det_model_handles,
+        ]
+
+        # model legend anchored to the top of the axes
+        leg1 = ax.legend(
+            handles=model_handles,
+            labels=[h.get_label() for h in model_handles],
+            title="Model",
+            bbox_to_anchor=kwargs.get("model_legend_anchor", (1.01, 1.0)),
+            loc="upper left",
+            borderaxespad=0.0,
         )
+        ax.add_artist(leg1)
+
+        # ---- Legend 2: Samples (train) ----
+        # det_as_lines=True  → two columns per row: (marker, line)
+        # det_as_lines=False → single marker column
+        samples_handles, samples_labels_list = [], []
+        for n_train in n_train_vals:
+            marker_h = Line2D(
+                [0],
+                [0],
+                marker=train_to_marker[n_train],
+                color="w",
+                markerfacecolor="gray",
+                markersize=8,
+                markeredgecolor="black",
+            )
+            if det_as_lines:
+                line_h = Line2D(
+                    [0],
+                    [0],
+                    color="gray",
+                    linestyle=train_to_ls[n_train],
+                    linewidth=_lw,
+                )
+                samples_handles.append((marker_h, line_h))
+            else:
+                samples_handles.append(marker_h)
+            samples_labels_list.append(str(n_train))
+
+        # anchor samples legend to the bottom so it never overlaps the model legend
+        samples_legend_kwargs = dict(
+            handles=samples_handles,
+            labels=samples_labels_list,
+            title="Samples (train)",
+            handletextpad=0.8,
+            bbox_to_anchor=kwargs.get("samples_legend_anchor", (1.01, 0.0)),
+            loc="lower left",
+            borderaxespad=0.0,
+        )
+        if det_as_lines:
+            samples_legend_kwargs["handler_map"] = {
+                tuple: HandlerTuple(ndivide=None, pad=0.5)
+            }
+            samples_legend_kwargs["handlelength"] = 4.0
+        ax.legend(**samples_legend_kwargs)
+
         ax.set_xlabel("Mean Predictive Uncertainty")
         ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
         plt.savefig(
