@@ -93,7 +93,8 @@ class BaseResidual(ABC):
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
-        self.n_samples = self.data_floral["n_samples"]
+        self.n_test = self.data_floral["n_test"]
+        self.n_samples = self.n_train + self.n_val + self.n_test
 
         self.n_avail_samples = len(self.HF_field)
 
@@ -231,18 +232,19 @@ class ErrorSummary:
         self.data_flora = data_flora
         self.data_floral = data_floral
 
-        # High-fidelity data (B, channels, *dims)
+        # High-fidelity data (B, n_fields_per_sample, channels, *dims)
         self.HF_field = self.data_floral["HF_field"]
-        # Low-fidelity data (B, channels, *dims)
+        # Low-fidelity data (B, n_fields_per_sample, channels, *dims)
         self.LF_field = self.data_floral["LF_field"]
-        # Prediction Flora
+        # Prediction Flora (B, n_fields_per_sample*n_gen, channels, *dims)
         self.HF_field_prediction_flora = self.data_flora["prediction"]
-        # Prediction Floral
+        # Prediction Floral (B, n_fields_per_sample*n_gen, channels, *dims)
         self.HF_field_prediction_floral = self.data_floral["prediction"]
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
-        self.n_samples = self.data_floral["n_samples"]
+        self.n_test = self.data_floral["n_test"]
+        self.n_samples = self.n_train + self.n_val + self.n_test
 
         self.n_avail_samples = len(self.HF_field)
         assert len(self.LF_field) == self.n_avail_samples
@@ -250,21 +252,27 @@ class ErrorSummary:
         assert len(self.HF_field_prediction_floral) == self.n_avail_samples
 
         # number of UQ samples
-        self.n_gen = self.HF_field_prediction_floral.shape[1]
-        assert self.n_gen == self.HF_field_prediction_flora.shape[1]
+        self.n_fields_per_sample = self.data_floral["n_fields_per_sample"]
+        self.n_gen = (
+            self.HF_field_prediction_floral.shape[1] // self.n_fields_per_sample
+        )
+        assert (
+            self.HF_field_prediction_floral.shape[1]
+            == self.n_fields_per_sample * self.n_gen
+        )
 
         # compute mean and std over the UQ samples (B, C, *dims)
+        # for Low-fidelity and High-fidelity,
+        # we take the mean over the number of realizations
         self.mean_dict = {
-            "Low-fidelity": self.LF_field,
-            "High-fidelity": self.HF_field,
+            "Low-fidelity": self.LF_field.mean(1),
+            "High-fidelity": self.HF_field.mean(1),
             "FLORA": self.HF_field_prediction_flora.mean(1),
             "FLORAL": self.HF_field_prediction_floral.mean(1),
         }
 
     def __call__(self, model: str, verbose: bool = False):
         error_dict = {
-            # "abs_error": {},
-            # "rel_error": {},
             "RMSE": {},
             "NRMSE": {},
             "CRMSE": {},
@@ -274,12 +282,6 @@ class ErrorSummary:
             true = self.mean_dict["High-fidelity"]
             pred = self.mean_dict[k]
             if k != "High-fidelity":
-                # # absolute error
-                # abs_error = (pred - true).abs()
-                # error_dict["abs_error"][k] = abs_error
-                # # relative error
-                # rel_error = ((pred - true) / true).abs()
-                # error_dict["rel_error"][k] = rel_error
                 # RMSE
                 RMSE = compute_RMSE(true=true, pred=pred)
                 error_dict["RMSE"][k] = RMSE
@@ -688,37 +690,44 @@ class oneDPlot(BasePlot):
         self.data_fno_flora = data_fno_flora
         self.data_fno_floral = data_fno_floral
 
-        # High-fidelity data (B, channels, *dims)
+        # High-fidelity data (B, n_fields_per_sample, channels, *dims)
         self.HF_field = self.data_floral["HF_field"]
-        # Low-fidelity data (B, channels, *dims)
+        # Low-fidelity data (B, n_fields_per_sample, channels, *dims)
         self.LF_field = self.data_floral["LF_field"]
-        # Prediction Flora
+        # Prediction Flora (B, n_fields_per_sample*n_gen, channels, *dims)
         self.HF_field_prediction_flora = self.data_flora["prediction"]
         self.HF_field_prediction_fno_flora = self.data_fno_flora["prediction"]
-        # Prediction Floral
+        # Prediction Floral (B, n_fields_per_sample*n_gen, channels, *dims)
         self.HF_field_prediction_floral = self.data_floral["prediction"]
         self.HF_field_prediction_fno_floral = self.data_fno_floral["prediction"]
+
         # extract num train and val
-        self.n_train = self.data_floral["n_train"]
-        self.n_val = self.data_floral["n_val"]
+        self.n_train = self.data_floral["n_train"]  # total number of samples
+        self.n_val = self.data_floral["n_val"]  # total number of samples
+        self.n_test = self.data_floral["n_test"]  # total number of samples
         # domains
         self.field_domain = self.data_flora["domain_dict"]["field"].ravel()
 
-        self.n_avail_samples = len(self.HF_field)
+        self.n_avail_samples = self.data_floral["n_unique_test"]
         assert len(self.LF_field) == self.n_avail_samples
         assert len(self.HF_field_prediction_flora) == self.n_avail_samples
         assert len(self.HF_field_prediction_floral) == self.n_avail_samples
         assert len(self.HF_field_prediction_fno_flora) == self.n_avail_samples
         assert len(self.HF_field_prediction_fno_floral) == self.n_avail_samples
-
         # number of UQ samples
-        self.n_gen = self.HF_field_prediction_floral.shape[1]
-        assert self.n_gen == self.HF_field_prediction_flora.shape[1]
+        self.n_fields_per_sample = self.data_floral["n_fields_per_sample"]
+        self.n_gen = (
+            self.HF_field_prediction_floral.shape[1] // self.n_fields_per_sample
+        )
+        assert (
+            self.HF_field_prediction_floral.shape[1]
+            == self.n_fields_per_sample * self.n_gen
+        )
 
         # compute mean and std over the UQ samples (B, C, *dims)
         self.mean_dict = {
-            "Low-fidelity": self.LF_field,
-            "High-fidelity": self.HF_field,
+            "Low-fidelity": self.LF_field.mean(1),
+            "High-fidelity": self.HF_field.mean(1),
             "FLORA": self.HF_field_prediction_flora.mean(1),
             "FLORAL": self.HF_field_prediction_floral.mean(1),
             "FNO": self.HF_field_prediction_fno_flora.mean(1),
@@ -726,12 +735,14 @@ class oneDPlot(BasePlot):
         }
 
         self.std_dict = {
-            "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
+            "Low-fidelity": self.LF_field.std(1, correction=0),
+            "High-fidelity": self.HF_field.std(1, correction=0),
             "FLORA": self.HF_field_prediction_flora.std(1, correction=0),
             "FLORAL": self.HF_field_prediction_floral.std(1, correction=0),
             "FNO": self.HF_field_prediction_fno_flora.std(1, correction=0),
             "Residual FNO": self.HF_field_prediction_fno_floral.std(1, correction=0),
         }
+
         self.error_dict = self._get_error_dict()
 
     def _get_error_dict(self):
@@ -819,7 +830,7 @@ class oneDPlot(BasePlot):
                     **line_kwargs,
                 )
 
-                if k in ["FLORA", "FLORAL", "FNO", "Residual FNO"]:
+                if k in ["High-fidelity", "FLORA", "FLORAL"]:
                     std_pred = self.std_dict[k][ii][plot_channel].ravel()
                     axs[ii, 0].fill_between(
                         self.field_domain,
@@ -843,7 +854,8 @@ class oneDPlot(BasePlot):
                     )
         for ii, ax in enumerate(axs.flatten()):
             if ii == 0:
-                ax.legend()
+                leg = ax.legend(framealpha=1.0)
+                leg.set_zorder(100)
             row = ii // 2
             col = ii % 2
             # ax.set_xticks([])
@@ -1016,7 +1028,9 @@ class ParetoPlot:
             .reset_index()
         )
 
-        summary_df["Samples (total)"] = data_flora["n_samples"]
+        summary_df["Samples (total)"] = (
+            data_flora["n_train"] + data_flora["n_val"] + data_flora["n_test"]
+        )
         summary_df["Samples (train)"] = data_flora["n_train"]
         summary_df["Samples (validation)"] = data_flora["n_val"]
 
