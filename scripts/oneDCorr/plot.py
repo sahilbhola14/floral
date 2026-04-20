@@ -9,12 +9,13 @@ import matplotlib.pyplot as plt
 from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [3500, 1000, 500, 10]
+n_train_samples_list = [100, 200, 500, 1000, 2000]
 n_val_samples = 750
 n_test_samples = 750
 operator_method = "filmfno"
 train_res = "Full"
-results_folder = "./results_vary_training_size_sigma_p25_l_p2"
+results_folder = "./results_vary_training_size_grf_input_multi_sample_a"
+# results_folder = "./dummy_res"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -121,7 +122,7 @@ def plot_field(n_train_samples):
         data_fno_floral=data_fno_floral,
     )
     # create sample plot
-    plotter.make_field_sample_plot(std_factor=3, figsize=(15, 12))
+    plotter.make_field_sample_plot(figsize=(15, 12), linewidth=3.5)
 
 
 def plot_pareto(n_train_samples_list):
@@ -138,15 +139,18 @@ def plot_pareto(n_train_samples_list):
         all_data.append(df)
         # get pareto data for fno
         df_fno = ParetoPlot.get_pareto_data(
-            data_flora=data_fno_flora, data_floral=data_fno_floral, model="FNO"
+            data_flora=data_fno_flora,
+            data_floral=data_fno_floral,
+            model="FNO",
+            deterministic=True,
         )
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
-    legend_kwargs = {"loc": "lower right"}
+    legend_kwargs = {"bbox_to_anchor": (1.01, 0.5), "loc": "center left"}
     ParetoPlot.plot_pareto(
         combined_df,
-        ylim_range=(1e-2, 1e1),
-        figsize=(7, 5),
+        ylim_range=(1e-1, 1e1),
+        figsize=(8, 5),
         xlim_range=(1e-7, 1e0),
         legend_kwargs=legend_kwargs,
     )
@@ -191,19 +195,25 @@ def plot_error_summary(n_train_samples_list):
         df_fno = summary_fno(verbose=True, model="FNO")
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e1), xlim_range=(0, 1e4))
+    ErrorSummary.plot_error(combined_df, ylim_range=(1e-2, 1e1), xlim_range=(0, 1e4))
 
 
 if __name__ == "__main__":
     # residual summary
-    plot_residual_summary(n_train_samples_list)
+    # plot_residual_summary(n_train_samples_list)
 
     # error summary
-    plot_error_summary(n_train_samples_list)
+    # plot_error_summary(n_train_samples_list)
 
     # plot field
-    plot_field(n_train_samples=n_train_samples_list[-1])
-    plot_field(n_train_samples=n_train_samples_list[0])
+    plot_field_idx = [0, -1]
+
+    # if plot_field_idx:
+    #     for ii in plot_field_idx:
+    #         plot_field(n_train_samples=n_train_samples_list[ii])
+    # else:
+    #     for ii in range(len(n_train_samples_list)):
+    #         plot_field(n_train_samples=n_train_samples_list[ii])
 
     # pareto
     plot_pareto(n_train_samples_list)

@@ -881,114 +881,71 @@ class oneDPlot(BasePlot):
         """make field samples plot"""
         raise NotImplementedError
 
-    #     assert n_samples <= self.n_avail_samples
-    #     error_type = kwargs.get("error_type", "abs_error")
-    #     assert error_type in ["abs_error", "rel_error"], "invalid error type"
-    #     print(
-    #         f"Plotting {n_samples} samples for channel: {plot_channel} "
-    #         f"for error type: {error_type}"
-    #     )
-    #     data_dict = self.error_dict[error_type]
-
-    #     fig, axs = plt.subplots(
-    #         n_samples,
-    #         len(data_dict),
-    #         figsize=kwargs.get("figsize", (len(data_dict) * 2.4, n_samples * 2.0)),
-    #         dpi=300,
-    #         layout="compressed",
-    #         sharex=True,
-    #         sharey=True,
-    #     )
-    #     # compute range
-    #     if kwargs.get("vmin", None) is None:
-    #         vmin = min(data[:n_samples].min() for data in data_dict.values())
-    #         vmin = torch.floor(vmin)
-    #     else:
-    #         vmin = kwargs.get("vmin")
-    #     if kwargs.get("vmax", None) is None:
-    #         vmax = max(data[:n_samples].max() for data in data_dict.values())
-    #         vmax = torch.ceil(vmax)
-    #     else:
-    #         vmax = kwargs.get("vmax")
-    #     for jj, k in enumerate(data_dict.keys()):
-    #         axs[0, jj].set_title(k)
-    #         for ii in range(n_samples):
-    #             im = axs[ii, jj].imshow(
-    #                 data_dict[k][ii][plot_channel],
-    #                 vmin=vmin,
-    #                 vmax=vmax,
-    #                 origin="lower",
-    #                 interpolation="bicubic",
-    #             )
-    #     fig.colorbar(im, ax=axs[-1], orientation="horizontal", pad=0.1)
-    #     for ax in axs.flatten():
-    #         ax.set_xticks([])
-    #         ax.set_yticks([])
-    #         ax.set_xlabel(kwargs.get("xlabel", r"$x_1$"))
-    #         ax.set_ylabel(kwargs.get("ylabel", r"$x_2$"))
-    #         ax.label_outer()
-    #     default_save_name = (
-    #         f"{error_type}_samples_n_train_{self.n_train}_n_val_{self.n_val}"
-    #     )
-    #     plt.savefig(kwargs.get("save_name", default_save_name) + ".png")
-
 
 class ParetoPlot:
     """Pareto plot class"""
 
     @classmethod
-    def get_pareto_data(self, data_flora, data_floral, model: str = None):
+    def get_pareto_data(
+        self, data_flora, data_floral, model: str = None, deterministic: bool = False
+    ):
         """extract the pareto data"""
-        # High-fidelity data (B, channels, *dims)
+        # High-fidelity data (B, n_fields_per_sample, channels, *dims)
         HF_field = data_floral["HF_field"]
-        # Low-fidelity data (B, channels, *dims)
+        # Low-fidelity data (B, n_fields_per_sample, channels, *dims)
         LF_field = data_floral["LF_field"]
         # Prediction Flora
         HF_field_prediction_flora = data_flora["prediction"]
         # Prediction Floral
         HF_field_prediction_floral = data_floral["prediction"]
-        # extract num train and val
-        # n_train = data_floral["n_train"]
-        # n_val = data_floral["n_val"]
 
-        n_avail_samples = len(HF_field)
+        n_avail_samples = data_floral.get("n_unique_test")
         assert len(LF_field) == n_avail_samples
         assert len(HF_field_prediction_flora) == n_avail_samples
         assert len(HF_field_prediction_floral) == n_avail_samples
 
-        # number of UQ samples
-        n_gen = HF_field_prediction_floral.shape[1]
-        assert n_gen == HF_field_prediction_flora.shape[1]
+        n_fields_per_sample = data_floral["n_fields_per_sample"]
+        n_gen = HF_field_prediction_floral.shape[1] // n_fields_per_sample
+        assert HF_field_prediction_floral.shape[1] == n_fields_per_sample * n_gen
 
         mean_dict = {
-            "Low-fidelity": LF_field,
+            "Low-fidelity": LF_field.mean(1),
             "FLORA": HF_field_prediction_flora.mean(1),
             "FLORAL": HF_field_prediction_floral.mean(1),
         }
 
-        std_dict = {
-            "Low-fidelity": torch.ones_like(LF_field) * 1e-6,
-            "FLORA": HF_field_prediction_flora.std(1, correction=0).clamp(min=1e-6),
-            "FLORAL": HF_field_prediction_floral.std(1, correction=0).clamp(min=1e-6),
-        }
+        if deterministic:
+            std_dict = {
+                "Low-fidelity": LF_field.std(1, correction=0).clamp(min=1e-6),
+                "FLORA": torch.ones_like(mean_dict["FLORA"]) * 1e-6,
+                "FLORAL": torch.ones_like(mean_dict["FLORAL"]) * 1e-6,
+            }
+        else:
+            std_dict = {
+                "Low-fidelity": LF_field.std(1, correction=0).clamp(min=1e-6),
+                "FLORA": HF_field_prediction_flora.std(1, correction=0).clamp(min=1e-6),
+                "FLORAL": HF_field_prediction_floral.std(1, correction=0).clamp(
+                    min=1e-6
+                ),
+            }
 
-        # L2 norm
+        # L2 norm — mean over n_fields_per_sample before comparing
+        HF_mean = HF_field.mean(1)
         l2_error_dict = {
             "Low-fidelity": torch.norm(
-                HF_field.flatten(1) - LF_field.flatten(1), dim=1
+                HF_mean.flatten(1) - mean_dict["Low-fidelity"].flatten(1), dim=1
             ),
             "FLORA": torch.norm(
-                HF_field.flatten(1) - mean_dict["FLORA"].flatten(1), dim=1
+                HF_mean.flatten(1) - mean_dict["FLORA"].flatten(1), dim=1
             ),
             "FLORAL": torch.norm(
-                HF_field.flatten(1) - mean_dict["FLORAL"].flatten(1), dim=1
+                HF_mean.flatten(1) - mean_dict["FLORAL"].flatten(1), dim=1
             ),
         }
 
         # mean uncertainity (average uncertainity over the spatial domain)
         uncertainty_dict = {
-            "Low-fidelity": torch.ones_like(l2_error_dict["Low-fidelity"])
-            * 1e-6,  # no uncertainty for LF
+            "Low-fidelity": std_dict["Low-fidelity"].flatten(1).mean(dim=1),
             "FLORA": std_dict["FLORA"].flatten(1).mean(dim=1),
             "FLORAL": std_dict["FLORAL"].flatten(1).mean(dim=1),
         }
@@ -1034,6 +991,13 @@ class ParetoPlot:
 
         return summary_df
 
+    _COLORS = {
+        "FLORA": "#E10000",
+        "FLORAL": "#0040FF",
+        "FNO": "#008000",
+        "Residual FNO": "#FF8C00",
+    }
+
     @classmethod
     def plot_pareto_res(self, combined_df, **kwargs):
         def _make_label(r):
@@ -1046,15 +1010,15 @@ class ParetoPlot:
         df_rest = combined_df[combined_df["Method"] != "Low-fidelity"].copy()
         df_rest["Label"] = df_rest.apply(_make_label, axis=1)
         label_order = df_rest["Label"].unique().tolist()
+        palette = {k: self._COLORS[k] for k in label_order if k in self._COLORS}
 
         figsize = kwargs.get("figsize", (10, 5))
         plt.figure(figsize=figsize, layout="compressed")
-        # Overlay the Low-fidelity baseline separately
         ax = sns.scatterplot(
             data=df_lf,
             x="Mean Std",
             y="L2 Error",
-            color="gray",
+            color="#999999",
             s=200,
             marker="*",
             edgecolor="black",
@@ -1068,7 +1032,7 @@ class ParetoPlot:
             hue="Label",
             hue_order=label_order,
             style="Resolution (train)",
-            palette="Set2",
+            palette=palette,
             s=100,
             edgecolor="black",
             ax=ax,
@@ -1138,11 +1102,13 @@ class ParetoPlot:
         figsize = kwargs.get("figsize", (10, 5))
         plt.figure(figsize=figsize, layout="compressed")
         # Overlay the Low-fidelity baseline separately
+        palette = {k: self._COLORS[k] for k in label_order if k in self._COLORS}
+
         ax = sns.scatterplot(
             data=df_lf,
             x="Mean Std",
             y="L2 Error",
-            color="gray",
+            color="#999999",
             s=200,
             marker="*",
             edgecolor="black",
@@ -1156,7 +1122,7 @@ class ParetoPlot:
             hue="Label",
             hue_order=label_order,
             style="Samples (train)",
-            palette="Set2",
+            palette=palette,
             s=100,
             edgecolor="black",
             ax=ax,
