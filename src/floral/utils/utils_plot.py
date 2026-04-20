@@ -805,19 +805,33 @@ class oneDPlot(BasePlot):
             sharex=True,
             # sharey=True,
         )
+        _colors = {
+            "High-fidelity": "#000000",  # black
+            "Low-fidelity": "#999999",  # grey
+            "FLORA": "#E10000",  # vivid red
+            "FLORAL": "#0040FF",  # vivid blue
+            "FNO": "#008000",  # vivid green
+            "Residual FNO": "#FF8C00",  # vivid orange
+        }
         for k in self.mean_dict.keys():
             if k == "High-fidelity":
-                line_kwargs = dict(color="black", linestyle="-", linewidth=linewidth)
+                line_kwargs = dict(color=_colors[k], linestyle="-", linewidth=linewidth)
             elif k == "Low-fidelity":
-                line_kwargs = dict(color="grey", linestyle="--", linewidth=linewidth)
+                line_kwargs = dict(
+                    color=_colors[k], linestyle="--", linewidth=linewidth
+                )
             elif k == "FLORA":
-                line_kwargs = dict(color="red", linestyle="-", linewidth=linewidth)
+                line_kwargs = dict(color=_colors[k], linestyle="-", linewidth=linewidth)
             elif k == "FLORAL":
-                line_kwargs = dict(color="blue", linestyle="-.", linewidth=linewidth)
+                line_kwargs = dict(
+                    color=_colors[k], linestyle="-.", linewidth=linewidth
+                )
             elif k == "FNO":
-                line_kwargs = dict(color="green", linestyle="-", linewidth=linewidth)
+                line_kwargs = dict(color=_colors[k], linestyle="-", linewidth=linewidth)
             elif k == "Residual FNO":
-                line_kwargs = dict(color="orange", linestyle="-.", linewidth=linewidth)
+                line_kwargs = dict(
+                    color=_colors[k], linestyle="-.", linewidth=linewidth
+                )
             else:
                 raise ValueError(f"{k} not a valid entry")
 
@@ -830,25 +844,11 @@ class oneDPlot(BasePlot):
                     **line_kwargs,
                 )
 
-                if k in ["High-fidelity", "FLORA", "FLORAL"]:
+                if k in self.std_dict and k not in ["FNO", "Residual FNO"]:
                     std_pred = self.std_dict[k][ii][plot_channel].ravel()
-                    axs[ii, 0].fill_between(
-                        self.field_domain,
-                        mean_pred + std_factor * std_pred,
-                        mean_pred - std_factor * std_pred,
-                        color=line_obj.get_color(),
-                        linewidth=0.0,
-                        alpha=0.25,
-                        # label=f"$\pm{std_factor}\sigma$"
-                        label=None,
-                    )
-                if k != "High-fidelity":
                     axs[ii, 1].plot(
                         self.field_domain,
-                        torch.abs(
-                            mean_pred
-                            - self.mean_dict["High-fidelity"][ii][plot_channel].ravel()
-                        ),
+                        std_pred,
                         label=k,
                         **line_kwargs,
                     )
@@ -858,12 +858,10 @@ class oneDPlot(BasePlot):
                 leg.set_zorder(100)
             row = ii // 2
             col = ii % 2
-            # ax.set_xticks([])
-            # ax.set_yticks([])
             if ii % 2 == 0:
                 ax.set_ylabel(kwargs.get("ylabel", r"$w(x)$"))
             else:
-                ax.set_ylabel(kwargs.get("xlabel", r"$|w(x) - \hat{w}(x)|$"))
+                ax.set_ylabel(kwargs.get("std_ylabel", r"$\sigma(x)$"))
             if row == n_samples - 1:
                 ax.set_xlabel(kwargs.get("xlabel", r"$x$"))
             else:
