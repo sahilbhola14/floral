@@ -440,8 +440,8 @@ class MultiFidelity:
         """
         linear_correction = self.alpha * u_LF
         second_harmonic = self.beta * torch.cos(2.0 * a)
-        noise = self.gamma * self._get_random_field()
-        u_HF = u_LF + linear_correction + second_harmonic + noise
+        random_field = self._get_random_field()
+        u_HF = u_LF + linear_correction + second_harmonic + self.gamma * random_field
         return u_HF
 
     def simulate(self):
