@@ -106,6 +106,8 @@ class MultiFidelity:
         rbf_kl_modes,
         n_fields_per_sample: int = 1,
         plot: bool = False,
+        alpha: float = 0.1,
+        beta: float = 0.1,
     ):
         self.resolution = resolution
         self.n_unique_conditions = n_unique_conditions
@@ -114,19 +116,25 @@ class MultiFidelity:
         self.rbf_kl_modes = rbf_kl_modes
         self.n_fields_per_sample = n_fields_per_sample
         self.plot = plot
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = 0.05  # additive independent noise scale
 
-        self.solver_HF = OneDCorr(
-            fidelity="High", resolution=self.resolution, n_samples=n_unique_conditions
-        )
         self.solver_LF = OneDCorr(
-            fidelity="Low", resolution=self.resolution, n_samples=n_unique_conditions
+            resolution=self.resolution, n_samples=n_unique_conditions
         )
-        self.domain = self.solver_HF.domain
+
+        self.domain = self.solver_LF.domain
 
     def _get_input_conditions(self):
-        """same HF and LF conditions"""
-        a_HF = self.solver_HF._sample_input_function()
-        return a_HF, a_HF
+        """same HF and LF conditions
+        tiling: [a0, a1, a2, a0, a1, a2, ....]
+        """
+        # sample n_unique_conditions
+        a_LF = self.solver_LF._sample_input_function()
+        # tile n_fields_per_sample times
+        a_LF = a_LF.repeat(self.n_fields_per_sample, 1)
+        return a_LF, a_LF
 
     def _plot_random_field(self, random_field: np.ndarray, n_plot: int = 5):
         """plot a handful of GRF realizations"""
@@ -141,8 +149,7 @@ class MultiFidelity:
         plt.savefig("random_field.png", dpi=150)
         plt.close()
 
-    def _get_random_field(self):
-        # extract the domain for the HF model
+    def _get_random_field(self, seed: int = SEED):
         coords = np.array(self.domain).T  # (N,1)
         total = self.n_unique_conditions * self.n_fields_per_sample
         random_field, _ = sample_grf_rbf(
@@ -151,7 +158,7 @@ class MultiFidelity:
             length_scale=self.rbf_length_scale,
             sigma=self.rbf_sigma,
             nugget=1e-6,
-            rng=np.random.default_rng(SEED),
+            rng=np.random.default_rng(seed),
             num_modes=self.rbf_kl_modes,
         )
         return torch.tensor(random_field, dtype=torch.float32)
@@ -415,29 +422,35 @@ class MultiFidelity:
         print("saved high fidelity data to high_fidelity.pt")
         print("saved low fidelity data to low_fidelity.pt")
 
-    def simulate(self):
-        # get the input conditions: (n_samples, N)
-        a_HF, a_LF = self._get_input_conditions()
-        # solve deterministically for each unique condition
-        u_HF_det = self.solver_HF(a_HF)  # (n_unique_conditions, N)
-        u_LF_det = self.solver_LF(a_LF)  # (n_unique_conditions, N)
-        # tile layout: [a0,a1,...,aN, a0,a1,...,aN, ...] repeated n_fields times.
-        # Any prefix of length k contains min(k, n_unique_conditions) unique conditions,
-        # so the training slice always spans the full input space.
-        a_HF = a_HF.repeat(
-            self.n_fields_per_sample, 1
-        )  # (n_unique_conditions*n_fields, N)
-        a_LF = a_LF.repeat(self.n_fields_per_sample, 1)
-        u_HF_det = u_HF_det.repeat(self.n_fields_per_sample, 1)
-        u_LF_det = u_LF_det.repeat(self.n_fields_per_sample, 1)
-        # sample the random field (latent): (n_samples*n_fields, N)
+    def _solve_LF(self, a):
+        """solve LF"""
+        # determinsitic solve
+        u_LF_det = self.solver_LF(a)
+        # get random field
         random_field = self._get_random_field()
-        if self.plot:
-            self._plot_random_field(random_field)
-        # apply output-space stochasticity: u = u_det * (1 + z)
-        # E[u | a] = u_det(a) when E[z] = 0, so mean accuracy improves with samples
-        u_HF = self._apply_multiplicative_random_field(u_HF_det, random_field)
+        # apply multiplicative stochasticity
         u_LF = self._apply_multiplicative_random_field(u_LF_det, random_field)
+        return u_LF
+
+    def _solve_HF(self, u_LF, a):
+        """HF residual = alpha*u_LF + beta*cos(2a) + gamma*z
+        - alpha*u_LF:   linear term that sets moderate u_LF correlation
+        - beta*cos(2a): second harmonic — new spatial feature absent from LF sin(a)
+        - gamma*z:      additive independent GRF noise
+        """
+        linear_correction = self.alpha * u_LF
+        second_harmonic = self.beta * torch.cos(2.0 * a)
+        noise = self.gamma * self._get_random_field()
+        u_HF = u_LF + linear_correction + second_harmonic + noise
+        return u_HF
+
+    def simulate(self):
+        # get the input conditions: (n_unique_conditions*n_fields_per_sample, N)
+        a_LF, a_HF = self._get_input_conditions()
+        # solve LF
+        u_LF = self._solve_LF(a_LF)
+        # solve HF
+        u_HF = self._solve_HF(u_LF, a_LF)
 
         if self.plot:
             self._make_sample_comparison_plot(u_LF=u_LF, u_HF=u_HF)
