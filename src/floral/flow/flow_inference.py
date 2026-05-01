@@ -3,6 +3,7 @@
 Inference module
 Perform the inference on the testset
 """
+import time
 import torch
 from tqdm import tqdm
 import lightning as L
@@ -126,12 +127,17 @@ class Inference:
         autocast_context = autocast("cuda") if self.use_amp else nullcontext()
         n_fields = self.data_module.n_fields_per_sample
         n_unique_test = self.data_module.n_unique_test
+        n_gen = self.generate_config.get("n_gen")
 
         # iterate
         all_HF_field = []
         all_LF_field = []
         all_condition = []
         all_prediction = []
+
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+        t_infer_start = time.perf_counter()
 
         for batch in tqdm(self.test_loader, desc="Inference", ncols=150, leave=True):
             with autocast_context:
@@ -165,6 +171,25 @@ class Inference:
         # ensure all async transfers are complete
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+
+        inference_time_s = time.perf_counter() - t_infer_start
+        time_per_condition_s = inference_time_s / n_unique_test
+        time_per_condition_per_gen_s = time_per_condition_s / n_gen
+        peak_gpu_memory_mb = (
+            torch.cuda.max_memory_allocated() / 1024**2
+            if torch.cuda.is_available()
+            else None
+        )
+        printer(
+            f"Inference time: {inference_time_s:.2f} s | "
+            f"Time per condition: {time_per_condition_s:.4f} s | "
+            f"Time per condition per gen: {time_per_condition_per_gen_s:.4f} s | "
+            + (
+                f"Peak GPU memory: {peak_gpu_memory_mb:.1f} MB"
+                if peak_gpu_memory_mb
+                else ""
+            )
+        )
 
         # stack across batches — flat shapes:
         #   HF/LF:      (n_test, C, *dims)   where n_test = n_unique_test * n_fields
@@ -232,6 +257,11 @@ class Inference:
             "n_train": self.data_module.n_train,
             "n_val": self.data_module.n_val,
             "n_test": self.data_module.n_test,
+            # computational cost (batch-size independent)
+            "inference_time_s": inference_time_s,
+            "time_per_condition_s": time_per_condition_s,
+            "time_per_condition_per_gen_s": time_per_condition_per_gen_s,
+            "peak_gpu_memory_mb": peak_gpu_memory_mb,
         }
 
         # save the results to a file

@@ -202,12 +202,14 @@ class Operator(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         """training step"""
+        t0 = time.perf_counter()
         # extract the batch
         required_keys = ["target_field", "condition", "LF_field"]
         check_keys(batch, required_keys)
         target_field = batch.get("target_field")
         condition = batch.get("condition")
         LF_field = batch.get("LF_field")
+        batch_size = target_field.shape[0]
 
         # compute the loss
         loss_dict = self._comp_loss(
@@ -216,6 +218,15 @@ class Operator(L.LightningModule):
 
         # log the loss
         self._log_losses(loss_dict, stage="train")
+
+        # log step-level computational cost
+        step_time = time.perf_counter() - t0
+        cost_kwargs = {"on_step": True, "on_epoch": False, "sync_dist": True}
+        self.log("train_step_time_s", step_time, **cost_kwargs)
+        self.log(
+            "train_throughput_samples_per_s", batch_size / step_time, **cost_kwargs
+        )
+
         return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx):
@@ -634,10 +645,17 @@ class Operator(L.LightningModule):
             pass
 
     def on_after_backward(self):
-        """log gradient norm for training stability"""
-        # log the gradient norm
+        """log gradient norm and GPU memory for training stability and cost tracking"""
         grad_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), float("inf"))
         self.log("grad_norm", grad_norm, on_step=True, on_epoch=False)
+        if torch.cuda.is_available():
+            self.log(
+                "gpu_memory_allocated_mb",
+                torch.cuda.memory_allocated() / 1024**2,
+                on_step=True,
+                on_epoch=False,
+                sync_dist=True,
+            )
 
     def load_state_dict(self, state_dict, strict=True):
         # drop PyTorch-internal metadata if present

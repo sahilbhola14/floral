@@ -3,6 +3,7 @@
 Inference module
 Perform the inference on the testset
 """
+import time
 import torch
 from tqdm import tqdm
 import lightning as L
@@ -88,6 +89,10 @@ class Inference:
         all_condition = []
         all_prediction = []
 
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+        t_infer_start = time.perf_counter()
+
         for batch in tqdm(self.test_loader, desc="Inference", ncols=150, leave=True):
             with autocast_context:
                 # extract
@@ -121,6 +126,24 @@ class Inference:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
+        n_unique_test = self.data_module.n_unique_test
+        inference_time_s = time.perf_counter() - t_infer_start
+        time_per_condition_s = inference_time_s / n_unique_test
+        peak_gpu_memory_mb = (
+            torch.cuda.max_memory_allocated() / 1024**2
+            if torch.cuda.is_available()
+            else None
+        )
+        printer(
+            f"Inference time: {inference_time_s:.2f} s | "
+            f"Time per condition: {time_per_condition_s:.4f} s | "
+            + (
+                f"Peak GPU memory: {peak_gpu_memory_mb:.1f} MB"
+                if peak_gpu_memory_mb
+                else ""
+            )
+        )
+
         # stack across batches — flat shapes:
         #   HF/LF:      (n_test, C, *dims)   where n_test = n_unique_test * n_fields
         #   prediction: (n_test, 1, C, *dims)
@@ -130,7 +153,6 @@ class Inference:
         all_prediction = torch.cat(all_prediction, dim=0)
 
         n_fields = self.data_module.n_fields_per_sample
-        n_unique_test = self.data_module.n_unique_test
 
         # Tiling layout from _condition_rows (sorted):
         #   [c0_f0, c1_f0, ..., cN_f0, c0_f1, ..., cN_fK]
@@ -190,6 +212,10 @@ class Inference:
             "n_train": self.data_module.n_train,
             "n_val": self.data_module.n_val,
             "n_test": self.data_module.n_test,
+            # computational cost (batch-size independent)
+            "inference_time_s": inference_time_s,
+            "time_per_condition_s": time_per_condition_s,
+            "peak_gpu_memory_mb": peak_gpu_memory_mb,
         }
 
         # save the results to a file
