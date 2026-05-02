@@ -82,6 +82,8 @@ class Inference:
         """perform inference"""
         # local attributes
         autocast_context = autocast("cuda") if self.use_amp else nullcontext()
+        n_fields = self.data_module.n_fields_per_sample
+        n_unique_test = self.data_module.n_unique_test
 
         # iterate
         all_HF_field = []
@@ -126,7 +128,6 @@ class Inference:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
-        n_unique_test = self.data_module.n_unique_test
         inference_time_s = time.perf_counter() - t_infer_start
         time_per_condition_s = inference_time_s / n_unique_test
         peak_gpu_memory_mb = (
@@ -136,9 +137,9 @@ class Inference:
         )
         printer(
             f"Inference time: {inference_time_s:.2f} s | "
-            f"Time per condition: {time_per_condition_s:.4f} s | "
+            f"Time per condition: {time_per_condition_s:.4f} s"
             + (
-                f"Peak GPU memory: {peak_gpu_memory_mb:.1f} MB"
+                f" | Peak GPU memory: {peak_gpu_memory_mb:.1f} MB"
                 if peak_gpu_memory_mb
                 else ""
             )
@@ -151,8 +152,6 @@ class Inference:
         all_LF_field = torch.cat(all_LF_field, dim=0)
         all_condition = torch.cat(all_condition, dim=0)
         all_prediction = torch.cat(all_prediction, dim=0)
-
-        n_fields = self.data_module.n_fields_per_sample
 
         # Tiling layout from _condition_rows (sorted):
         #   [c0_f0, c1_f0, ..., cN_f0, c0_f1, ..., cN_fK]

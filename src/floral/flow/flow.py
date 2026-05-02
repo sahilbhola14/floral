@@ -767,7 +767,10 @@ class Flow(L.LightningModule):
         prior = prior.view(batch_size, n_gen, *prior.shape[1:]).to(self.device)
 
         # rhs
+        nfe = [0]
+
         def _rhs(t, xt):
+            nfe[0] += 1
             vt = self._wrapper(
                 field=xt,
                 condition=condition,
@@ -799,4 +802,4 @@ class Flow(L.LightningModule):
         dims = deep_get(self.shape_dict, ["field", "dims"])
         assert x1.shape == (batch_size, n_gen, channels, *dims)
 
-        return x1
+        return x1, nfe[0]

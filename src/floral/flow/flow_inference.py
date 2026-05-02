@@ -134,6 +134,7 @@ class Inference:
         all_LF_field = []
         all_condition = []
         all_prediction = []
+        total_nfe = 0
 
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
@@ -151,9 +152,10 @@ class Inference:
                 LF_field = self.data_module.denormalize_LF_field(LF_field).cpu()
 
                 # get denormalized prediction (pass original normalized batch tensors)
-                prediction = self._get_prediction(
+                prediction, batch_nfe = self._get_prediction(
                     condition=batch.get("condition"), LF_field=batch.get("LF_field")
                 )
+                total_nfe += batch_nfe
                 if self.floral:
                     # prediction field = residual_prediction + LF_field
                     prediction = prediction + LF_field.unsqueeze(1)
@@ -175,6 +177,7 @@ class Inference:
         inference_time_s = time.perf_counter() - t_infer_start
         time_per_condition_s = inference_time_s / n_unique_test
         time_per_condition_per_gen_s = time_per_condition_s / n_gen
+        nfe_per_condition = total_nfe / n_unique_test
         peak_gpu_memory_mb = (
             torch.cuda.max_memory_allocated() / 1024**2
             if torch.cuda.is_available()
@@ -184,8 +187,9 @@ class Inference:
             f"Inference time: {inference_time_s:.2f} s | "
             f"Time per condition: {time_per_condition_s:.4f} s | "
             f"Time per condition per gen: {time_per_condition_per_gen_s:.4f} s | "
+            f"NFE per condition: {nfe_per_condition:.1f}"
             + (
-                f"Peak GPU memory: {peak_gpu_memory_mb:.1f} MB"
+                f" | Peak GPU memory: {peak_gpu_memory_mb:.1f} MB"
                 if peak_gpu_memory_mb
                 else ""
             )
@@ -261,6 +265,7 @@ class Inference:
             "inference_time_s": inference_time_s,
             "time_per_condition_s": time_per_condition_s,
             "time_per_condition_per_gen_s": time_per_condition_per_gen_s,
+            "nfe_per_condition": nfe_per_condition,
             "peak_gpu_memory_mb": peak_gpu_memory_mb,
         }
 
@@ -279,13 +284,14 @@ class Inference:
         torch.save(result_dict, save_path)
 
     def _get_prediction(self, condition: torch.Tensor, LF_field: torch.Tensor):
-        """integrate the ODE and return the de-normalized prediciton"""
+        """integrate the ODE and return the de-normalized prediction and NFE count"""
         # integrate the ode (normalized)
-        prediction = self.best_flow.integrate_flow(
+        prediction, nfe = self.best_flow.integrate_flow(
             condition=condition,
             LF_field=LF_field,
             generate_config=self.generate_config,
-        ).cpu()
+        )
+        prediction = prediction.cpu()
 
         # denormalize
         batch_size, n_gen, *dims = prediction.shape
@@ -294,4 +300,4 @@ class Inference:
             normal_field=prediction.view(batch_size * n_gen, *dims)
         ).view(batch_size, n_gen, *dims)
 
-        return prediction
+        return prediction, nfe
