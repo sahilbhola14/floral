@@ -107,7 +107,7 @@ class MultiFidelity:
         n_fields_per_sample: int = 1,
         plot: bool = False,
         alpha: float = 0.1,
-        beta: float = 0.1,
+        beta: float = 0.2,
     ):
         self.resolution = resolution
         self.n_unique_conditions = n_unique_conditions
