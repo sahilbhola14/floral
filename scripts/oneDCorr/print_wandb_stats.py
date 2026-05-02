@@ -71,11 +71,21 @@ def extract_row(run, project: str) -> dict:
     return row
 
 
-def sort_runs(df: pd.DataFrame, key: str, ascending: bool = True) -> pd.DataFrame:
-    if key not in df.columns:
-        print(f"Warning: sort key '{key}' not found in columns: {list(df.columns)}")
+def sort_runs(
+    df: pd.DataFrame, keys: str | list, ascending: bool | list = True
+) -> pd.DataFrame:
+    keys = [keys] if isinstance(keys, str) else keys
+    missing = [k for k in keys if k not in df.columns]
+    if missing:
+        print(
+            f"Warning: sort key(s) {missing} not found in columns: {list(df.columns)}"
+        )
+        keys = [k for k in keys if k in df.columns]
+    if not keys:
         return df
-    return df.sort_values(by=key, ascending=ascending, na_position="last").reset_index(
+    if isinstance(ascending, bool):
+        ascending = [ascending] * len(keys)
+    return df.sort_values(by=keys, ascending=ascending, na_position="last").reset_index(
         drop=True
     )
 
@@ -105,20 +115,21 @@ def main():
     # --- full summary ---
     display_cols = [
         "floral",
-        "group",
-        "train.train_res",
+        # "group",
+        # "train.train_res",
         "train.objective",
         "n_train_samples",
         "train_time_s",
         "peak_gpu_memory_mb",
-        "n_params_total",
+        "n_params_trainable",
+        # "n_params_total",
     ]
     print_table(
         df[[c for c in display_cols if c in df.columns]], "All runs — training summary"
     )
 
     # --- sort based on n_train_samples ---
-    df_sorted = sort_runs(df, key="n_train_samples")
+    df_sorted = sort_runs(df, keys=["n_train_samples", "floral"])
     print_table(
         df_sorted[[c for c in display_cols if c in df_sorted.columns]],
         "All runs — sorted by n_train_samples",
