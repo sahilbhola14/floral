@@ -90,6 +90,12 @@ def parse_args():
         default=10,
         help="Number of KL modes to retain",
     )
+    parser.add_argument(
+        "--gamma_out",
+        type=float,
+        default=0.05,
+        help="Scale of HF-only additive IC noise that makes the residual stochastic",
+    )
     parser.add_argument("--plot", action="store_true")
 
     args = parser.parse_args()
@@ -103,6 +109,7 @@ def parse_args():
     print(f"RBF length scale: {args.rbf_length_scale}")
     print(f"RBF sigma: {args.rbf_sigma}")
     print(f"RBF KL modes: {args.rbf_kl_modes}")
+    print(f"HF-only IC noise scale (gamma_out): {args.gamma_out}")
     print("==" * 3 + "=========" + "==" * 3)
 
     return args
@@ -136,6 +143,7 @@ class MultiFidelity:
         rbf_length_scale: float = 0.2,
         rbf_sigma: float = 1.0,
         rbf_kl_modes: int = 16,
+        gamma_out: float = 0.05,
     ):
         self.n_modes = n_modes
         self.resolution_HF = resolution_HF
@@ -150,6 +158,7 @@ class MultiFidelity:
         self.rbf_length_scale = rbf_length_scale
         self.rbf_sigma = rbf_sigma
         self.rbf_kl_modes = rbf_kl_modes
+        self.gamma_out = gamma_out
         assert (
             self.resolution_LF <= self.resolution_HF
         ), "Low-fidelity resolution must be less or equal than high-fidelity"
@@ -204,6 +213,23 @@ class MultiFidelity:
         )
         return noise  # (n_samples, N)
 
+    def _print_ic_pearson(self, u0_HF: np.ndarray, u0_LF: np.ndarray):
+        """Print Pearson r between HF/LF ICs and between LF IC and residual IC."""
+        # bring HF to LF grid so shapes match
+        u0_HF_lf = self._restrict_ic(u0_HF)  # (n_samples, resolution_LF)
+        residual = u0_HF_lf - u0_LF
+
+        def _mean_r(X, Y, label):
+            rs = [pearsonr(X[i], Y[i])[0] for i in range(len(X))]
+            r = np.array(rs)
+            print(
+                f"IC Pearson ({label}): mean={r.mean():.4f} "
+                f"+/- {r.std():.4f} | min={r.min():.4f} max={r.max():.4f}"
+            )
+
+        _mean_r(u0_HF_lf, u0_LF, "HF vs LF")
+        _mean_r(u0_LF, residual, "LF vs residual")
+
     def _get_stochastic_initial_conditions(self):
         """Build stochastic HF and LF initial conditions.
 
@@ -224,9 +250,14 @@ class MultiFidelity:
         # 2. tile along batch dim: [c0, c1, ..., c0, c1, ...]
         u0_tiled = np.tile(u0_det, (self.n_fields_per_sample, 1))  # (n_samples, res_HF)
 
-        # 3. stochastic HF: multiplicative GRF noise
-        grf_HF = self._get_random_field()
-        u0_HF = u0_tiled * (1.0 + self.noise_std * grf_HF)
+        # 3. stochastic HF: shared multiplicative noise + HF-only multiplicative term
+        # gamma_out * grf_HF_extra is folded into the u0_tiled factor so the
+        # extra perturbation scales with the IC amplitude → residual correlated with LF
+        grf_HF = self._get_random_field(seed=SEED)
+        grf_HF_extra = self._get_random_field(seed=SEED + 2)
+        u0_HF = u0_tiled * (
+            1.0 + self.noise_std * grf_HF + self.gamma_out * grf_HF_extra
+        )
 
         # 4a. filter deterministic HF IC spectrally → deterministic LF IC
         u0_LF_det = self._filter_ic(u0_det)  # (n_unique_conditions, res_HF)
@@ -237,11 +268,12 @@ class MultiFidelity:
             u0_LF_det, (self.n_fields_per_sample, 1)
         )  # (n_samples, res_LF)
         # 4d. stochastic LF: multiplicative GRF noise (different seed from HF)
-        grf_LF = self._get_random_field()
+        grf_LF = self._get_random_field(seed=SEED)  # shared with HF
         u0_LF = u0_LF_tiled * (1.0 + self.noise_std * grf_LF)
 
         assert u0_HF.shape == (self.n_samples, self.resolution_HF)
         assert u0_LF.shape == (self.n_samples, self.resolution_LF)
+        self._print_ic_pearson(u0_HF, u0_LF)
         return u0_HF, u0_LF
 
     def _create_low_fidelity_ic(self, keep_frac=0.4, amp_scale=0.8, gamma=4.0):
@@ -618,12 +650,16 @@ class MultiFidelity:
             "condition": condition,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_unique_conditions,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
         low_data = {
             "field": u_LF,
             "condition": condition,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_unique_conditions,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
 
         # save
@@ -731,5 +767,6 @@ if __name__ == "__main__":
         rbf_length_scale=args.rbf_length_scale,
         rbf_sigma=args.rbf_sigma,
         rbf_kl_modes=args.rbf_kl_modes,
+        gamma_out=args.gamma_out,
     )
     mf.simulate()
