@@ -58,7 +58,6 @@ def print_header(config: dict):
     printer(f"Objective: {config.train.objective}")
     printer(f"Multi-fidelity Flow: {config.floral}")
     printer(f"Training resolution: {config.train.train_res}")
-    printer(f"Number of samples: {config.data.n_samples}")
     print_section("advection config", end=True)
 
 
