@@ -630,6 +630,19 @@ class Flow(L.LightningModule):
         self._best_val_loss = float("inf")
         self._best_epoch = 0
 
+    def on_train_epoch_start(self):
+        self._epoch_start_time = time.perf_counter()
+
+    def on_train_epoch_end(self):
+        epoch_time = time.perf_counter() - self._epoch_start_time
+        self.log(
+            "train_epoch_time_s",
+            epoch_time,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+        )
+
     def on_validation_epoch_end(self):
         """track running best val loss"""
         val_loss = self.trainer.callback_metrics.get("val_loss")
