@@ -597,6 +597,8 @@ class Operator(L.LightningModule):
         if self.logger and hasattr(self.logger, "experiment"):
             self.logger.experiment.summary.update(summary)
         self._fit_start_time = time.time()
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
 
     def on_train_epoch_start(self):
         self._epoch_start_time = time.perf_counter()

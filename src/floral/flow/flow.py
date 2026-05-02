@@ -629,6 +629,8 @@ class Flow(L.LightningModule):
         self._fit_start_time = time.time()
         self._best_val_loss = float("inf")
         self._best_epoch = 0
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
 
     def on_train_epoch_start(self):
         self._epoch_start_time = time.perf_counter()
