@@ -597,6 +597,8 @@ class Operator(L.LightningModule):
         if self.logger and hasattr(self.logger, "experiment"):
             self.logger.experiment.summary.update(summary)
         self._fit_start_time = time.time()
+        self._best_val_loss = float("inf")
+        self._best_epoch = 0
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
 
@@ -612,8 +614,6 @@ class Operator(L.LightningModule):
             on_epoch=True,
             sync_dist=True,
         )
-        self._best_val_loss = float("inf")
-        self._best_epoch = 0
 
     def on_validation_epoch_end(self):
         """track running best val loss"""
