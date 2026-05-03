@@ -135,6 +135,7 @@ class Inference:
         all_condition = []
         all_prediction = []
         total_nfe = 0
+        n_batches = 0
 
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
@@ -156,6 +157,7 @@ class Inference:
                     condition=batch.get("condition"), LF_field=batch.get("LF_field")
                 )
                 total_nfe += batch_nfe
+                n_batches += 1
                 if self.floral:
                     # prediction field = residual_prediction + LF_field
                     prediction = prediction + LF_field.unsqueeze(1)
@@ -177,7 +179,7 @@ class Inference:
         inference_time_s = time.perf_counter() - t_infer_start
         time_per_condition_s = inference_time_s / n_unique_test
         time_per_condition_per_gen_s = time_per_condition_s / n_gen
-        nfe_per_condition = total_nfe / n_unique_test
+        nfe_per_condition = total_nfe / n_batches
         peak_gpu_memory_mb = (
             torch.cuda.max_memory_allocated() / 1024**2
             if torch.cuda.is_available()
