@@ -119,7 +119,9 @@ class OpDataModuleConfig:
     )
 
     # hp config default
-    hp_config: dict = field(default_factory=lambda: {"batch_size": 32})
+    hp_config: dict = field(
+        default_factory=lambda: {"batch_size": 32, "test_batch_size": 4}
+    )
 
     @staticmethod
     def _to_dict_config(value):
@@ -178,6 +180,7 @@ class OpDataModule(L.LightningDataModule):
 
         # extract hp_config
         self.batch_size = self.hp_config.get("batch_size", 64)
+        self.test_batch_size = self.hp_config.get("test_batch_size", 4)
 
         # load the data
         self.LF_data = self._load_data(path=self.LF_path, verbose=verbose)
@@ -642,7 +645,7 @@ class OpDataModule(L.LightningDataModule):
         """Return the test dataloader"""
         return DataLoader(
             self.test_set,
-            batch_size=self.batch_size,
+            batch_size=self.test_batch_size,
             shuffle=False,
             num_workers=self.dataloader_config.num_workers,
             pin_memory=True,
