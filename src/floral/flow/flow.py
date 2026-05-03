@@ -781,40 +781,39 @@ class Flow(L.LightningModule):
         )
         prior = prior.view(batch_size, n_gen, *prior.shape[1:]).to(self.device)
 
-        # rhs
-        nfe = [0]
+        # integrate one generation at a time to bound peak ODE memory
+        # (avoids keeping batch_size * n_gen states through all RK stages)
+        results = []
+        nfe_total = 0
 
-        def _rhs(t, xt):
-            nfe[0] += 1
-            vt = self._wrapper(
-                field=xt,
-                condition=condition,
-                LF_field=LF_field,
-                t=t,
-            )
+        for g in range(n_gen):
+            condition_g = condition[:, g : g + 1]
+            LF_field_g = LF_field[:, g : g + 1]
+            prior_g = prior[:, g : g + 1]
 
-            assert (
-                vt.shape == xt.shape
-            ), f"incorrect vecotor field shape. Expected {field.shape}, got {vt.shape}"
+            nfe_g = [0]
 
-            check_tensor_blowup(vt, "vt vector field")
+            def _rhs(t, xt, _c=condition_g, _lf=LF_field_g, _nfe=nfe_g):
+                _nfe[0] += 1
+                vt = self._wrapper(field=xt, condition=_c, LF_field=_lf, t=t)
+                assert (
+                    vt.shape == xt.shape
+                ), f"incorrect vector field shape. Expected {xt.shape}, got {vt.shape}"
+                check_tensor_blowup(vt, "vt vector field")
+                return vt
 
-            return vt
+            with torch.no_grad():
+                x1_g = odeint(_rhs, prior_g, t, method=method, atol=atol, rtol=rtol)[-1]
 
-        # integrate
-        with torch.no_grad():
-            x1 = odeint(
-                _rhs,
-                prior,
-                t,
-                method=method,
-                atol=atol,
-                rtol=rtol,
-            )[-1]
+            results.append(x1_g)
+            nfe_total += nfe_g[0]
+
+        x1 = torch.cat(results, dim=1)  # (batch_size, n_gen, C, *dims)
 
         # check shape
         channels = deep_get(self.shape_dict, ["field", "channels"])
         dims = deep_get(self.shape_dict, ["field", "dims"])
         assert x1.shape == (batch_size, n_gen, channels, *dims)
 
-        return x1, nfe[0]
+        # mean NFE per generation = ODE solver cost for one condition
+        return x1, nfe_total // n_gen
