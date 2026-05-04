@@ -90,12 +90,6 @@ def parse_args():
         default=10,
         help="Number of KL modes to retain",
     )
-    parser.add_argument(
-        "--gamma_out",
-        type=float,
-        default=0.05,
-        help="Scale of HF-only additive IC noise that makes the residual stochastic",
-    )
     parser.add_argument("--plot", action="store_true")
 
     args = parser.parse_args()
@@ -109,7 +103,6 @@ def parse_args():
     print(f"RBF length scale: {args.rbf_length_scale}")
     print(f"RBF sigma: {args.rbf_sigma}")
     print(f"RBF KL modes: {args.rbf_kl_modes}")
-    print(f"HF-only IC noise scale (gamma_out): {args.gamma_out}")
     print("==" * 3 + "=========" + "==" * 3)
 
     return args
@@ -143,7 +136,6 @@ class MultiFidelity:
         rbf_length_scale: float = 0.2,
         rbf_sigma: float = 1.0,
         rbf_kl_modes: int = 16,
-        gamma_out: float = 0.05,
     ):
         self.n_modes = n_modes
         self.resolution_HF = resolution_HF
@@ -158,7 +150,6 @@ class MultiFidelity:
         self.rbf_length_scale = rbf_length_scale
         self.rbf_sigma = rbf_sigma
         self.rbf_kl_modes = rbf_kl_modes
-        self.gamma_out = gamma_out
         assert (
             self.resolution_LF <= self.resolution_HF
         ), "Low-fidelity resolution must be less or equal than high-fidelity"
@@ -251,26 +242,16 @@ class MultiFidelity:
         u0_tiled = np.tile(u0_det, (self.n_fields_per_sample, 1))  # (n_samples, res_HF)
         self.u0_det_tiled = u0_tiled  # deterministic IC saved for use as condition
 
-        # 3. stochastic HF: shared multiplicative noise + HF-only multiplicative term
-        # gamma_out * grf_HF_extra is folded into the u0_tiled factor so the
-        # extra perturbation scales with the IC amplitude → residual correlated with LF
+        # 3. stochastic HF
         grf_HF = self._get_random_field(seed=SEED)
-        grf_HF_extra = self._get_random_field(seed=SEED + 2)
-        u0_HF = u0_tiled * (
-            1.0 + self.noise_std * grf_HF + self.gamma_out * grf_HF_extra
-        )
+        u0_HF = u0_tiled * (1.0 + self.noise_std * grf_HF)
 
         # 4a. filter deterministic HF IC spectrally → deterministic LF IC
         u0_LF_det = self._filter_ic(u0_det)  # (n_unique_conditions, res_HF)
         # 4b. restrict to LF spatial grid
         u0_LF_det = self._restrict_ic(u0_LF_det)  # (n_unique_conditions, res_LF)
-        # 4c. tile
-        u0_LF_tiled = np.tile(
-            u0_LF_det, (self.n_fields_per_sample, 1)
-        )  # (n_samples, res_LF)
-        # 4d. stochastic LF: multiplicative GRF noise (different seed from HF)
-        grf_LF = self._get_random_field(seed=SEED)  # shared with HF
-        u0_LF = u0_LF_tiled * (1.0 + self.noise_std * grf_LF)
+        # 4c. tile (LF will have deterministic solution)
+        u0_LF = np.tile(u0_LF_det, (self.n_fields_per_sample, 1))  # (n_samples, res_LF)
 
         assert u0_HF.shape == (self.n_samples, self.resolution_HF)
         assert u0_LF.shape == (self.n_samples, self.resolution_LF)
@@ -419,12 +400,10 @@ class MultiFidelity:
     def _make_sample_comparison_plot(
         self, samples_LF, samples_HF, n_conditions: int = 4
     ):
-        """Plot mean and std over n_fields_per_sample realizations for each condition.
+        """Plot LF (deterministic) alongside HF mean and HF std per condition.
 
-        Layout: tiling is [c0, c1, ..., cN, c0, c1, ...] repeated
-        n_fields_per_sample times,
-        so condition i lives at rows i, i+n_unique_conditions, i+2*n_unique_conditions,.
-        Columns: LF mean | LF std | HF mean | HF std
+        LF is deterministic — all nf rows are identical, so only one panel needed.
+        Columns: LF (deterministic) | HF mean | HF std
         """
         assert (
             samples_LF.shape == samples_HF.shape
@@ -433,11 +412,15 @@ class MultiFidelity:
         nf = self.n_fields_per_sample
         n_conditions = min(n_conditions, nc)
 
-        cols = ["LF mean", "LF std", "HF mean", "HF std"]
+        cols = [
+            "Low-fidelity (deterministic)",
+            "High-fidelity mean",
+            "High-fidelity std",
+        ]
         fig, axs = plt.subplots(
             n_conditions,
-            4,
-            figsize=(10, 2.5 * n_conditions),
+            3,
+            figsize=(8, 2.5 * n_conditions),
             dpi=300,
             layout="compressed",
         )
@@ -445,24 +428,20 @@ class MultiFidelity:
             axs = axs[None, :]
 
         for row, cond_idx in enumerate(range(n_conditions)):
-            # gather all realizations for this condition
-            lf_block = samples_LF[cond_idx::nc][:nf]  # (nf, Nt, Nx)
             hf_block = samples_HF[cond_idx::nc][:nf]  # (nf, Nt, Nx)
+            # LF is deterministic — all nf rows are identical, take the first
+            lf_field = samples_LF[cond_idx]  # (Nt, Nx)
 
-            lf_mean = lf_block.mean(axis=0)
-            lf_std = lf_block.std(axis=0)
             hf_mean = hf_block.mean(axis=0)
             hf_std = hf_block.std(axis=0)
 
-            vmin_mean = min(lf_mean.min(), hf_mean.min())
-            vmax_mean = max(lf_mean.max(), hf_mean.max())
-            vmax_std = max(lf_std.max(), hf_std.max())
+            vmin_mean = min(lf_field.min(), hf_mean.min())
+            vmax_mean = max(lf_field.max(), hf_mean.max())
 
             panels = [
-                (lf_mean, vmin_mean, vmax_mean),
-                (lf_std, 0, vmax_std),
+                (lf_field, vmin_mean, vmax_mean),
                 (hf_mean, vmin_mean, vmax_mean),
-                (hf_std, 0, vmax_std),
+                (hf_std, 0, hf_std.max()),
             ]
             for col, (field, vmin, vmax) in enumerate(panels):
                 im = axs[row, col].imshow(
@@ -768,6 +747,6 @@ if __name__ == "__main__":
         rbf_length_scale=args.rbf_length_scale,
         rbf_sigma=args.rbf_sigma,
         rbf_kl_modes=args.rbf_kl_modes,
-        gamma_out=args.gamma_out,
+        noise_std=0.3,
     )
     mf.simulate()
