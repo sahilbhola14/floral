@@ -12,9 +12,9 @@ wandb_group: Null # wandb grouping
 # configuration for data
 data:
   LF: # low fidelity
-    path: "./low_fidelity.pt"
+    path: "./data/low_fidelity.pt"
   HF: # high fidelity
-    path: "./high_fidelity.pt"
+    path: "./data/high_fidelity.pt"
 
 # configuration for dataloader
 dataloader:
@@ -72,4 +72,4 @@ flow:
 
 # configuration for PDE solution generation
 generate:
-  n_gen: 100 # number of samples generated (for UQ purposes)
+  n_gen: 50 # number of samples generated (for UQ purposes)
