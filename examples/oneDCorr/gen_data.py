@@ -176,9 +176,8 @@ class MultiFidelity:
     def _make_sample_comparison_plot(self, u_LF, u_HF, n_conditions: int = 4):
         """Plot solution variability for the same input condition.
 
-        Assumes data is in tile order (pre-shuffle):
-        rows [i, i+ns, i+2*ns, ...] all share input condition i.
-        For each selected condition, overlays mean ± std bands for both fidelities.
+        LF is deterministic (single line per condition).
+        HF is stochastic (mean ± std band).
         """
         nf = self.n_fields_per_sample
         ns = self.n_unique_conditions
@@ -196,25 +195,16 @@ class MultiFidelity:
             axs = [axs]
 
         for ii, ax in enumerate(axs):
-            # tile layout: condition ii lives at rows ii, ii+ns, ii+2*ns, ...
             hf_block = u_HF[ii::ns][:nf]  # (nf, N)
-            lf_block = u_LF[ii::ns][:nf]  # (nf, N)
-
             hf_mean = hf_block.mean(dim=0)
             hf_std = hf_block.std(dim=0)
-            lf_mean = lf_block.mean(dim=0)
-            lf_std = lf_block.std(dim=0)
 
-            # LF mean ± std band (gray) + HF mean ± std band (black)
-            ax.fill_between(
-                x, lf_mean - lf_std, lf_mean + lf_std, color="red", alpha=0.2
-            )
-            ax.plot(
-                x, lf_mean, color="red", alpha=0.8, lw=1.5, label="Low-fidelity mean"
-            )
+            # LF: deterministic — all nf rows are identical, take row 0
+            ax.plot(x, u_LF[ii].numpy(), color="red", lw=1.5, label="Low-fidelity")
 
+            # HF: mean ± std band
             ax.fill_between(x, hf_mean - hf_std, hf_mean + hf_std, color="k", alpha=0.2)
-            ax.plot(x, hf_mean, color="k", lw=1.5, label=r"High-fidelity mean")
+            ax.plot(x, hf_mean.numpy(), color="k", lw=1.5, label="High-fidelity mean")
             ax.set_ylabel(r"$w(x)$")
             if ii == 0:
                 ax.legend(loc="upper right")
@@ -428,58 +418,15 @@ class MultiFidelity:
         residual."""
         return self.solver_LF(a)
 
-    def _plot_gamma_effect(
-        self, u_HF_det, u_HF, n_conditions: int = 3, n_show: int = 5
-    ):
-        """Plot a few realisations before and after adding gamma*z, per condition."""
-        ns = self.n_unique_conditions
-        nf = self.n_fields_per_sample
-        n_conditions = min(n_conditions, ns)
-        x = self.domain.ravel()
-
-        fig, axs = plt.subplots(
-            n_conditions,
-            2,
-            figsize=(10, n_conditions * 2.5),
-            sharex=True,
-            sharey="row",
-            layout="compressed",
-        )
-        if n_conditions == 1:
-            axs = axs[None, :]
-
-        titles = [r"Before $\gamma z$", r"After $\gamma z$"]
-        for ii, ax_row in enumerate(axs):
-            det_block = u_HF_det[ii::ns][:nf]  # (nf, N)
-            stoch_block = u_HF[ii::ns][:nf]  # (nf, N)
-
-            for jj, (block, ax, title) in enumerate(
-                zip([det_block, stoch_block], ax_row, titles)
-            ):
-                mean = block.mean(0).numpy()
-                std = block.std(0).numpy()
-                for k in range(min(n_show, nf)):
-                    ax.plot(x, block[k].numpy(), color="steelblue", alpha=0.35, lw=0.8)
-                ax.fill_between(
-                    x, mean - std, mean + std, color="steelblue", alpha=0.25
-                )
-                ax.plot(x, mean, color="steelblue", lw=1.5)
-                if ii == 0:
-                    ax.set_title(title)
-                if jj == 0:
-                    ax.set_ylabel(f"Cond {ii}")
-
-        for ax in axs[-1]:
-            ax.set_xlabel(r"$x$")
-
-        plt.savefig("hf_gamma_effect.png", dpi=150)
-        plt.close()
-
     def _solve_HF(self, u_LF, a):
         """HF residual = alpha*u_LF + beta*cos(2a) + gamma*z
         - alpha*u_LF:   linear term that sets moderate u_LF correlation
         - beta*cos(2a): second harmonic — new spatial feature absent from LF sin(a)
         - gamma*z:      additive independent GRF noise
+        Notes:
+            1. the residual is correlated with the LF
+            2. the residual has some terms not seen in the LF
+            3. there is some aleatoric uncertainity in the HF solution
         """
         linear_correction = self.alpha * u_LF
         second_harmonic = self.beta * torch.cos(2.0 * a)
@@ -537,6 +484,6 @@ if __name__ == "__main__":
         rbf_sigma=args.rbf_sigma,
         rbf_kl_modes=args.rbf_kl_modes,
         n_fields_per_sample=args.n_fields_per_sample,
-        gamma=0.0,
+        gamma=0.3,
     )
     mf.simulate()
