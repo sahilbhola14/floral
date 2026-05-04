@@ -249,6 +249,7 @@ class MultiFidelity:
 
         # 2. tile along batch dim: [c0, c1, ..., c0, c1, ...]
         u0_tiled = np.tile(u0_det, (self.n_fields_per_sample, 1))  # (n_samples, res_HF)
+        self.u0_det_tiled = u0_tiled  # deterministic IC saved for use as condition
 
         # 3. stochastic HF: shared multiplicative noise + HF-only multiplicative term
         # gamma_out * grf_HF_extra is folded into the u0_tiled factor so the
@@ -635,9 +636,9 @@ class MultiFidelity:
         # remove the initial condition
         u_HF = u_HF[:, :, 1:, :]
         u_LF = u_LF[:, :, 1:, :]
-        # prepare the condition (tiled initial conditon)
+        # prepare the condition (deterministic tiled IC, not stochastic)
         condition = (
-            torch.Tensor(self.solver_HF.u0)
+            torch.Tensor(self.u0_det_tiled)
             .unsqueeze(1)
             .expand(-1, self.Nt, -1)
             .unsqueeze(1)
