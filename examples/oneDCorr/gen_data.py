@@ -108,6 +108,7 @@ class MultiFidelity:
         plot: bool = False,
         alpha: float = 0.1,
         beta: float = 0.2,
+        gamma: float = 0.05,
     ):
         self.resolution = resolution
         self.n_unique_conditions = n_unique_conditions
@@ -118,7 +119,7 @@ class MultiFidelity:
         self.plot = plot
         self.alpha = alpha
         self.beta = beta
-        self.gamma = 0.05  # additive independent noise scale
+        self.gamma = gamma
 
         self.solver_LF = OneDCorr(
             resolution=self.resolution, n_samples=n_unique_conditions
@@ -423,14 +424,56 @@ class MultiFidelity:
         print("saved low fidelity data to low_fidelity.pt")
 
     def _solve_LF(self, a):
-        """solve LF"""
-        # determinsitic solve
-        u_LF_det = self.solver_LF(a)
-        # get random field
-        random_field = self._get_random_field()
-        # apply multiplicative stochasticity
-        u_LF = self._apply_multiplicative_random_field(u_LF_det, random_field)
-        return u_LF
+        """Deterministic LF solve — Var(LF)=0 so all field variance comes from
+        residual."""
+        return self.solver_LF(a)
+
+    def _plot_gamma_effect(
+        self, u_HF_det, u_HF, n_conditions: int = 3, n_show: int = 5
+    ):
+        """Plot a few realisations before and after adding gamma*z, per condition."""
+        ns = self.n_unique_conditions
+        nf = self.n_fields_per_sample
+        n_conditions = min(n_conditions, ns)
+        x = self.domain.ravel()
+
+        fig, axs = plt.subplots(
+            n_conditions,
+            2,
+            figsize=(10, n_conditions * 2.5),
+            sharex=True,
+            sharey="row",
+            layout="compressed",
+        )
+        if n_conditions == 1:
+            axs = axs[None, :]
+
+        titles = [r"Before $\gamma z$", r"After $\gamma z$"]
+        for ii, ax_row in enumerate(axs):
+            det_block = u_HF_det[ii::ns][:nf]  # (nf, N)
+            stoch_block = u_HF[ii::ns][:nf]  # (nf, N)
+
+            for jj, (block, ax, title) in enumerate(
+                zip([det_block, stoch_block], ax_row, titles)
+            ):
+                mean = block.mean(0).numpy()
+                std = block.std(0).numpy()
+                for k in range(min(n_show, nf)):
+                    ax.plot(x, block[k].numpy(), color="steelblue", alpha=0.35, lw=0.8)
+                ax.fill_between(
+                    x, mean - std, mean + std, color="steelblue", alpha=0.25
+                )
+                ax.plot(x, mean, color="steelblue", lw=1.5)
+                if ii == 0:
+                    ax.set_title(title)
+                if jj == 0:
+                    ax.set_ylabel(f"Cond {ii}")
+
+        for ax in axs[-1]:
+            ax.set_xlabel(r"$x$")
+
+        plt.savefig("hf_gamma_effect.png", dpi=150)
+        plt.close()
 
     def _solve_HF(self, u_LF, a):
         """HF residual = alpha*u_LF + beta*cos(2a) + gamma*z
@@ -440,8 +483,9 @@ class MultiFidelity:
         """
         linear_correction = self.alpha * u_LF
         second_harmonic = self.beta * torch.cos(2.0 * a)
-        random_field = self._get_random_field()
-        u_HF = u_LF + linear_correction + second_harmonic + self.gamma * random_field
+        random_field = self._get_random_field()  # independent noise
+        u_HF_det = u_LF + linear_correction + second_harmonic
+        u_HF = u_HF_det + self.gamma * random_field
         return u_HF
 
     def simulate(self):
@@ -493,5 +537,6 @@ if __name__ == "__main__":
         rbf_sigma=args.rbf_sigma,
         rbf_kl_modes=args.rbf_kl_modes,
         n_fields_per_sample=args.n_fields_per_sample,
+        gamma=0.0,
     )
     mf.simulate()
