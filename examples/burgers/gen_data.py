@@ -12,9 +12,11 @@ import torch.fft as fft
 from scipy.stats import pearsonr, gaussian_kde
 from scipy.interpolate import RegularGridInterpolator
 from floral.solver import Burgers
-from floral.utils import check_tensor_blowup
+from floral.utils import check_tensor_blowup, sample_grf_rbf
 
 plt.style.use("../../scripts/journal.mplstyle")
+
+SEED = 42
 
 
 def parse_args():
@@ -26,10 +28,36 @@ def parse_args():
     )
     parser.add_argument(
         "-n",
-        "--n_samples",
+        "--n_unique_conditions",
         type=int,
-        default=6000,
-        help="Number of samples to generate",
+        default=100,
+        help="Number of unique input conditions",
+    )
+
+    parser.add_argument(
+        "--n_fields_per_sample",
+        type=int,
+        default=50,
+        help="Number of random field realizations per input condition",
+    )
+
+    parser.add_argument(
+        "--rbf_length_scale",
+        type=float,
+        default=0.2,
+        help="Length scale for the RBF kernel",
+    )
+    parser.add_argument(
+        "--rbf_sigma",
+        type=float,
+        default=1.0,
+        help="Amplitude for the RBF kernel",
+    )
+    parser.add_argument(
+        "--rbf_kl_modes",
+        type=int,
+        default=10,
+        help="Number of KL modes to retain",
     )
 
     parser.add_argument(
@@ -44,7 +72,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=64,
+        default=128,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -66,10 +94,15 @@ def parse_args():
 
     args = parser.parse_args()
     print("==" * 3 + "viscous burgers equation" + "==" * 3)
-    print(f"Number of samples: {args.n_samples}")
+    print(f"Number of unique conditions: {args.n_unique_conditions}")
+    print(f"Number of fields per sample: {args.n_fields_per_sample}")
+    print(f"Total samples: {args.n_unique_conditions * args.n_fields_per_sample}")
     print(f"Number of modes: {args.n_modes}")
     print(f"High-fidelity resolution: {args.resolution_HF}")
     print(f"Low-fidelity resolution: {args.resolution_LF}")
+    print(f"RBF length scale: {args.rbf_length_scale}")
+    print(f"RBF sigma: {args.rbf_sigma}")
+    print(f"RBF KL modes: {args.rbf_kl_modes}")
     print("==" * 3 + "========================" + "==" * 3)
     return args
 
@@ -89,38 +122,47 @@ class MultiFidelity:
         n_modes: int = 2,
         resolution_HF: int = 64,
         resolution_LF: int = 32,
-        n_samples: int = 1,
+        n_unique_conditions: int = 1,
+        n_fields_per_sample: int = 1,
         Nt: int = 64,
-        threads: int = 32,
         nu: float = 0.01,
         Lx: float = 1.0,
         T: float = 0.2,
         recalculate_LF_time: bool = False,
         plot: bool = False,
+        noise_std: float = 0.05,
+        rbf_length_scale: float = 0.2,
+        rbf_sigma: float = 1.0,
+        rbf_kl_modes: int = 10,
     ):
         self.n_modes = n_modes
         self.resolution_HF = resolution_HF
         self.resolution_LF = resolution_LF
-        self.n_samples = n_samples
+        self.n_unique_conditions = n_unique_conditions
+        self.n_fields_per_sample = n_fields_per_sample
+        self.n_samples = n_unique_conditions * n_fields_per_sample
         self.Nt = Nt
         self.nu = nu
         self.plot = plot
+        self.noise_std = noise_std
+        self.rbf_length_scale = rbf_length_scale
+        self.rbf_sigma = rbf_sigma
+        self.rbf_kl_modes = rbf_kl_modes
         assert (
             self.resolution_LF <= self.resolution_HF
         ), "Low-fidelity resolution must be less or equal than high-fidelity"
 
-        # high-fidelity solver
+        # solvers initialised with n_unique_conditions deterministic ICs
         self.solver_HF = Burgers(
             nu=self.nu,
             Nx=self.resolution_HF,
             Nt=self.Nt,
             n_modes=self.n_modes,
-            n_samples=self.n_samples,
+            n_samples=self.n_unique_conditions,
             Lx=Lx,
             T=T,
         )
         ratio = self.solver_HF.dt / self.solver_HF.dx
-        # low-fidelity solver
         if recalculate_LF_time:
             dt_LF = ratio * (Lx / self.resolution_LF)
             self.Nt_LF = int(T / dt_LF)
@@ -131,14 +173,17 @@ class MultiFidelity:
             Nx=self.resolution_LF,
             Nt=self.Nt_LF,
             n_modes=self.n_modes,
-            n_samples=self.n_samples,
+            n_samples=self.n_unique_conditions,
             Lx=Lx,
             T=T,
         )
-        # create low fidelity inital condition
-        u0_LF = self._create_low_fidelity_ic()
-        # update low-fidelity initial conditon
-        self.solver_LF.set_initial_condition(u0_LF)
+
+        # build stochastic ICs and push them into both solvers
+        u0_HF, u0_LF = self._get_stochastic_initial_conditions()
+        self.solver_HF.n_samples = self.n_samples
+        self.solver_HF.u0 = u0_HF
+        self.solver_LF.n_samples = self.n_samples
+        self.solver_LF.u0 = u0_LF
 
     def _create_low_fidelity_ic(
         self, keep_frac=0.6, amp_scale=0.8, gamma=4.0, phase_bias=0.0
@@ -156,6 +201,66 @@ class MultiFidelity:
         # restrict to the Low-fidelity domain
         u0_LF = self._restrict_ic(u0_LF)
         return u0_LF
+
+    def _get_random_field(self, seed=SEED) -> np.ndarray:
+        coords = self.solver_HF.x.reshape(-1, 1)
+        noise, _ = sample_grf_rbf(
+            coords=coords,
+            n_samples=self.n_samples,
+            length_scale=self.rbf_length_scale,
+            sigma=self.rbf_sigma,
+            nugget=1e-6,
+            rng=np.random.default_rng(seed),
+            num_modes=self.rbf_kl_modes,
+        )
+        return noise  # (n_samples, N_HF)
+
+    def _print_ic_pearson(self, u0_HF: np.ndarray, u0_LF: np.ndarray):
+        """Print Pearson r between HF/LF ICs and between LF IC and residual IC."""
+        u0_HF_lf = self._restrict_ic(u0_HF)  # (n_samples, resolution_LF)
+        residual = u0_HF_lf - u0_LF
+
+        def _mean_r(X, Y, label):
+            rs = [pearsonr(X[i], Y[i])[0] for i in range(len(X))]
+            r = np.array(rs)
+            print(
+                f"IC Pearson ({label}): mean={r.mean():.4f} "
+                f"+/- {r.std():.4f} | min={r.min():.4f} max={r.max():.4f}"
+            )
+
+        _mean_r(u0_HF_lf, u0_LF, "HF vs LF")
+        _mean_r(u0_LF, residual, "LF vs residual")
+
+    def _get_stochastic_initial_conditions(self):
+        """Build stochastic HF and deterministic LF initial conditions.
+
+        HF IC = u0_tiled * (1 + noise_std * grf_HF + gamma_out * grf_HF_extra)
+        LF IC = u0_LF_det tiled (deterministic, no noise)
+
+        Returns:
+            u0_HF: (n_samples, res_HF)
+            u0_LF: (n_samples, res_LF)
+        """
+        # 1. deterministic HF ICs: (n_unique_conditions, res_HF)
+        u0_det = self.solver_HF.u0
+
+        # 2. tile: [c0, c1, ..., cN, c0, c1, ...]
+        u0_tiled = np.tile(u0_det, (self.n_fields_per_sample, 1))  # (n_samples, res_HF)
+        self.u0_det_tiled = u0_tiled  # deterministic IC saved for use as condition
+
+        # 3. stochastic HF: multiplicative noise + HF-only extra term
+        grf_HF = self._get_random_field(seed=SEED)
+        u0_HF = u0_tiled * (1.0 + self.noise_std * grf_HF)
+
+        # 4. spectral-filter to get deterministic LF IC, restrict to LF grid, tile
+        u0_LF_det = self._filter_ic(u0_det)  # (n_unique_conditions, res_HF)
+        u0_LF_det = self._restrict_ic(u0_LF_det)  # (n_unique_conditions, res_LF)
+        u0_LF = np.tile(u0_LF_det, (self.n_fields_per_sample, 1))  # (n_samples, res_LF)
+
+        assert u0_HF.shape == (self.n_samples, self.resolution_HF)
+        assert u0_LF.shape == (self.n_samples, self.resolution_LF)
+        self._print_ic_pearson(u0_HF, u0_LF)
+        return u0_HF, u0_LF
 
     def _filter_ic(
         self,
@@ -253,7 +358,7 @@ class MultiFidelity:
             )
             u0_LF.append(interpolator(self.solver_LF.x))
         u0_LF = np.stack(u0_LF)
-        assert u0_LF.shape == (self.n_samples, self.resolution_LF)
+        assert u0_LF.shape == (len(u0_HF), self.resolution_LF)
         return u0_LF
 
     def _interpolate_solution(self, uT):
@@ -523,9 +628,9 @@ class MultiFidelity:
         # remove the initial condition
         u_HF = u_HF[:, :, 1:, :]
         u_LF = u_LF[:, :, 1:, :]
-        # prepare the condition (tiled initial conditon)
+        # prepare the condition (deterministic tiled IC, not stochastic)
         condition = (
-            torch.Tensor(self.solver_HF.u0)
+            torch.Tensor(self.u0_det_tiled)
             .unsqueeze(1)
             .expand(-1, self.Nt, -1)
             .unsqueeze(1)
@@ -538,12 +643,16 @@ class MultiFidelity:
             "condition": condition,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_unique_conditions,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
         low_data = {
             "field": u_LF,
             "condition": condition,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_unique_conditions,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
 
         # save
@@ -623,8 +732,13 @@ if __name__ == "__main__":
         resolution_HF=args.resolution_HF,
         resolution_LF=args.resolution_LF,
         Nt=args.Nt,
-        n_samples=args.n_samples,
+        n_unique_conditions=args.n_unique_conditions,
+        n_fields_per_sample=args.n_fields_per_sample,
         recalculate_LF_time=True,
         plot=args.plot,
+        rbf_length_scale=args.rbf_length_scale,
+        rbf_sigma=args.rbf_sigma,
+        rbf_kl_modes=args.rbf_kl_modes,
+        noise_std=0.3,
     )
     mf.simulate()
