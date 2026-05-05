@@ -9,13 +9,13 @@ import matplotlib.pyplot as plt
 from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples = 10
+n_train_samples = 500
 n_val_samples = 750
 n_test_samples = 750
 operator_method = "filmfno"
 train_res_list = [8, 16, 32, 64]
 # results_folder = "./results_data"
-results_folder = "./results_vary_training_size_sigma_p25_l_p2"
+results_folder = "./results_superresolution"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -113,10 +113,20 @@ def plot_field(train_res):
         data_fno_flora=data_fno_flora,
         data_fno_floral=data_fno_floral,
     )
-    plotter.make_field_sample_plot(std_factor=3, save_name=save_name)
+    # create sample plot
+    plotter.make_field_sample_plot(
+        n_samples=3,
+        figsize=(12, 6),
+        linewidth=2.5,
+        label_fontsize=20,
+        # inset_xlim=(0.7, 1.0),
+        # inset_ylim=(-2, -1),
+        # inset_bounds=[0.55, 0.55, 0.42, 0.42],
+        save_name=save_name,
+    )
 
 
-def plot_pareto(train_res_list):
+def print_pareto(train_res_list):
     all_data = []
     for train_res in train_res_list:
         data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
@@ -131,14 +141,29 @@ def plot_pareto(train_res_list):
         df_fno["Resolution (train)"] = train_res
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
-    legend_kwargs = {"loc": "best"}
-    ParetoPlot.plot_pareto_res(
-        combined_df,
-        ylim_range=(1e-2, 1e1),
-        xlim_range=(1e-7, 1e0),
-        figsize=(7, 5),
-        legend_kwargs=legend_kwargs,
+    display_cols = [
+        "Samples (train)",
+        "Resolution (train)",
+        "Model",
+        "Method",
+        "Mean Field Error",
+        "Variance Field Error",
+    ]
+    print(
+        combined_df[[c for c in display_cols if c in combined_df.columns]].to_string(
+            index=False
+        )
     )
+
+    # legend_kwargs = {"loc": "best"}
+    # ParetoPlot.plot_pareto_res(
+    #     combined_df,
+    #     ylim_range=(1e-2, 1e1),
+    #     xlim_range=(1e-7, 1e0),
+    #     figsize=(7, 5),
+    #     legend_kwargs=legend_kwargs,
+    #     det_as_lines=False
+    # )
 
 
 def plot_error_summary(train_res_list):
@@ -157,16 +182,15 @@ def plot_error_summary(train_res_list):
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
     ErrorSummary.plot_error_vs_train_res(
-        combined_df, ylim_range=(1e-2, 1e0), xlim_range=(1e0, 1e2)
+        combined_df, ylim_range=(1e-2, 1e1), xlim_range=(1e0, 1e2)
     )
 
 
 if __name__ == "__main__":
-    # residual summary (not applicable for super-res)
     # error summary
-    # plot_error_summary(train_res_list)
+    plot_error_summary(train_res_list)
     # # plot field
-    # plot_field(train_res=train_res_list[0])
-    # plot_field(train_res=train_res_list[-1])
+    plot_field(train_res=train_res_list[0])
+    plot_field(train_res=train_res_list[-1])
     # pareto
-    plot_pareto(train_res_list)
+    print_pareto(train_res_list)

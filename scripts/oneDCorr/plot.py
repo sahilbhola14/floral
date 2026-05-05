@@ -153,7 +153,7 @@ def plot_field(n_train_samples):
     )
 
 
-def plot_pareto(n_train_samples_list):
+def print_pareto(n_train_samples_list):
     all_data = []
     for n_train_samples in n_train_samples_list:
         # load the data
@@ -241,7 +241,7 @@ def plot_error_summary(n_train_samples_list):
 
 if __name__ == "__main__":
     # error summary
-    # plot_error_summary(n_train_samples_list)
+    plot_error_summary(n_train_samples_list)
 
     # plot field
     plot_field_idx = None
@@ -254,4 +254,4 @@ if __name__ == "__main__":
             plot_field(n_train_samples=n_train_samples_list[ii])
 
     # pareto
-    # plot_pareto(n_train_samples_list)
+    print_pareto(n_train_samples_list)
