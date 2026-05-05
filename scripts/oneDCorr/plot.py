@@ -9,12 +9,12 @@ import matplotlib.pyplot as plt
 from floral.utils import oneDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [100, 200, 2000]
+n_train_samples_list = [100, 200, 500, 2000]
 n_val_samples = 750
 n_test_samples = 750
 operator_method = "filmfno"
 train_res = "Full"
-results_folder = "./results_vary_training_size_grf_input_multi_sample_a"
+results_folder = "./results"
 # results_folder = "./dummy_res"
 # End user input
 
@@ -88,6 +88,26 @@ def load_data(n_train_samples):
         f"{data_fno_floral['prediction'].shape[1]}"
     )
 
+    def _print_cost(label, data, deterministic=False):
+        t = data.get("inference_time_s")
+        tpc = data.get("time_per_condition_s")
+        tpcpg = data.get("time_per_condition_per_gen_s")
+        nfe = data.get("nfe_per_condition")
+        mem = data.get("peak_gpu_memory_mb")
+        msg = f"[{label}] inference_time: {t:.2f} s | " f"time/condition: {tpc:.4f} s"
+        if not deterministic:
+            msg += f" | time/condition/gen: {tpcpg:.4f} s"
+        if nfe is not None:
+            msg += f" | NFE/condition: {nfe:.1f}"
+        if mem is not None:
+            msg += f" | peak GPU mem: {mem:.1f} MB"
+        print(msg)
+
+    _print_cost("FM  Flora ", data_flora)
+    _print_cost("FM  Floral", data_floral)
+    _print_cost("FNO Flora ", data_fno_flora, deterministic=True)
+    _print_cost("FNO Floral", data_fno_floral, deterministic=True)
+
     print("--" * 10)
 
     return data_flora, data_floral, data_fno_flora, data_fno_floral
@@ -122,7 +142,15 @@ def plot_field(n_train_samples):
         data_fno_floral=data_fno_floral,
     )
     # create sample plot
-    plotter.make_field_sample_plot(figsize=(15, 12), linewidth=3.5, label_fontsize=20)
+    plotter.make_field_sample_plot(
+        n_samples=3,
+        figsize=(12, 6),
+        linewidth=2.5,
+        label_fontsize=20,
+        inset_xlim=(0.7, 1.0),
+        inset_ylim=(-2, -1),
+        inset_bounds=[0.55, 0.55, 0.42, 0.42],
+    )
 
 
 def plot_pareto(n_train_samples_list):
@@ -146,12 +174,24 @@ def plot_pareto(n_train_samples_list):
         )
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
+    display_cols = [
+        "Samples (train)",
+        "Model",
+        "Method",
+        "Mean Field Error",
+        "Variance Field Error",
+    ]
+    print(
+        combined_df[[c for c in display_cols if c in combined_df.columns]].to_string(
+            index=False
+        )
+    )
     legend_kwargs = {"bbox_to_anchor": (1.01, 0.5), "loc": "center left"}
     ParetoPlot.plot_pareto(
         combined_df,
         ylim_range=(1e-2, 1e1),
         figsize=(8, 5),
-        xlim_range=(1e-2, 1e0),
+        xlim_range=(1e-3, 1e1),
         legend_kwargs=legend_kwargs,
         det_as_lines=True,
     )
@@ -196,12 +236,12 @@ def plot_error_summary(n_train_samples_list):
         df_fno = summary_fno(verbose=True, model="FNO")
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ErrorSummary.plot_error(combined_df, ylim_range=(1e-3, 1e1), xlim_range=(0, 1e4))
+    ErrorSummary.plot_error(combined_df, ylim_range=(1e-3, 1e0), xlim_range=(0, 1e4))
 
 
 if __name__ == "__main__":
     # error summary
-    plot_error_summary(n_train_samples_list)
+    # plot_error_summary(n_train_samples_list)
 
     # plot field
     plot_field_idx = None
@@ -214,4 +254,4 @@ if __name__ == "__main__":
             plot_field(n_train_samples=n_train_samples_list[ii])
 
     # pareto
-    plot_pareto(n_train_samples_list)
+    # plot_pareto(n_train_samples_list)

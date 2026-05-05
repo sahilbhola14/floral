@@ -397,6 +397,8 @@ class ErrorSummary:
     def plot_error(combined_df, **kwargs):
         """plot the errors"""
         metrics = ["RMSE", "NRMSE", "CRMSE"]
+        titles = ["RMSE", "nRMSE", "cRMSE"]
+        desired_order = ["Low-fidelity", "FNO", "Residual FNO", "FLORA", "FLORAL"]
 
         # extract low-fidelity residual (same for all train samples)
         subset_LF = combined_df[combined_df["Method"] == "Low-fidelity"]
@@ -411,8 +413,10 @@ class ErrorSummary:
 
         # sharey keeps ticks in sync; we hide y-axis on non-leftmost panels manually
         fig, axes = plt.subplots(
-            1, 3, figsize=(15, 5), layout="compressed", sharey=True
+            1, 3, figsize=(12, 4), layout="compressed", sharey=True
         )
+        legend_handles = None
+        legend_labels = None
         for ii, (ax, metric) in enumerate(zip(axes, metrics)):
             # Filter dataframe for each metric
             subset_plot = combined_df[
@@ -420,7 +424,11 @@ class ErrorSummary:
                 & (combined_df["Method"] != "Low-fidelity")
             ].copy()
             subset_plot["Label"] = subset_plot.apply(_make_label, axis=1)
-            label_order = subset_plot["Label"].unique().tolist()
+            label_order = [
+                label
+                for label in desired_order
+                if label in subset_plot["Label"].unique()
+            ]
             palette = {k: _METHOD_COLORS[k] for k in label_order if k in _METHOD_COLORS}
             subset_LF_plot = subset_LF[subset_LF["Metric"] == metric]
             metric_LF = subset_LF_plot["Value"].mean()
@@ -449,33 +457,45 @@ class ErrorSummary:
                 label="Low-fidelity",
             )
 
-            ax.set_xlabel("Samples (train)", fontsize=15)
-            ax.set_title(metric, fontsize=15)
+            ax.set_xlabel("Samples (train)", fontsize=18)
+            ax.set_title(titles[ii], fontsize=18)
             ax.set_yscale("log")
             ax.set_xscale("log")
             ax.set_xlim(left=xlim_range[0], right=xlim_range[1])
             ax.set_ylim(bottom=ylim_range[0], top=ylim_range[1])
 
             if ii == 0:
-                ax.set_ylabel("Error", fontsize=15)
+                ax.set_ylabel("Error", fontsize=18)
                 handles, labels = ax.get_legend_handles_labels()
-                # move Low-fidelity to the front
-                lf_idx = (
-                    labels.index("Low-fidelity") if "Low-fidelity" in labels else None
+                order_map = {label: idx for idx, label in enumerate(desired_order)}
+                ordered_pairs = sorted(
+                    zip(handles, labels),
+                    key=lambda pair: order_map.get(pair[1], len(desired_order)),
                 )
-                if lf_idx is not None:
-                    handles = [handles[lf_idx]] + [
-                        h for i, h in enumerate(handles) if i != lf_idx
-                    ]
-                    labels = [labels[lf_idx]] + [
-                        l for i, l in enumerate(labels) if i != lf_idx
-                    ]
-                ax.legend(handles, labels).set_title("Model")
+                legend_handles = [handle for handle, _ in ordered_pairs]
+                legend_labels = [label for _, label in ordered_pairs]
             else:
                 ax.set_ylabel("")
+            if ax.legend_ is not None:
                 ax.legend_.remove()
 
-        plt.savefig("error_comparison.png", dpi=300, pad_inches=0.1)
+        if legend_handles is not None and legend_labels is not None:
+            fig.legend(
+                legend_handles,
+                legend_labels,
+                title="Model",
+                loc="center left",
+                fontsize=18,
+                bbox_to_anchor=(1.01, 0.5),
+                borderaxespad=0.0,
+            )
+
+        plt.savefig(
+            "error_comparison.png",
+            dpi=300,
+            bbox_inches="tight",
+            pad_inches=0.1,
+        )
         plt.close()
 
 
@@ -827,21 +847,21 @@ class oneDPlot(BasePlot):
     def make_field_sample_plot(
         self, n_samples: int = 5, plot_channel: int = 0, **kwargs
     ):
-        """make field samples plot"""
-        std_factor = kwargs.get("std_factor", 1.0)
-        print(f"Plotting {std_factor} standard deviation")
+        """make field samples plot — row 0: mean, row 1: variance"""
         assert n_samples <= self.n_avail_samples
         print(f"Plotting {n_samples} samples for channel: {plot_channel}")
         linewidth = kwargs.get("linewidth", 2.5)
         fig, axs = plt.subplots(
-            n_samples,
             2,
-            figsize=kwargs.get("figsize", (len(self.mean_dict) * 3.0, n_samples * 2.0)),
+            n_samples,
+            figsize=kwargs.get("figsize", (n_samples * 3.5, 6.0)),
             dpi=300,
             layout="compressed",
             sharex=True,
-            # sharey=True,
+            sharey="row",
         )
+        if n_samples == 1:
+            axs = axs.reshape(2, 1)
         _plot_colors = _METHOD_COLORS
         _linestyles = {
             "High-fidelity": "-",
@@ -851,55 +871,98 @@ class oneDPlot(BasePlot):
             "FNO": "-",
             "Residual FNO": "-.",
         }
-        for k in self.mean_dict.keys():
-            if k not in _plot_colors:
-                raise ValueError(f"{k} not a valid entry")
+        _mean_order = [
+            "High-fidelity",
+            "Low-fidelity",
+            "FNO",
+            "Residual FNO",
+            "FLORA",
+            "FLORAL",
+        ]
+        _var_order = ["High-fidelity", "FLORA", "FLORAL"]
+
+        # Row 0: mean prediction
+        for k in _mean_order:
+            if k not in self.mean_dict:
+                continue
             line_kwargs = dict(
                 color=_plot_colors[k], linestyle=_linestyles[k], linewidth=linewidth
             )
-
             for ii in range(n_samples):
                 mean_pred = self.mean_dict[k][ii][plot_channel].ravel()
-                (line_obj,) = axs[ii, 0].plot(
-                    self.field_domain,
-                    mean_pred,
-                    label=k,
-                    **line_kwargs,
-                )
+                axs[0, ii].plot(self.field_domain, mean_pred, label=k, **line_kwargs)
 
-                if k in self.std_dict and k not in ["FNO", "Residual FNO"]:
-                    std_pred = self.std_dict[k][ii][plot_channel].ravel()
-                    axs[ii, 1].plot(
-                        self.field_domain,
-                        std_pred,
-                        label=k,
-                        **line_kwargs,
-                    )
-        label_fontsize = kwargs.get("label_fontsize", 14)
-        for ii, ax in enumerate(axs.flatten()):
-            if ii == 0:
-                leg = ax.legend(framealpha=1.0)
-                leg.set_zorder(100)
-            row = ii // 2
-            col = ii % 2
-            if ii % 2 == 0:
-                ax.set_ylabel(kwargs.get("ylabel", r"$w(x)$"), fontsize=label_fontsize)
-            else:
-                ax.set_ylabel(
-                    kwargs.get("std_ylabel", r"$\sigma(x)$"), fontsize=label_fontsize
+        # Row 1: variance (std^2) — deterministic models excluded
+        for k in _var_order:
+            if k not in self.std_dict:
+                continue
+            line_kwargs = dict(
+                color=_plot_colors[k], linestyle=_linestyles[k], linewidth=linewidth
+            )
+            for ii in range(n_samples):
+                var_pred = self.std_dict[k][ii][plot_channel].ravel() ** 2
+                axs[1, ii].plot(self.field_domain, var_pred, label=k, **line_kwargs)
+                axs[1, ii].set_yscale("log")
+
+        # inset on top-right subplot (only when inset_xlim is provided)
+        inset_xlim = kwargs.get("inset_xlim", None)
+        inset_ylim = kwargs.get("inset_ylim", None)
+        inset_bounds = kwargs.get("inset_bounds", [0.55, 0.05, 0.42, 0.42])
+        if inset_xlim is not None:
+            ax_top_right = axs[0, -1]
+            ax_inset = ax_top_right.inset_axes(inset_bounds)
+            for k in _mean_order:
+                if k not in self.mean_dict:
+                    continue
+                line_kwargs = dict(
+                    color=_plot_colors[k],
+                    linestyle=_linestyles[k],
+                    linewidth=linewidth * 0.8,
                 )
-            if row == n_samples - 1:
-                ax.set_xlabel(kwargs.get("xlabel", r"$x$"), fontsize=label_fontsize)
-            else:
-                ax.set_xlabel("")  # remove label entirely
-                ax.tick_params(labelbottom=False)  # hide tick labels
-            if col == 1:
-                ax.set_yscale("log")
-            # ax.label_outer()
+                mean_pred = self.mean_dict[k][-1][plot_channel].ravel()
+                ax_inset.plot(self.field_domain, mean_pred, **line_kwargs)
+            ax_inset.set_xlim(inset_xlim)
+            if inset_ylim is not None:
+                ax_inset.set_ylim(inset_ylim)
+            ax_inset.set_xticks([])
+            ax_inset.set_yticks([])
+            for spine in ax_inset.spines.values():
+                spine.set_linewidth(0.8)
+            # box in main axes + connector lines to inset
+            ax_top_right.indicate_inset_zoom(ax_inset, edgecolor="black", linewidth=0.8)
+
+        label_fontsize = kwargs.get("label_fontsize", 14)
+        xlabel = kwargs.get("xlabel", r"$x$")
+        # x label only on bottom row; label_outer hides inner tick labels
+        for ii in range(n_samples):
+            axs[1, ii].set_xlabel(xlabel, fontsize=label_fontsize)
+        axs[0, 0].set_ylabel(
+            kwargs.get("ylabel", r"$\mathbb{E}[w(x)]$"), fontsize=label_fontsize
+        )
+        axs[1, 0].set_ylabel(r"$\mathrm{Var}[w(x)]$", fontsize=label_fontsize)
+        for ax in axs.flat:
+            ax.label_outer()
+
+        # figure-level legend centered vertically between the two rows
+        handles, labels = axs[0, 0].get_legend_handles_labels()
+        leg = fig.legend(
+            handles,
+            labels,
+            framealpha=1.0,
+            loc="center left",
+            bbox_to_anchor=(1.01, 0.5),
+            bbox_transform=fig.transFigure,
+            borderaxespad=0.0,
+        )
+        leg.set_zorder(100)
         fig.align_ylabels()
 
         default_save_name = f"field_samples_n_train_{self.n_train}_n_val_{self.n_val}"
-        plt.savefig(kwargs.get("save_name", default_save_name) + ".png")
+        plt.savefig(
+            kwargs.get("save_name", default_save_name) + ".png",
+            bbox_inches="tight",
+            pad_inches=0.1,
+        )
 
     def make_error_sample_plot(
         self, n_samples: int = 5, plot_channel: int = 0, **kwargs
@@ -934,78 +997,69 @@ class ParetoPlot:
         n_gen = HF_field_prediction_floral.shape[1] // n_fields_per_sample
         assert HF_field_prediction_floral.shape[1] == n_fields_per_sample * n_gen
 
+        # mean field
         mean_dict = {
             "Low-fidelity": LF_field.mean(1),
+            "High-fidelity": HF_field.mean(1),
             "FLORA": HF_field_prediction_flora.mean(1),
             "FLORAL": HF_field_prediction_floral.mean(1),
         }
 
-        if deterministic:
-            std_dict = {
-                "Low-fidelity": LF_field.std(1, correction=0).clamp(min=1e-6),
-                "FLORA": torch.ones_like(mean_dict["FLORA"]) * 1e-6,
-                "FLORAL": torch.ones_like(mean_dict["FLORAL"]) * 1e-6,
-            }
-        else:
-            std_dict = {
-                "Low-fidelity": LF_field.std(1, correction=0).clamp(min=1e-6),
-                "FLORA": HF_field_prediction_flora.std(1, correction=0).clamp(min=1e-6),
-                "FLORAL": HF_field_prediction_floral.std(1, correction=0).clamp(
-                    min=1e-6
-                ),
-            }
-
-        # L2 norm — mean over n_fields_per_sample before comparing
-        HF_mean = HF_field.mean(1)
-        l2_error_dict = {
-            "Low-fidelity": torch.norm(
-                HF_mean.flatten(1) - mean_dict["Low-fidelity"].flatten(1), dim=1
-            ),
-            "FLORA": torch.norm(
-                HF_mean.flatten(1) - mean_dict["FLORA"].flatten(1), dim=1
-            ),
-            "FLORAL": torch.norm(
-                HF_mean.flatten(1) - mean_dict["FLORAL"].flatten(1), dim=1
-            ),
+        # variance field
+        variance_dict = {
+            "Low-fidelity": LF_field.var(1),
+            "High-fidelity": HF_field.var(1),
+            "FLORA": HF_field_prediction_flora.var(1),
+            "FLORAL": HF_field_prediction_floral.var(1),
         }
 
-        # mean uncertainity (average uncertainity over the spatial domain)
-        uncertainty_dict = {
-            "Low-fidelity": std_dict["Low-fidelity"].flatten(1).mean(dim=1),
-            "FLORA": std_dict["FLORA"].flatten(1).mean(dim=1),
-            "FLORAL": std_dict["FLORAL"].flatten(1).mean(dim=1),
+        # mean field error
+        true_mean_field = mean_dict.get("High-fidelity")
+        mean_field_error = {
+            k: torch.norm(
+                (mean_dict[k] - true_mean_field).flatten(1),
+                dim=1,
+            )
+            for k in mean_dict
+            if k != "High-fidelity"
+        }
+        # variance field error
+        true_variance_field = variance_dict.get("High-fidelity")
+        variance_field_error = {
+            k: torch.norm(
+                (variance_dict[k] - true_variance_field).flatten(1),
+                dim=1,
+            )
+            for k in variance_dict
+            if k != "High-fidelity"
         }
 
-        # Convert to rows for each method
-        error_rows, uncertainty_rows = [], []
-        for method in mean_dict.keys():
-            for e, u in zip(
-                l2_error_dict[method].tolist(), uncertainty_dict[method].tolist()
+        # Convert to rows for each method and unique condition
+        rows = []
+        for method in mean_field_error.keys():
+            for mean_err, var_err in zip(
+                mean_field_error[method].tolist(),
+                variance_field_error[method].tolist(),
             ):
-                error_rows.append({"Model": model, "Method": method, "L2 Error": e})
-                uncertainty_rows.append(
-                    {"Model": model, "Method": method, "Mean Std": u}
+                rows.append(
+                    {
+                        "Model": model,
+                        "Method": method,
+                        "Mean Field Error": mean_err,
+                        "Variance Field Error": var_err,
+                    }
                 )
 
-        # Convert to DataFrames and set method as ordered category
-        error_df = pd.DataFrame(error_rows)
-        uncertainty_df = pd.DataFrame(uncertainty_rows)
+        summary_df = pd.DataFrame(rows)
 
         method_order = ["Low-fidelity", "FLORA", "FLORAL"]
         cat_type = pd.CategoricalDtype(categories=method_order, ordered=True)
-        error_df["Method"] = error_df["Method"].astype(cat_type)
-        uncertainty_df["Method"] = uncertainty_df["Method"].astype(cat_type)
-
-        # Compute method-wise means
+        summary_df["Method"] = summary_df["Method"].astype(cat_type)
         summary_df = (
-            error_df.groupby(["Model", "Method"], observed=False)["L2 Error"]
+            summary_df.groupby(["Model", "Method"], observed=False)[
+                ["Mean Field Error", "Variance Field Error"]
+            ]
             .mean()
-            .to_frame()
-            .join(
-                uncertainty_df.groupby(["Model", "Method"], observed=False)["Mean Std"]
-                .mean()
-                .to_frame()
-            )
             .reset_index()
         )
 
@@ -1035,8 +1089,8 @@ class ParetoPlot:
         plt.figure(figsize=figsize, layout="compressed")
         ax = sns.scatterplot(
             data=df_lf,
-            x="Mean Std",
-            y="L2 Error",
+            x="Variance Field Error",
+            y="Mean Field Error",
             color="#999999",
             s=200,
             marker="*",
@@ -1046,8 +1100,8 @@ class ParetoPlot:
 
         sns.scatterplot(
             data=df_rest,
-            x="Mean Std",
-            y="L2 Error",
+            x="Variance Field Error",
+            y="Mean Field Error",
             hue="Label",
             hue_order=label_order,
             style="Resolution (train)",
@@ -1091,8 +1145,8 @@ class ParetoPlot:
             title="",
             **kwargs.get("legend_kwargs", default_legend_kwargs),
         )
-        ax.set_xlabel("Mean Predictive Uncertainty")
-        ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
+        ax.set_xlabel(r"Variance Field Error $L_2$ norm")
+        ax.set_ylabel(r"Mean Field Error $L_2$ norm")
         plt.savefig(
             "pareto_resolution_comparison.png",
             dpi=300,
@@ -1166,8 +1220,8 @@ class ParetoPlot:
 
         # Low-fidelity reference
         ax.scatter(
-            df_lf["Mean Std"],
-            df_lf["L2 Error"],
+            df_lf["Variance Field Error"],
+            df_lf["Mean Field Error"],
             color="#999999",
             s=200,
             marker="*",
@@ -1186,8 +1240,8 @@ class ParetoPlot:
                 if sub.empty:
                     continue
                 ax.scatter(
-                    sub["Mean Std"],
-                    sub["L2 Error"],
+                    sub["Variance Field Error"],
+                    sub["Mean Field Error"],
                     color=color,
                     s=100,
                     marker=train_to_marker[n_train],
@@ -1205,16 +1259,19 @@ class ParetoPlot:
                 if sub.empty:
                     continue
                 if det_as_lines:
-                    ax.axhline(
-                        sub["L2 Error"].values[0],
+                    ax.scatter(
+                        sub["Variance Field Error"],
+                        sub["Mean Field Error"],
                         color=color,
-                        linestyle=train_to_ls[n_train],
-                        linewidth=_lw,
+                        s=100,
+                        marker=train_to_marker[n_train],
+                        edgecolor="black",
+                        zorder=5,
                     )
                 else:
                     ax.scatter(
-                        sub["Mean Std"],
-                        sub["L2 Error"],
+                        sub["Variance Field Error"],
+                        sub["Mean Field Error"],
                         color=color,
                         s=100,
                         marker=train_to_marker[n_train],
@@ -1353,8 +1410,8 @@ class ParetoPlot:
             samples_legend_kwargs["handlelength"] = 4.0
         ax.legend(**samples_legend_kwargs)
 
-        ax.set_xlabel("Mean Predictive Uncertainty")
-        ax.set_ylabel(r"Mean Predictive Error $L_2$ norm")
+        ax.set_xlabel(r"Variance Field Error $L_2$ norm")
+        ax.set_ylabel(r"Mean Field Error $L_2$ norm")
         plt.savefig(
             "pareto_comparison.png", dpi=300, bbox_inches="tight", pad_inches=0.1
         )

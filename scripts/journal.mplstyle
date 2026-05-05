@@ -5,7 +5,7 @@ font.family: sans-serif
 # font.serif: Times New Roman, Times, Computer Modern Roman
 font.size: 20
 text.usetex: True
-text.latex.preamble: \usepackage{amsmath}
+text.latex.preamble: \usepackage{amsmath}\usepackage{amssymb}
 
 # Axes
 axes.grid: True
