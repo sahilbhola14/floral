@@ -82,24 +82,9 @@ class Advection:
             axis=1,
         )
 
-        # random abs
-        mask = np.random.rand(n_samples) < 0.1
-        u0[mask] = np.abs(u0[mask])
-        # random sign flip
-        mask = np.random.rand(n_samples) < 0.5
-        u0[mask] = -u0[mask]
-        # windowing
-        mask = np.random.rand(n_samples) < 0.1
-        n_w = mask.sum()
-        if n_w > 0:
-            xL = np.random.uniform(0.1, 0.45, size=n_w)
-            xR = np.random.uniform(0.55, 0.9, size=n_w)
-            trns = 0.1
-            window = 0.5 * (
-                np.tanh((self.x - xL[:, None]) / trns)
-                - np.tanh((self.x - xR[:, None]) / trns)
-            )
-            u0[mask] *= window
+        u_at_Lx = np.sum(amp * np.sin(wave_number * self.Lx + phase), axis=1)
+        err = np.max(np.abs(u_at_Lx - u0[:, 0]))
+        assert err < 1e-10, f"IC not periodic: max error {err:.2e}"
 
         return u0
 
