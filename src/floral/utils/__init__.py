@@ -11,7 +11,7 @@ from .utils_IO import (
 from .utils_data import build_data_module
 from .utils_train import build_checkpointer, build_trainer
 from .utils_plot import oneDPlot, twoDPlot, ParetoPlot, BaseResidual, ErrorSummary
-from .utils_solver import sample_grf_rbf
+from .utils_solver import sample_grf_rbf, sample_periodic_noise
 
 __all__ = [
     "build_data_module",
@@ -28,6 +28,7 @@ __all__ = [
     "oneDPlot",
     "twoDPlot",
     "sample_grf_rbf",
+    "sample_periodic_noise",
     "ParetoPlot",
     "BaseResidual",
     "ErrorSummary",

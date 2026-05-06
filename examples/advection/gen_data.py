@@ -12,7 +12,7 @@ import torch.fft as fft
 from scipy.stats import pearsonr, gaussian_kde
 from scipy.interpolate import RegularGridInterpolator
 from floral.solver import Advection
-from floral.utils import check_tensor_blowup, sample_grf_rbf
+from floral.utils import check_tensor_blowup, sample_grf_rbf, sample_periodic_noise
 
 plt.style.use("../../scripts/journal.mplstyle")
 
@@ -236,15 +236,22 @@ class MultiFidelity:
             u0_LF: (n_samples, res_LF)  stochastic LF initial conditions
         """
         # 1. deterministic HF ICs: (n_unique_conditions, res_HF)
+
         u0_det = self._get_high_fidelity_ic()
 
         # 2. tile along batch dim: [c0, c1, ..., c0, c1, ...]
         u0_tiled = np.tile(u0_det, (self.n_fields_per_sample, 1))  # (n_samples, res_HF)
         self.u0_det_tiled = u0_tiled  # deterministic IC saved for use as condition
 
-        # 3. stochastic HF
-        grf_HF = self._get_random_field(seed=SEED)
-        u0_HF = u0_tiled * (1.0 + self.noise_std * grf_HF)
+        # 3. stochastic HF — periodic noise so u0_HF stays periodic on [0, Lx]
+        periodic_noise = sample_periodic_noise(
+            x=self.solver_HF.x,
+            Lx=self.solver_HF.Lx,
+            n_samples=self.n_samples,
+            noise_std=self.noise_std,
+            rng=np.random.default_rng(SEED),
+        )
+        u0_HF = u0_tiled + periodic_noise
 
         # 4a. filter deterministic HF IC spectrally → deterministic LF IC
         u0_LF_det = self._filter_ic(u0_det)  # (n_unique_conditions, res_HF)
@@ -747,6 +754,6 @@ if __name__ == "__main__":
         rbf_length_scale=args.rbf_length_scale,
         rbf_sigma=args.rbf_sigma,
         rbf_kl_modes=args.rbf_kl_modes,
-        noise_std=0.3,
+        noise_std=0.05,
     )
     mf.simulate()

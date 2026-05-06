@@ -104,3 +104,46 @@ def sample_grf_rbf(
         N,
     ), f"Expected samples of shape ({n_samples}, {N}), got {samples.shape}"
     return samples, kl_decomp
+
+
+def sample_periodic_noise(
+    x: np.ndarray,
+    Lx: float,
+    n_samples: int,
+    k_max: int = 8,
+    noise_std: float = 0.05,
+    rng: Optional[np.random.Generator] = None,
+) -> np.ndarray:
+    """Sample periodic noise as a sum of random Fourier modes.
+
+    noise(x) = sum_{k=1}^{k_max} (alpha_k * cos(2pi k x / Lx)
+                                 + beta_k  * sin(2pi k x / Lx))
+
+    alpha_k, beta_k ~ N(0, noise_std^2).  By construction every realization is
+    periodic on [0, Lx].
+
+    Args:
+        x: Spatial grid of shape (N,).
+        Lx: Domain length.
+        n_samples: Number of noise realizations.
+        k_max: Highest wavenumber included.
+        noise_std: Standard deviation of the Fourier coefficients.
+        rng: NumPy random Generator. If None, the default generator is used.
+
+    Returns:
+        noise: Array of shape (n_samples, N).
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    k = np.arange(1, k_max + 1)  # (k_max,)
+    freq = 2.0 * np.pi * k / Lx  # (k_max,)
+
+    alpha = rng.normal(0.0, noise_std, size=(n_samples, k_max))  # (B, k_max)
+    beta = rng.normal(0.0, noise_std, size=(n_samples, k_max))  # (B, k_max)
+
+    # (B, k_max) @ (k_max, N) -> (B, N)
+    noise = alpha @ np.cos(freq[:, None] * x[None, :]) + beta @ np.sin(
+        freq[:, None] * x[None, :]
+    )
+    return noise
