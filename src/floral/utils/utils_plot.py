@@ -329,7 +329,7 @@ class ErrorSummary:
     @staticmethod
     def plot_error_vs_train_res(combined_df, **kwargs):
         """plot the errors"""
-        metrics = ["RMSE", "NRMSE", "CRMSE"]
+        metrics = ["RMSE", "NRMSE"]
         titles = ["RMSE", "nRMSE", "cRMSE"]
         desired_order = ["Low-fidelity", "FNO", "Residual FNO", "FLORA", "FLORAL"]
 
@@ -427,7 +427,7 @@ class ErrorSummary:
     @staticmethod
     def plot_error(combined_df, **kwargs):
         """plot the errors"""
-        metrics = ["RMSE", "NRMSE", "CRMSE"]
+        metrics = ["RMSE", "NRMSE"]
         titles = ["RMSE", "nRMSE", "cRMSE"]
         desired_order = ["Low-fidelity", "FNO", "Residual FNO", "FLORA", "FLORAL"]
 
@@ -533,42 +533,72 @@ class ErrorSummary:
 class twoDPlot(BasePlot):
     """Plot multiple samples"""
 
-    def __init__(self, data_flora: dict, data_floral: dict):
+    def __init__(
+        self,
+        data_flora: dict,
+        data_floral: dict,
+        data_fno_flora: dict | None = None,
+        data_fno_floral: dict | None = None,
+    ):
         super(twoDPlot, self).__init__()
         self.data_flora = data_flora
         self.data_floral = data_floral
+        self.data_fno_flora = data_fno_flora
+        self.data_fno_floral = data_fno_floral
 
         # High-fidelity data (B, channels, *dims)
         self.HF_field = self.data_floral["HF_field"]
         # Low-fidelity data (B, channels, *dims)
         self.LF_field = self.data_floral["LF_field"]
-        # Prediction Flora
+        # FM predictions
         self.HF_field_prediction_flora = self.data_flora["prediction"]
-        # Prediction Floral
         self.HF_field_prediction_floral = self.data_floral["prediction"]
+        # FNO predictions (optional)
+        self.HF_field_prediction_fno_flora = (
+            data_fno_flora["prediction"] if data_fno_flora is not None else None
+        )
+        self.HF_field_prediction_fno_floral = (
+            data_fno_floral["prediction"] if data_fno_floral is not None else None
+        )
         # extract num train and val
         self.n_train = self.data_floral["n_train"]
         self.n_val = self.data_floral["n_val"]
+        self.n_fields_per_sample = self.data_floral["n_fields_per_sample"]
 
-        self.n_avail_samples = len(self.HF_field)
+        self.n_avail_samples = self.data_floral["n_unique_test"]
         assert len(self.LF_field) == self.n_avail_samples
         assert len(self.HF_field_prediction_flora) == self.n_avail_samples
         assert len(self.HF_field_prediction_floral) == self.n_avail_samples
+        if self.HF_field_prediction_fno_flora is not None:
+            assert len(self.HF_field_prediction_fno_flora) == self.n_avail_samples
+        if self.HF_field_prediction_fno_floral is not None:
+            assert len(self.HF_field_prediction_fno_floral) == self.n_avail_samples
 
-        # number of UQ samples
-        self.n_gen = self.HF_field_prediction_floral.shape[1]
-        assert self.n_gen == self.HF_field_prediction_flora.shape[1]
+        # number of UQ samples (dim=1 is n_fields_per_sample * n_gen)
+        self.n_gen = (
+            self.HF_field_prediction_floral.shape[1] // self.n_fields_per_sample
+        )
+        assert (
+            self.HF_field_prediction_floral.shape[1]
+            == self.n_fields_per_sample * self.n_gen
+        )
 
-        # compute mean and std over the UQ samples (B, C, *dims)
+        # mean dict — order matches oneDPlot: HF, LF, FNO, Residual FNO, FLORA, FLORAL
+        # all .mean(1) averages over n_fields_per_sample
+        # (or n_fields*n_gen for predictions)
         self.mean_dict = {
-            "Low-fidelity": self.LF_field,
-            "High-fidelity": self.HF_field,
-            "FLORA": self.HF_field_prediction_flora.mean(1),
-            "FLORAL": self.HF_field_prediction_floral.mean(1),
+            "High-fidelity": self.HF_field.mean(1),
+            "Low-fidelity": self.LF_field.mean(1),
         }
+        if self.HF_field_prediction_fno_flora is not None:
+            self.mean_dict["FNO"] = self.HF_field_prediction_fno_flora.mean(1)
+        if self.HF_field_prediction_fno_floral is not None:
+            self.mean_dict["Residual FNO"] = self.HF_field_prediction_fno_floral.mean(1)
+        self.mean_dict["FLORA"] = self.HF_field_prediction_flora.mean(1)
+        self.mean_dict["FLORAL"] = self.HF_field_prediction_floral.mean(1)
 
         self.std_dict = {
-            "Low-fidelity": torch.ones_like(self.LF_field) * 1e-6,
+            "Low-fidelity": self.LF_field.std(1, correction=0),
             "FLORA": self.HF_field_prediction_flora.std(1, correction=0),
             "FLORAL": self.HF_field_prediction_floral.std(1, correction=0),
         }

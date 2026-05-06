@@ -72,7 +72,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=128,
+        default=64,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -636,7 +636,6 @@ class MultiFidelity:
             .unsqueeze(1)
         )
         domain = torch.Tensor(self.solver_HF.domain)
-
         # prep data dict
         high_data = {
             "field": u_HF,
