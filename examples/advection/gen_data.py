@@ -251,7 +251,13 @@ class MultiFidelity:
             noise_std=self.noise_std,
             rng=np.random.default_rng(SEED),
         )
-        u0_HF = u0_tiled + periodic_noise
+        u0_HF = u0_tiled * (1.0 + periodic_noise)
+
+        # plt.figure()
+        # plt.plot(u0_HF[0])
+        # plt.plot(periodic_noise[0])
+        # plt.plot(u0_tiled[0])
+        # plt.savefig("test.png")
 
         # 4a. filter deterministic HF IC spectrally → deterministic LF IC
         u0_LF_det = self._filter_ic(u0_det)  # (n_unique_conditions, res_HF)
