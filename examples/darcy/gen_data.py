@@ -19,7 +19,7 @@ from tqdm import tqdm
 from scipy.stats import pearsonr, gaussian_kde
 from scipy.interpolate import RegularGridInterpolator
 from floral.solver import Darcy
-from floral.utils import check_tensor_blowup
+from floral.utils import check_tensor_blowup, sample_grf_rbf
 
 plt.style.use("../../scripts/journal.mplstyle")
 
@@ -33,17 +33,47 @@ def parse_args():
     )
     parser.add_argument(
         "-n",
-        "--n_samples",
+        "--n_unique_conditions",
         type=int,
-        default=6000,
-        help="Number of samples to generate",
+        default=100,
+        help="Number of unique input conditions",
+    )
+    parser.add_argument(
+        "--n_fields_per_sample",
+        type=int,
+        default=50,
+        help="Number of random field realizations per input condition",
+    )
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=0.1,
+        help="Scale of additive GRF noise on HF permeability (beta)",
+    )
+    parser.add_argument(
+        "--rbf_length_scale",
+        type=float,
+        default=0.2,
+        help="Length scale for the RBF kernel",
+    )
+    parser.add_argument(
+        "--rbf_sigma",
+        type=float,
+        default=1.0,
+        help="Amplitude for the RBF kernel",
+    )
+    parser.add_argument(
+        "--rbf_kl_modes",
+        type=int,
+        default=10,
+        help="Number of KL modes to retain",
     )
 
     parser.add_argument(
         "-res_HF",
         "--resolution_HF",
         type=int,
-        default=128,
+        default=64,
         help="Number of discretization points for the high-fidelity model",
     )
 
@@ -51,7 +81,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=32,
+        default=64,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -65,26 +95,31 @@ def parse_args():
     parser.add_argument(
         "--ntheta_HF",
         type=int,
-        default=128,
+        default=32,
         help="Parammeterization dimension of permeability field",
     )
 
     parser.add_argument(
         "--ntheta_LF",
         type=int,
-        default=64,
+        default=8,
         help="Parameterization dimension of permeability field",
     )
     parser.add_argument("--plot", action="store_true")
 
     args = parser.parse_args()
     print("==" * 3 + "darcy equation" + "==" * 3)
-    print(f"Number of samples: {args.n_samples}")
+    print(f"Number of unique conditions: {args.n_unique_conditions}")
+    print(f"Number of fields per sample: {args.n_fields_per_sample}")
+    print(f"Total samples: {args.n_unique_conditions * args.n_fields_per_sample}")
     print(f"Number of threads: {args.threads}")
     print(f"High-fidelity parameterization dimension: {args.ntheta_HF}")
     print(f"High-fidelity resolution: {args.resolution_HF}")
     print(f"Low-fidelity parameterization dimension: {args.ntheta_LF}")
     print(f"Low-fidelity resolution: {args.resolution_LF}")
+    print(f"RBF length scale: {args.rbf_length_scale}")
+    print(f"RBF sigma: {args.rbf_sigma}")
+    print(f"RBF KL modes: {args.rbf_kl_modes}")
     print("==" * 3 + "==============" + "==" * 3)
 
     return args
@@ -103,16 +138,27 @@ class MultiFidelity:
         ntheta_LF: int = 32,
         resolution_HF: int = 64,
         resolution_LF: int = 32,
-        n_samples: int = 1,
+        n_unique_conditions: int = 100,
+        n_fields_per_sample: int = 50,
         threads: int = 32,
         plot: bool = False,
+        beta: float = 0.05,
+        rbf_length_scale: float = 0.2,
+        rbf_sigma: float = 1.0,
+        rbf_kl_modes: int = 10,
     ):
         self.ntheta_HF = ntheta_HF
         self.ntheta_LF = ntheta_LF
         self.resolution_HF = resolution_HF
         self.resolution_LF = resolution_LF
-        self.n_samples = n_samples
+        self.n_unique_conditions = n_unique_conditions
+        self.n_fields_per_sample = n_fields_per_sample
+        self.n_samples = n_unique_conditions * n_fields_per_sample
         self.plot = plot
+        self.beta = beta
+        self.rbf_length_scale = rbf_length_scale
+        self.rbf_sigma = rbf_sigma
+        self.rbf_kl_modes = rbf_kl_modes
 
         assert (
             self.ntheta_LF <= self.ntheta_HF
@@ -121,29 +167,30 @@ class MultiFidelity:
             self.resolution_LF <= self.resolution_HF
         ), "Low-fidelity resolution must be less than or equal to high-fidelity"
 
-        # high-fidelity solver
+        # solvers initialised with n_unique_conditions deterministic samples
         self.solver_HF = Darcy(
             resolution=self.resolution_HF,
             ntheta=self.ntheta_HF,
             threads=threads,
-            n_samples=self.n_samples,
+            n_samples=self.n_unique_conditions,
         )
-        # low-fidelity solver
         self.solver_LF = Darcy(
             resolution=self.resolution_LF,
             ntheta=self.ntheta_LF,
             threads=threads,
-            n_samples=self.n_samples,
+            n_samples=self.n_unique_conditions,
         )
 
-        # compute low-fidelity permeability data
+        # build deterministic LF permeability (truncated KL)
         permeability_LF_data = self._create_low_fidelity_permeability_data()
-        # update low-fidelity permeability data
         self.solver_LF._set_permeability_data(permeability_LF_data)
+
+        # tile and add GRF noise to HF; tile (no noise) for LF
+        self._get_stochastic_permeability()
 
     def _restrict_permeability(self, K):
         pbar = tqdm(range(len(K)), desc="Restricting permeability")
-        mv = np.zeros((self.n_samples, self.resolution_LF, self.resolution_LF))
+        mv = np.zeros((len(K), self.resolution_LF, self.resolution_LF))
         for ii in pbar:
             interpolator = RegularGridInterpolator(
                 (self.solver_HF.xv, self.solver_HF.xv),
@@ -156,6 +203,88 @@ class MultiFidelity:
 
         check_tensor_blowup(mv, "Interpolated permeability")
         return mv
+
+    def _get_random_field(self, seed: int = 42) -> np.ndarray:
+        coords = self.solver_HF.mesh.reshape(-1, 2)  # (res_HF^2, 2)
+        noise, _ = sample_grf_rbf(
+            coords=coords,
+            n_samples=self.n_samples,
+            length_scale=self.rbf_length_scale,
+            sigma=self.rbf_sigma,
+            nugget=1e-6,
+            rng=np.random.default_rng(seed),
+            num_modes=self.rbf_kl_modes,
+        )
+        return noise.reshape(self.n_samples, self.resolution_HF, self.resolution_HF)
+
+    def _make_permeability_comparison_plot(
+        self,
+        K_HF_det: np.ndarray,
+        K_HF_stoch: np.ndarray,
+        K_LF_det: np.ndarray,
+        n_plot: int = 4,
+    ):
+        """3-row grid: det HF | stoch HF | det LF, one column per condition."""
+        n_plot = min(n_plot, self.n_unique_conditions)
+        rows = ["Det HF", "Stoch HF", "Det LF"]
+        fields = [K_HF_det[:n_plot], K_HF_stoch[:n_plot], K_LF_det[:n_plot]]
+
+        fig, axs = plt.subplots(
+            3, n_plot, figsize=(3 * n_plot, 8), dpi=150, layout="compressed"
+        )
+        if n_plot == 1:
+            axs = axs[:, None]
+
+        for row, (label, K) in enumerate(zip(rows, fields)):
+            for col in range(n_plot):
+                im = axs[row, col].imshow(
+                    np.log(K[col]), origin="lower", interpolation="bicubic"
+                )
+                fig.colorbar(im, ax=axs[row, col], fraction=0.046, pad=0.04)
+                axs[row, col].set_xticks([])
+                axs[row, col].set_yticks([])
+                if col == 0:
+                    axs[row, col].set_ylabel(label)
+                if row == 0:
+                    axs[row, col].set_title(f"Condition {col}")
+
+        plt.savefig("permeability_comparison.png", dpi=150)
+        plt.close()
+
+    def _get_stochastic_permeability(self):
+        # deterministic permeabilities: (n_unique_conditions, res, res)
+        K_HF_det = self.solver_HF.permeability_data["permeability"]
+        K_LF_det = self.solver_LF.permeability_data["permeability"]
+
+        # tile: [c0, c1, ..., c0, c1, ...]
+        K_HF_tiled = np.tile(K_HF_det, (self.n_fields_per_sample, 1, 1))
+        K_LF_tiled = np.tile(K_LF_det, (self.n_fields_per_sample, 1, 1))
+        self.K_HF_det_tiled = K_HF_tiled  # saved for use as condition
+
+        # K_HF
+        grf_noise = self._get_random_field()  # (n_samples, res_HF, res_HF)
+        K_HF_stoch = K_HF_tiled * (1 + self.beta * grf_noise)
+
+        # Pearson r between deterministic and stochastic HF permeability
+        rs = np.array(
+            [
+                pearsonr(K_HF_tiled[i].ravel(), K_HF_stoch[i].ravel())[0]
+                for i in range(self.n_samples)
+            ]
+        )
+        print(
+            f"Permeability Pearson (det HF vs stoch HF): mean={rs.mean():.4f} "
+            f"+/- {rs.std():.4f} | min={rs.min():.4f} max={rs.max():.4f}"
+        )
+
+        if self.plot:
+            self._make_permeability_comparison_plot(K_HF_det, K_HF_stoch, K_LF_det)
+
+        # push back into solvers
+        self.solver_HF.permeability_data["permeability"] = K_HF_stoch
+        self.solver_HF.n_samples = self.n_samples
+        self.solver_LF.permeability_data["permeability"] = K_LF_tiled
+        self.solver_LF.n_samples = self.n_samples
 
     def _create_low_fidelity_permeability_data(self):
         permeability_HF_data = self.solver_HF.permeability_data
@@ -356,73 +485,66 @@ class MultiFidelity:
         )
 
     def _make_sample_comparison_plot(
-        self, samples_LF, samples_HF, n_samples, file_identifier
+        self, samples_LF, samples_HF, file_identifier, n_conditions: int = 4
     ):
-        assert (
-            samples_LF.shape == samples_HF.shape
-        ), "LF and HF samples must have the same shape"
-        assert len(samples_LF) >= n_samples, "Not enough samples to plot"
+        """Plot LF (deterministic) | HF mean | HF std, one row per unique condition."""
+        nc = self.n_unique_conditions
+        nf = self.n_fields_per_sample
+        n_conditions = min(n_conditions, nc)
 
+        cols = [
+            "Low-fidelity",
+            "High-fidelity mean",
+            "High-fidelity std",
+            "Residual mean",
+        ]
         fig, axs = plt.subplots(
-            n_samples,
-            3,
-            figsize=(6, 2 * n_samples),
+            n_conditions,
+            4,
+            figsize=(9, 2.5 * n_conditions),
             dpi=300,
             layout="compressed",
-            sharex=True,
-            sharey=True,
         )
-        axs_lf = axs[:, 0]
-        axs_hf = axs[:, 1]
-        axs_diff = axs[:, 2]
-        # vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
-        # vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
-        for ii in range(n_samples):
+        if n_conditions == 1:
+            axs = axs[None, :]
 
-            vmin = min(samples_LF[ii].min(), samples_HF[ii].min())
-            vmax = max(samples_LF[ii].max(), samples_HF[ii].max())
+        for row, cond_idx in enumerate(range(n_conditions)):
+            hf_block = samples_HF[cond_idx::nc][:nf]  # (nf, H, W)
+            lf_field = samples_LF[cond_idx]  # (H, W) — deterministic
+            hf_mean = hf_block.mean(axis=0)
+            hf_std = hf_block.std(axis=0)
+            residual_mean = hf_mean - lf_field
+            res_abs = np.abs(residual_mean).max()
 
-            im_field = axs_lf[ii].imshow(
-                samples_LF[ii],
-                origin="lower",
-                vmin=vmin,
-                vmax=vmax,
-                interpolation="bicubic",
-            )
-            axs_hf[ii].imshow(
-                samples_HF[ii],
-                origin="lower",
-                vmin=vmin,
-                vmax=vmax,
-                interpolation="bicubic",
-            )
-            im_diff = axs_diff[ii].imshow(
-                # samples_HF[ii] - samples_LF[ii],
-                np.abs(samples_HF[ii] - samples_LF[ii]),
-                origin="lower",
-                interpolation="bicubic",
-            )
-            fig.colorbar(
-                im_field, ax=axs_hf[ii], orientation="vertical", fraction=0.046, pad=0.1
-            )
-            fig.colorbar(
-                im_diff,
-                ax=axs_diff[ii],
-                orientation="vertical",
-                fraction=0.046,
-                pad=0.1,
-            )
-            if ii == 0:
-                axs_lf[ii].set_title(r"Low-fidelity")
-                axs_hf[ii].set_title(r"High-fidelity")
-                axs_diff[ii].set_title(r"Absolute error")
-        for ax in axs.flatten():
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_xlabel(r"$x_1$")
-            ax.set_ylabel(r"$x_2$")
-            ax.label_outer()
+            vmin = min(lf_field.min(), hf_mean.min())
+            vmax = max(lf_field.max(), hf_mean.max())
+
+            panels = [
+                (lf_field, vmin, vmax, None),
+                (hf_mean, vmin, vmax, None),
+                (hf_std, 0, hf_std.max(), None),
+                (residual_mean, -res_abs, res_abs, "RdBu_r"),
+            ]
+            for col, (field, lo, hi, cmap) in enumerate(panels):
+                im = axs[row, col].imshow(
+                    field,
+                    origin="lower",
+                    vmin=lo,
+                    vmax=hi,
+                    interpolation="bicubic",
+                    cmap=cmap,
+                )
+                fig.colorbar(im, ax=axs[row, col], fraction=0.046, pad=0.04)
+                axs[row, col].set_xticks([])
+                axs[row, col].set_yticks([])
+                axs[row, col].set_xlabel(r"$x_1$")
+                axs[row, col].set_ylabel(r"$x_2$")
+                if row == 0:
+                    axs[row, col].set_title(cols[col])
+
+        fig.align_labels()
         plt.savefig(file_identifier + "_data_snapshot.png", dpi=300)
+        plt.close()
 
     def _compare(self, dict_HF: dict, dict_LF: dict):
         if self.plot:
@@ -430,13 +552,11 @@ class MultiFidelity:
             self._make_sample_comparison_plot(
                 samples_LF=np.log(dict_LF["permeability"]),
                 samples_HF=np.log(dict_HF["permeability"]),
-                n_samples=5,
                 file_identifier="Log_Permeability",
             )
             self._make_sample_comparison_plot(
                 samples_LF=dict_LF["pressure"],
                 samples_HF=dict_HF["pressure"],
-                n_samples=5,
                 file_identifier="Pressure",
             )
             # make marginals
@@ -504,26 +624,24 @@ class MultiFidelity:
             dict_HF[k] = torch.Tensor(dict_HF[k]).unsqueeze(1)
 
         domain = torch.Tensor(self.solver_HF.mesh)
-
+        condition = torch.log(torch.Tensor(self.K_HF_det_tiled).unsqueeze(1))
         high_data = {
             "field": dict_HF["pressure"],
-            "condition": dict_HF["permeability"],
+            "condition": condition,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_unique_conditions,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
 
         low_data = {
             "field": dict_LF["pressure"],
-            "condition": dict_LF["permeability"],
+            "condition": condition,
             "field_domain": domain,
             "condition_domain": domain,
+            "n_unique_conditions": self.n_unique_conditions,
+            "n_fields_per_sample": self.n_fields_per_sample,
         }
-
-        # save
-        # torch.save(high_data, f"high_fidelity_res_"
-        # f"{self.resolution_LF}_theta_{self.ntheta_LF}.pt")
-        # torch.save(low_data, f"low_fidelity_res_"
-        # f"{self.resolution_LF}_theta_{self.ntheta_LF}.pt")
 
         torch.save(high_data, "high_fidelity.pt")
         torch.save(low_data, "low_fidelity.pt")
@@ -561,8 +679,13 @@ if __name__ == "__main__":
         ntheta_LF=args.ntheta_LF,
         resolution_HF=args.resolution_HF,
         resolution_LF=args.resolution_LF,
-        n_samples=args.n_samples,
+        n_unique_conditions=args.n_unique_conditions,
+        n_fields_per_sample=args.n_fields_per_sample,
         threads=args.threads,
         plot=args.plot,
+        beta=args.beta,
+        rbf_length_scale=args.rbf_length_scale,
+        rbf_sigma=args.rbf_sigma,
+        rbf_kl_modes=args.rbf_kl_modes,
     )
     mf.simulate()
