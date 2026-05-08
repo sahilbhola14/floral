@@ -47,7 +47,7 @@ def parse_args():
     parser.add_argument(
         "--beta",
         type=float,
-        default=0.1,
+        default=0.2,
         help="Scale of additive GRF noise on HF permeability (beta)",
     )
     parser.add_argument(
