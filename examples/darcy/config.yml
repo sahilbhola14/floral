@@ -63,7 +63,7 @@ flow:
       lifting_channel_ratio: 4
       projection_channel_ratio: 4
       n_layers: 4
-      modes: 64
+      modes: 32
   prior:
     # prior GP measure parameters
     lengthscale: 1.0e-3
