@@ -429,11 +429,12 @@ class MultiFidelity:
             "Low-fidelity (deterministic)",
             "High-fidelity mean",
             "High-fidelity std",
+            "Residual mean",
         ]
         fig, axs = plt.subplots(
             n_conditions,
-            3,
-            figsize=(8, 2.5 * n_conditions),
+            4,
+            figsize=(11, 2.5 * n_conditions),
             dpi=300,
             layout="compressed",
         )
@@ -447,18 +448,26 @@ class MultiFidelity:
 
             hf_mean = hf_block.mean(axis=0)
             hf_std = hf_block.std(axis=0)
+            residual_mean = hf_mean - lf_field
+            res_abs = np.abs(residual_mean).max()
 
             vmin_mean = min(lf_field.min(), hf_mean.min())
             vmax_mean = max(lf_field.max(), hf_mean.max())
 
             panels = [
-                (lf_field, vmin_mean, vmax_mean),
-                (hf_mean, vmin_mean, vmax_mean),
-                (hf_std, 0, hf_std.max()),
+                (lf_field, vmin_mean, vmax_mean, None),
+                (hf_mean, vmin_mean, vmax_mean, None),
+                (hf_std, 0, hf_std.max(), None),
+                (residual_mean, -res_abs, res_abs, "RdBu_r"),
             ]
-            for col, (field, vmin, vmax) in enumerate(panels):
+            for col, (field, vmin, vmax, cmap) in enumerate(panels):
                 im = axs[row, col].imshow(
-                    field, origin="lower", vmin=vmin, vmax=vmax, interpolation="bicubic"
+                    field,
+                    origin="lower",
+                    vmin=vmin,
+                    vmax=vmax,
+                    interpolation="bicubic",
+                    cmap=cmap,
                 )
                 fig.colorbar(im, ax=axs[row, col], fraction=0.046, pad=0.04)
                 axs[row, col].set_xticks([])

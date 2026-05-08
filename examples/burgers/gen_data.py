@@ -418,8 +418,8 @@ class MultiFidelity:
 
         fig, axs = plt.subplots(
             n_samples,
-            3,
-            figsize=(6, 2 * n_samples),
+            4,
+            figsize=(8, 2 * n_samples),
             dpi=300,
             layout="compressed",
             sharex=True,
@@ -428,8 +428,7 @@ class MultiFidelity:
         axs_lf = axs[:, 0]
         axs_hf = axs[:, 1]
         axs_diff = axs[:, 2]
-        # vmin = min(samples[:n_samples].min() for samples in [samples_LF, samples_HF])
-        # vmax = min(samples[:n_samples].max() for samples in [samples_LF, samples_HF])
+        axs_res = axs[:, 3]
         for ii in range(n_samples):
 
             vmin = min(samples_LF[ii].min(), samples_HF[ii].min())
@@ -450,9 +449,18 @@ class MultiFidelity:
                 interpolation="bicubic",
             )
             im_diff = axs_diff[ii].imshow(
-                # samples_HF[ii] - samples_LF[ii],
                 np.abs(samples_HF[ii] - samples_LF[ii]),
                 origin="lower",
+                interpolation="bicubic",
+            )
+            residual = samples_HF[ii] - samples_LF[ii]
+            res_abs = np.abs(residual).max()
+            im_res = axs_res[ii].imshow(
+                residual,
+                origin="lower",
+                vmin=-res_abs,
+                vmax=res_abs,
+                cmap="RdBu_r",
                 interpolation="bicubic",
             )
             fig.colorbar(
@@ -465,10 +473,18 @@ class MultiFidelity:
                 fraction=0.046,
                 pad=0.1,
             )
+            fig.colorbar(
+                im_res,
+                ax=axs_res[ii],
+                orientation="vertical",
+                fraction=0.046,
+                pad=0.1,
+            )
             if ii == 0:
                 axs_lf[ii].set_title(r"Low-fidelity")
                 axs_hf[ii].set_title(r"High-fidelity")
                 axs_diff[ii].set_title(r"Absolute error")
+                axs_res[ii].set_title(r"Residual")
         for ax in axs.flatten():
             ax.set_xticks([])
             ax.set_yticks([])
