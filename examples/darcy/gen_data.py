@@ -47,7 +47,7 @@ def parse_args():
     parser.add_argument(
         "--beta",
         type=float,
-        default=0.2,
+        default=0.1,
         help="Scale of additive GRF noise on HF permeability (beta)",
     )
     parser.add_argument(
@@ -81,7 +81,7 @@ def parse_args():
         "-res_LF",
         "--resolution_LF",
         type=int,
-        default=64,
+        default=16,
         help="Number of discretization points for the low-fidelity model",
     )
 
@@ -102,7 +102,7 @@ def parse_args():
     parser.add_argument(
         "--ntheta_LF",
         type=int,
-        default=8,
+        default=32,
         help="Parameterization dimension of permeability field",
     )
     parser.add_argument("--plot", action="store_true")
@@ -264,7 +264,6 @@ class MultiFidelity:
         # K_HF
         grf_noise = self._get_random_field()  # (n_samples, res_HF, res_HF)
         K_HF_stoch = K_HF_tiled * (1 + self.beta * grf_noise)
-
         # Pearson r between deterministic and stochastic HF permeability
         rs = np.array(
             [
