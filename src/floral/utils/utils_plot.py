@@ -1025,6 +1025,151 @@ class oneDPlot(BasePlot):
             pad_inches=0.1,
         )
 
+    def make_uq_band_plot(
+        self,
+        sample_idx: int = 0,
+        plot_channel: int = 0,
+        std_factor: float = 1.0,
+        **kwargs,
+    ):
+        """1×2 single-sample UQ band plot.
+
+        ax[0]: High-fidelity vs Low-fidelity only.
+        ax[1]: all methods except Low-fidelity.
+        Legend is placed to the right of ax[1].
+        Bands show mean ± std_factor * std.
+        """
+        assert sample_idx < self.n_avail_samples
+        linewidth = kwargs.get("linewidth", 2.5)
+        alpha = kwargs.get("alpha", 0.2)
+        label_fontsize = kwargs.get("label_fontsize", 14)
+        xlabel = kwargs.get("xlabel", r"$x$")
+        ylabel = kwargs.get("ylabel", r"$w(x)$")
+
+        _linestyles = {
+            "High-fidelity": "-",
+            "Low-fidelity": "--",
+            "FNO": "-",
+            "Residual FNO": "-.",
+            "FLORA": "-",
+            "FLORAL": "-.",
+        }
+        _left_order = ["High-fidelity", "Low-fidelity"]
+        _right_order = ["High-fidelity", "FNO", "Residual FNO", "FLORA", "FLORAL"]
+
+        fig, axes = plt.subplots(
+            1,
+            2,
+            figsize=kwargs.get("figsize", (10, 4)),
+            dpi=300,
+            layout="compressed",
+            sharey=True,
+        )
+
+        def _draw(ax, order):
+            for k in order:
+                if k not in self.mean_dict:
+                    continue
+                color = _METHOD_COLORS[k]
+                mean = self.mean_dict[k][sample_idx][plot_channel].ravel()
+                ax.plot(
+                    self.field_domain,
+                    mean,
+                    label=k,
+                    color=color,
+                    linestyle=_linestyles[k],
+                    linewidth=linewidth,
+                )
+                if k in self.std_dict:
+                    std = self.std_dict[k][sample_idx][plot_channel].ravel()
+                    ax.fill_between(
+                        self.field_domain,
+                        mean - std_factor * std,
+                        mean + std_factor * std,
+                        color=color,
+                        alpha=alpha,
+                    )
+
+        _draw(axes[0], _left_order)
+        _draw(axes[1], _right_order)
+
+        # optional inset zoom on ax[1] (activated when inset_xlim is provided)
+        inset_xlim = kwargs.get("inset_xlim", None)
+        inset_ylim = kwargs.get("inset_ylim", None)
+        inset_bounds = kwargs.get("inset_bounds", [0.55, 0.55, 0.42, 0.42])
+        if inset_xlim is not None:
+            ax_inset = axes[1].inset_axes(inset_bounds)
+            for k in _right_order:
+                if k not in self.mean_dict:
+                    continue
+                color = _METHOD_COLORS[k]
+                mean = self.mean_dict[k][sample_idx][plot_channel].ravel()
+                ax_inset.plot(
+                    self.field_domain,
+                    mean,
+                    color=color,
+                    linestyle=_linestyles[k],
+                    linewidth=linewidth * 0.8,
+                )
+                if k in self.std_dict:
+                    std = self.std_dict[k][sample_idx][plot_channel].ravel()
+                    ax_inset.fill_between(
+                        self.field_domain,
+                        mean - std_factor * std,
+                        mean + std_factor * std,
+                        color=color,
+                        alpha=alpha,
+                    )
+            ax_inset.set_xlim(inset_xlim)
+            if inset_ylim is not None:
+                ax_inset.set_ylim(inset_ylim)
+            ax_inset.set_xticks([])
+            ax_inset.set_yticks([])
+            for spine in ax_inset.spines.values():
+                spine.set_linewidth(0.8)
+            axes[1].indicate_inset_zoom(ax_inset, edgecolor="black", linewidth=0.8)
+
+        for ax in axes:
+            ax.set_xlabel(xlabel, fontsize=label_fontsize)
+        axes[0].set_ylabel(ylabel, fontsize=label_fontsize)
+
+        # Build a combined legend from both axes,
+        # preserving draw order and deduplicating
+        _legend_order = [
+            "High-fidelity",
+            "Low-fidelity",
+            "FNO",
+            "Residual FNO",
+            "FLORA",
+            "FLORAL",
+        ]
+        handle_map = {}
+        for ax in axes:
+            for h, l in zip(*ax.get_legend_handles_labels()):
+                handle_map.setdefault(l, h)
+        ordered_handles = [handle_map[k] for k in _legend_order if k in handle_map]
+        ordered_labels = [k for k in _legend_order if k in handle_map]
+        axes[1].legend(
+            ordered_handles,
+            ordered_labels,
+            framealpha=1.0,
+            loc="center left",
+            bbox_to_anchor=(1.01, 0.5),
+            borderaxespad=0.0,
+            fontsize=label_fontsize,
+        )
+
+        default_save_name = (
+            f"field_uq_bands_n_train_{self.n_train}_n_val_{self.n_val}"
+            f"_sample_{sample_idx}"
+        )
+        plt.savefig(
+            kwargs.get("save_name", default_save_name) + ".png",
+            bbox_inches="tight",
+            pad_inches=0.1,
+        )
+        plt.close()
+
     def make_error_sample_plot(
         self, n_samples: int = 5, plot_channel: int = 0, **kwargs
     ):
