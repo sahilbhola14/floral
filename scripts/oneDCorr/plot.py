@@ -151,6 +151,17 @@ def plot_field(n_train_samples):
         inset_ylim=(-2, -1),
         inset_bounds=[0.55, 0.55, 0.42, 0.42],
     )
+    # single-sample uncertainty band plot
+    plotter.make_uq_band_plot(
+        sample_idx=3,
+        figsize=(12, 4),
+        linewidth=2.5,
+        label_fontsize=20,
+        alpha=0.15,
+        std_factor=5,
+        inset_xlim=(0.75, 1.0),
+        inset_ylim=(-1, 1),
+    )
 
 
 def print_pareto(n_train_samples_list):
