@@ -124,6 +124,13 @@ def plot_field(n_train_samples):
         data_fno_floral=data_fno_floral,
     )
     plotter.make_field_sample_plot(xlabel=r"$x_1$", ylabel=r"$x_2$", n_samples=4)
+    plotter.make_mean_std_sample_plot(
+        state_name=r"p",
+        sample_idx=0,
+        xlabel=r"$x_1$",
+        ylabel=r"$x_2$",
+        figsize=(len(plotter.mean_dict) * 2.5, 5.0),
+    )
     # plotter.make_error_sample_plot(
     #     xlabel=r"$x_1$", ylabel=r"$x_2$", n_samples=4, vmin=0, vmax=0.25
     # )
@@ -185,13 +192,10 @@ def plot_residual_summary(n_train_samples_list):
 
 
 if __name__ == "__main__":
-    # residual summary
-    # plot_residual_summary(n_train_samples_list)
     # error summary
     plot_error_summary(n_train_samples_list)
     # # plot field
     plot_field(n_train_samples=n_train_samples_list[0])
-    plot_field(n_train_samples=n_train_samples_list[1])
     plot_field(n_train_samples=n_train_samples_list[-1])
     # pareto
     print_pareto(n_train_samples_list)
