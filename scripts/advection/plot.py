@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from floral.utils import twoDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [100, 200, 500, 2000]
+n_train_samples_list = [100, 500, 2000]
 n_val_samples = 750
 n_test_samples = 750
 operator_method = "filmfno"
@@ -149,6 +149,12 @@ def plot_field(n_train_samples):
         data_fno_floral=data_fno_floral,
     )
     plotter.make_field_sample_plot(xlabel=r"$x$", ylabel=r"$t$", n_samples=4)
+    plotter.make_mean_std_sample_plot(
+        sample_idx=0,
+        xlabel=r"$x$",
+        ylabel=r"$t$",
+        figsize=(len(plotter.mean_dict) * 2.5, 5.0),
+    )
     # plotter.make_error_sample_plot(
     #     xlabel=r"$x$", ylabel=r"$t$", n_samples=4, vmin=0, vmax=0.25
     # )

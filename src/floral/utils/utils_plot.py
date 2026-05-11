@@ -598,7 +598,7 @@ class twoDPlot(BasePlot):
         self.mean_dict["FLORAL"] = self.HF_field_prediction_floral.mean(1)
 
         self.std_dict = {
-            "Low-fidelity": self.LF_field.std(1, correction=0),
+            "High-fidelity": self.HF_field.std(1, correction=0),
             "FLORA": self.HF_field_prediction_flora.std(1, correction=0),
             "FLORAL": self.HF_field_prediction_floral.std(1, correction=0),
         }
@@ -789,6 +789,119 @@ class twoDPlot(BasePlot):
             f"{error_type}_samples_n_train_{self.n_train}_n_val_{self.n_val}"
         )
         plt.savefig(kwargs.get("save_name", default_save_name) + ".png")
+
+    def make_mean_std_sample_plot(
+        self, sample_idx: int = 0, plot_channel: int = 0, **kwargs
+    ):
+        """2-row single-sample plot.
+
+        Row 0: mean prediction for every method in mean_dict.
+        Row 1: std for methods in std_dict; axes hidden otherwise.
+        Each row shares one colorbar on its right side.
+        """
+        assert sample_idx < self.n_avail_samples
+
+        mean_order = list(self.mean_dict.keys())
+        n_cols = len(mean_order)
+        std_in_order = [k for k in mean_order if k in self.std_dict]
+
+        vmin_mean = float(
+            min(self.mean_dict[k][sample_idx][plot_channel].min() for k in mean_order)
+        )
+        vmax_mean = float(
+            max(self.mean_dict[k][sample_idx][plot_channel].max() for k in mean_order)
+        )
+        vmin_std = (
+            float(
+                min(
+                    self.std_dict[k][sample_idx][plot_channel].min()
+                    for k in std_in_order
+                )
+            )
+            if std_in_order
+            else 0.0
+        )
+        vmax_std = (
+            float(
+                max(
+                    self.std_dict[k][sample_idx][plot_channel].max()
+                    for k in std_in_order
+                )
+            )
+            if std_in_order
+            else 1.0
+        )
+
+        mean_cmap = kwargs.get("mean_cmap", "RdBu_r")
+        std_cmap = kwargs.get("std_cmap", "viridis")
+        xlabel = kwargs.get("xlabel", r"$x_1$")
+        ylabel = kwargs.get("ylabel", r"$x_2$")
+
+        fig, axs = plt.subplots(
+            2,
+            n_cols,
+            figsize=kwargs.get("figsize", (n_cols * 2.5, 5.0)),
+            dpi=300,
+            layout="compressed",
+            sharex=True,
+            sharey=True,
+        )
+
+        im_mean = im_std = None
+        for jj, k in enumerate(mean_order):
+            axs[0, jj].set_title(k)
+            im_mean = axs[0, jj].imshow(
+                self.mean_dict[k][sample_idx][plot_channel],
+                vmin=vmin_mean,
+                vmax=vmax_mean,
+                origin="lower",
+                interpolation="bicubic",
+                cmap=mean_cmap,
+            )
+            if k in self.std_dict:
+                im_std = axs[1, jj].imshow(
+                    self.std_dict[k][sample_idx][plot_channel],
+                    vmin=vmin_std,
+                    vmax=vmax_std,
+                    origin="lower",
+                    interpolation="bicubic",
+                    cmap=std_cmap,
+                )
+            else:
+                axs[1, jj].set_visible(False)
+
+        if im_mean is not None:
+            fig.colorbar(
+                im_mean, ax=axs[0, :].tolist(), orientation="vertical", pad=0.02
+            )
+        if im_std is not None:
+            fig.colorbar(
+                im_std, ax=axs[1, :].tolist(), orientation="vertical", pad=0.02
+            )
+
+        axs[0, 0].set_ylabel(r"$\mathbb{E}[u(x,t)]$" + "\n" + ylabel)
+        for jj, k in enumerate(mean_order):
+            if k in self.std_dict:
+                axs[1, jj].set_ylabel(r"$\sigma[u(x,t)]$" + "\n" + ylabel)
+                break
+
+        for ax in axs.flatten():
+            if not ax.get_visible():
+                continue
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_xlabel(xlabel)
+            ax.label_outer()
+
+        default_save_name = (
+            f"mean_std_n_train_{self.n_train}_n_val_{self.n_val}_sample_{sample_idx}"
+        )
+        plt.savefig(
+            kwargs.get("save_name", default_save_name) + ".png",
+            bbox_inches="tight",
+            pad_inches=0.1,
+        )
+        plt.close()
 
 
 class oneDPlot(BasePlot):
@@ -1109,7 +1222,7 @@ class oneDPlot(BasePlot):
                     mean,
                     color=color,
                     linestyle=_linestyles[k],
-                    linewidth=linewidth * 0.8,
+                    linewidth=linewidth * 0.9,
                 )
                 if k in self.std_dict:
                     std = self.std_dict[k][sample_idx][plot_channel].ravel()
