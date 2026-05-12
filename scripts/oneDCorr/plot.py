@@ -161,6 +161,10 @@ def plot_field(n_train_samples):
         std_factor=5,
         inset_xlim=(0.8, 1.0),
         inset_ylim=(-2, 0),
+        save_name=(
+            f"mean_std_n_train_{n_train_samples}_n_val_{n_val_samples}"
+            f"_train_res_{train_res.lower()}"
+        ),
     )
 
 
@@ -255,14 +259,8 @@ if __name__ == "__main__":
     plot_error_summary(n_train_samples_list)
 
     # plot field
-    plot_field_idx = None
-
-    if plot_field_idx:
-        for ii in plot_field_idx:
-            plot_field(n_train_samples=n_train_samples_list[ii])
-    else:
-        for ii in range(len(n_train_samples_list)):
-            plot_field(n_train_samples=n_train_samples_list[ii])
+    for n_train_samples in n_train_samples_list:
+        plot_field(n_train_samples=n_train_samples)
 
     # pareto
     print_pareto(n_train_samples_list)

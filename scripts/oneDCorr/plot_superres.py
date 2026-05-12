@@ -15,7 +15,7 @@ n_test_samples = 750
 operator_method = "filmfno"
 train_res_list = [8, 16, 32, 64]
 # results_folder = "./results_data"
-results_folder = "./results_superresolution"
+results_folder = "./results_superres"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -124,6 +124,21 @@ def plot_field(train_res):
         # inset_bounds=[0.55, 0.55, 0.42, 0.42],
         save_name=save_name,
     )
+    # single-sample uncertainty band plot
+    plotter.make_uq_band_plot(
+        sample_idx=4,
+        figsize=(12, 4),
+        linewidth=2.5,
+        label_fontsize=20,
+        alpha=0.15,
+        std_factor=5,
+        inset_xlim=(0.8, 1.0),
+        inset_ylim=(-2, 0),
+        save_name=(
+            f"mean_std_n_train_{n_train_samples}_n_val_{n_val_samples}"
+            f"_train_res_{train_res}"
+        ),
+    )
 
 
 def print_pareto(train_res_list):
@@ -190,7 +205,7 @@ if __name__ == "__main__":
     # error summary
     plot_error_summary(train_res_list)
     # # plot field
-    plot_field(train_res=train_res_list[0])
-    plot_field(train_res=train_res_list[-1])
+    for train_res in train_res_list:
+        plot_field(train_res=train_res)
     # pareto
     print_pareto(train_res_list)
