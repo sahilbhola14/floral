@@ -173,6 +173,10 @@ def plot_field(n_train_samples):
         xlabel=r"$x$",
         ylabel=r"$t$",
         figsize=(len(plotter.mean_dict) * 2.5, 5.0),
+        save_name=(
+            f"mean_std_n_train_{n_train_samples}_n_val_{n_val_samples}"
+            f"_train_res_{train_res.lower()}"
+        ),
     )
 
     # plotter.make_error_sample_plot(
