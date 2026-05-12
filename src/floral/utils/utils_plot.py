@@ -837,6 +837,8 @@ class twoDPlot(BasePlot):
         xlabel = kwargs.get("xlabel", r"$x_1$")
         ylabel = kwargs.get("ylabel", r"$x_2$")
         state_name = kwargs.get("state_name", "u")
+        label_fontsize = kwargs.get("label_fontsize", 20)
+        title_fontsize = kwargs.get("title_fontsize", 22)
 
         fig, axs = plt.subplots(
             2,
@@ -850,7 +852,7 @@ class twoDPlot(BasePlot):
 
         im_mean = im_std = None
         for jj, k in enumerate(mean_order):
-            axs[0, jj].set_title(k)
+            axs[0, jj].set_title(k, fontsize=title_fontsize)
             im_mean = axs[0, jj].imshow(
                 self.mean_dict[k][sample_idx][plot_channel],
                 vmin=vmin_mean,
@@ -880,10 +882,14 @@ class twoDPlot(BasePlot):
                 im_std, ax=axs[1, :].tolist(), orientation="vertical", pad=0.02
             )
 
-        axs[0, 0].set_ylabel(rf"$\mathbb{{E}}[{state_name}]$" + "\n" + ylabel)
+        axs[0, 0].set_ylabel(
+            rf"$\mathbb{{E}}[{state_name}]$" + "\n" + ylabel, fontsize=label_fontsize
+        )
         for jj, k in enumerate(mean_order):
             if k in self.std_dict:
-                axs[1, jj].set_ylabel(rf"$\sigma[{state_name}]$" + "\n" + ylabel)
+                axs[1, jj].set_ylabel(
+                    rf"$\sigma[{state_name}]$" + "\n" + ylabel, fontsize=label_fontsize
+                )
                 break
 
         for ax in axs.flatten():
@@ -891,7 +897,7 @@ class twoDPlot(BasePlot):
                 continue
             ax.set_xticks([])
             ax.set_yticks([])
-            ax.set_xlabel(xlabel)
+            ax.set_xlabel(xlabel, fontsize=label_fontsize)
             ax.label_outer()
 
         default_save_name = (
