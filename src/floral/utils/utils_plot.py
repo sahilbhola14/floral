@@ -832,8 +832,8 @@ class twoDPlot(BasePlot):
             else 1.0
         )
 
-        mean_cmap = kwargs.get("mean_cmap", "RdBu_r")
-        std_cmap = kwargs.get("std_cmap", "viridis")
+        mean_cmap = kwargs.get("mean_cmap", None)
+        std_cmap = kwargs.get("std_cmap", "Reds")
         xlabel = kwargs.get("xlabel", r"$x_1$")
         ylabel = kwargs.get("ylabel", r"$x_2$")
         state_name = kwargs.get("state_name", "u")
