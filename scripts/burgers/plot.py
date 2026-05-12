@@ -253,7 +253,7 @@ if __name__ == "__main__":
     # error summary
     plot_error_summary(n_train_samples_list)
     # plot field
-    plot_field(n_train_samples=n_train_samples_list[0])
-    plot_field(n_train_samples=n_train_samples_list[-1])
+    for n_train_samples in n_train_samples_list:
+        plot_field(n_train_samples=n_train_samples)
     # pareto
     print_pareto(n_train_samples_list)
