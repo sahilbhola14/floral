@@ -805,31 +805,49 @@ class twoDPlot(BasePlot):
         n_cols = len(mean_order)
         std_in_order = [k for k in mean_order if k in self.std_dict]
 
-        vmin_mean = float(
-            min(self.mean_dict[k][sample_idx][plot_channel].min() for k in mean_order)
-        )
-        vmax_mean = float(
-            max(self.mean_dict[k][sample_idx][plot_channel].max() for k in mean_order)
-        )
-        vmin_std = (
+        vmin_mean = kwargs.get(
+            "vmin_mean",
             float(
                 min(
-                    self.std_dict[k][sample_idx][plot_channel].min()
-                    for k in std_in_order
+                    self.mean_dict[k][sample_idx][plot_channel].min()
+                    for k in mean_order
                 )
-            )
-            if std_in_order
-            else 0.0
+            ),
         )
-        vmax_std = (
+        vmax_mean = kwargs.get(
+            "vmax_mean",
             float(
                 max(
-                    self.std_dict[k][sample_idx][plot_channel].max()
-                    for k in std_in_order
+                    self.mean_dict[k][sample_idx][plot_channel].max()
+                    for k in mean_order
                 )
-            )
-            if std_in_order
-            else 1.0
+            ),
+        )
+        vmin_std = kwargs.get(
+            "vmin_std",
+            (
+                float(
+                    min(
+                        self.std_dict[k][sample_idx][plot_channel].min()
+                        for k in std_in_order
+                    )
+                )
+                if std_in_order
+                else 0.0
+            ),
+        )
+        vmax_std = kwargs.get(
+            "vmax_std",
+            (
+                float(
+                    max(
+                        self.std_dict[k][sample_idx][plot_channel].max()
+                        for k in std_in_order
+                    )
+                )
+                if std_in_order
+                else 1.0
+            ),
         )
 
         mean_cmap = kwargs.get("mean_cmap", None)

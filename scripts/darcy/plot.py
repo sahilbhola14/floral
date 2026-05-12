@@ -134,6 +134,7 @@ def plot_field(n_train_samples):
             f"mean_std_n_train_{n_train_samples}_n_val_{n_val_samples}"
             f"_train_res_{train_res.lower()}"
         ),
+        vmax_std=0.05,
     )
     # plotter.make_error_sample_plot(
     #     xlabel=r"$x_1$", ylabel=r"$x_2$", n_samples=4, vmin=0, vmax=0.25
