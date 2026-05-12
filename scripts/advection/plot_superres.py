@@ -135,6 +135,17 @@ def plot_field(train_res):
         n_samples=4,
         save_name=save_name,
     )
+    plotter.make_mean_std_sample_plot(
+        state_name=r"u",
+        sample_idx=0,
+        xlabel=r"$x$",
+        ylabel=r"$t$",
+        figsize=(len(plotter.mean_dict) * 2.5, 5.0),
+        save_name=(
+            f"mean_std_n_train_{n_train_samples}_n_val_{n_val_samples}"
+            f"_train_res_{train_res}"
+        ),
+    )
 
 
 def print_pareto(train_res_list):
@@ -207,7 +218,7 @@ def plot_residual_summary(train_res_list):
 
 if __name__ == "__main__":
     # error summary
-    # plot_error_summary(train_res_list)
+    plot_error_summary(train_res_list)
     # plot field
     for ii in range(len(train_res_list)):
         plot_field(train_res=train_res_list[ii])

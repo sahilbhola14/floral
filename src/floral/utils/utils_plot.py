@@ -343,7 +343,7 @@ class ErrorSummary:
         ylim_range = kwargs.get("ylim_range", (1e-2, 1e1))
 
         fig, axes = plt.subplots(
-            1, 3, figsize=(12, 4), layout="compressed", sharey=True
+            1, 2, figsize=(12, 4), layout="compressed", sharey=True
         )
         legend_handles = None
         legend_labels = None
@@ -444,7 +444,7 @@ class ErrorSummary:
 
         # sharey keeps ticks in sync; we hide y-axis on non-leftmost panels manually
         fig, axes = plt.subplots(
-            1, 3, figsize=(12, 4), layout="compressed", sharey=True
+            1, 2, figsize=(12, 4), layout="compressed", sharey=True
         )
         legend_handles = None
         legend_labels = None
