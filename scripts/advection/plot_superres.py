@@ -1,6 +1,6 @@
-# scripts/advection/plot.py
+# scripts/advection/plot_superres.py
 """
-Advection flow plots
+Advection super-resolution flow plots (vary training resolution, fixed n_train)
 """
 import os.path as osp
 import pandas as pd
@@ -9,12 +9,12 @@ import matplotlib.pyplot as plt
 from floral.utils import twoDPlot, ParetoPlot, ErrorSummary, BaseResidual
 
 # Begin user input
-n_train_samples_list = [100, 500, 2000]
+n_train_samples = 500
 n_val_samples = 750
 n_test_samples = 750
 operator_method = "filmfno"
-train_res = "Full"
-results_folder = "./results"
+train_res_list = [8, 16]
+results_folder = "./results_superres"
 # End user input
 
 plt.style.use("../journal.mplstyle")
@@ -28,7 +28,7 @@ def combine_path(paths: list):
     return osp.join(*paths)
 
 
-def load_data(n_train_samples):
+def load_data(train_res):
     nt = n_train_samples
     nv = n_val_samples
     ntest = n_test_samples
@@ -83,27 +83,6 @@ def load_data(n_train_samples):
         "Number of samples for UQ (FNO Floral): "
         f"{data_fno_floral['prediction'].shape[1]}"
     )
-
-    def _print_cost(label, data, deterministic=False):
-        t = data.get("inference_time_s")
-        tpc = data.get("time_per_condition_s")
-        tpcpg = data.get("time_per_condition_per_gen_s")
-        nfe = data.get("nfe_per_condition")
-        mem = data.get("peak_gpu_memory_mb")
-        msg = f"[{label}] inference_time: {t:.2f} s | time/condition: {tpc:.4f} s"
-        if not deterministic:
-            msg += f" | time/condition/gen: {tpcpg:.4f} s"
-        if nfe is not None:
-            msg += f" | NFE/condition: {nfe:.1f}"
-        if mem is not None:
-            msg += f" | peak GPU mem: {mem:.1f} MB"
-        print(msg)
-
-    _print_cost("FM  Flora ", data_flora)
-    _print_cost("FM  Floral", data_floral)
-    _print_cost("FNO Flora ", data_fno_flora, deterministic=True)
-    _print_cost("FNO Floral", data_fno_floral, deterministic=True)
-
     print("--" * 10)
 
     return data_flora, data_floral, data_fno_flora, data_fno_floral
@@ -116,7 +95,7 @@ class ResidualAdvection(BaseResidual):
         )
         self.condition = self.full_condition[:, 0]
 
-    def comp_residual(self, prediction, condition, domain):
+    def comp_residual(self, prediction, condition, domain):  # type: ignore[override]
         """compute the residual for the advection equation
         prediction: (batch_size, Nt, Nx)
         """
@@ -138,49 +117,44 @@ class ResidualAdvection(BaseResidual):
         return dudt + ADVECTION_SPEED * dudx
 
 
-def plot_field(n_train_samples):
-    data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(
-        n_train_samples
+def plot_field(train_res):
+    save_name = (
+        f"field_samples_n_train_{n_train_samples}"
+        f"_n_val_{n_val_samples}_train_res_{train_res}"
     )
+    data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
     plotter = twoDPlot(
         data_flora=data_flora,
         data_floral=data_floral,
         data_fno_flora=data_fno_flora,
         data_fno_floral=data_fno_floral,
     )
-    plotter.make_field_sample_plot(xlabel=r"$x$", ylabel=r"$t$", n_samples=4)
-    plotter.make_mean_std_sample_plot(
-        state_name=r"u",
-        sample_idx=0,
+    plotter.make_field_sample_plot(
         xlabel=r"$x$",
         ylabel=r"$t$",
-        figsize=(len(plotter.mean_dict) * 2.5, 5.0),
+        n_samples=4,
+        save_name=save_name,
     )
-    # plotter.make_error_sample_plot(
-    #     xlabel=r"$x$", ylabel=r"$t$", n_samples=4, vmin=0, vmax=0.25
-    # )
 
 
-def print_pareto(n_train_samples_list):
+def print_pareto(train_res_list):
     all_data = []
-    for n_train_samples in n_train_samples_list:
-        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(
-            n_train_samples
-        )
+    for train_res in train_res_list:
+        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
         df = ParetoPlot.get_pareto_data(
             data_flora=data_flora, data_floral=data_floral, model="FM"
         )
+        df["Resolution (train)"] = train_res
         all_data.append(df)
         df_fno = ParetoPlot.get_pareto_data(
-            data_flora=data_fno_flora,
-            data_floral=data_fno_floral,
-            model="FNO",
-            deterministic=True,
+            data_flora=data_fno_flora, data_floral=data_fno_floral, model="FNO"
         )
+        df_fno["Resolution (train)"] = train_res
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
     display_cols = [
         "Samples (train)",
+        "Resolution (train)",
         "Model",
         "Method",
         "Mean Field Error",
@@ -191,52 +165,51 @@ def print_pareto(n_train_samples_list):
             index=False
         )
     )
-    # ParetoPlot.plot_pareto(combined_df, figsize=(7, 5))
 
 
-def plot_error_summary(n_train_samples_list):
+def plot_error_summary(train_res_list):
     all_data = []
-    for n_train_samples in n_train_samples_list:
-        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(
-            n_train_samples
-        )
+    for train_res in train_res_list:
+        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
         summary = ErrorSummary(data_flora=data_flora, data_floral=data_floral)
-        df = summary(model="FM", verbose=True)
+        df = summary(verbose=True, model="FM")
+        df["Resolution (train)"] = train_res
         all_data.append(df)
         summary_fno = ErrorSummary(
             data_flora=data_fno_flora, data_floral=data_fno_floral
         )
-        df_fno = summary_fno(model="FNO", verbose=True)
+        df_fno = summary_fno(verbose=True, model="FNO")
+        df_fno["Resolution (train)"] = train_res
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
-    ErrorSummary.plot_error(combined_df, ylim_range=(1e-4, 1e2), xlim_range=(1e2, 1e4))
+    ErrorSummary.plot_error_vs_train_res(
+        combined_df, ylim_range=(1e-2, 1e1), xlim_range=(1e0, 1e2)
+    )
 
 
-def plot_residual_summary(n_train_samples_list):
+def plot_residual_summary(train_res_list):
     all_data = []
-    for n_train_samples in n_train_samples_list:
-        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(
-            n_train_samples
-        )
+    for train_res in train_res_list:
+        data_flora, data_floral, data_fno_flora, data_fno_floral = load_data(train_res)
         residual = ResidualAdvection(data_flora=data_flora, data_floral=data_floral)
         df = residual(verbose=True, model="FM")
+        df["Resolution (train)"] = train_res
         all_data.append(df)
         residual_fno = ResidualAdvection(
             data_flora=data_fno_flora, data_floral=data_fno_floral
         )
         df_fno = residual_fno(verbose=True, model="FNO")
+        df_fno["Resolution (train)"] = train_res
         all_data.append(df_fno)
     combined_df = pd.concat(all_data, ignore_index=True)
     ResidualAdvection.plot_residual(combined_df, figsize=(7, 5), ylim_range=(1e-3, 1e2))
 
 
 if __name__ == "__main__":
-    # residual summary
-    # plot_residual_summary(n_train_samples_list)
     # error summary
-    # plot_error_summary(n_train_samples_list)
-    # # plot field
-    plot_field(n_train_samples=n_train_samples_list[0])
-    plot_field(n_train_samples=n_train_samples_list[-1])
+    # plot_error_summary(train_res_list)
+    # plot field
+    for ii in range(len(train_res_list)):
+        plot_field(train_res=train_res_list[ii])
     # pareto
-    # print_pareto(n_train_samples_list)
+    print_pareto(train_res_list)

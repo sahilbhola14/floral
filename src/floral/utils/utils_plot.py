@@ -836,6 +836,7 @@ class twoDPlot(BasePlot):
         std_cmap = kwargs.get("std_cmap", "viridis")
         xlabel = kwargs.get("xlabel", r"$x_1$")
         ylabel = kwargs.get("ylabel", r"$x_2$")
+        state_name = kwargs.get("state_name", "u")
 
         fig, axs = plt.subplots(
             2,
@@ -879,10 +880,10 @@ class twoDPlot(BasePlot):
                 im_std, ax=axs[1, :].tolist(), orientation="vertical", pad=0.02
             )
 
-        axs[0, 0].set_ylabel(r"$\mathbb{E}[u(x,t)]$" + "\n" + ylabel)
+        axs[0, 0].set_ylabel(rf"$\mathbb{{E}}[{state_name}]$" + "\n" + ylabel)
         for jj, k in enumerate(mean_order):
             if k in self.std_dict:
-                axs[1, jj].set_ylabel(r"$\sigma[u(x,t)]$" + "\n" + ylabel)
+                axs[1, jj].set_ylabel(rf"$\sigma[{state_name}]$" + "\n" + ylabel)
                 break
 
         for ax in axs.flatten():
